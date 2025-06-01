@@ -1,0 +1,77 @@
+# Watermill NATS JetStream Configuration for High-Performance Message Routing
+brokerType: nats
+
+# NATS Server Connection Configuration
+nats:
+  urls:
+    - nats://nats-server-1:4222
+    - nats://nats-server-2:4222
+    - nats://nats-server-3:4222
+  
+  # Authentication Options (choose one)
+  # Option 1: Username/Password
+  username: "rule-router-service"
+  password: "secure-password"
+  
+  # Option 2: Token Authentication
+  # token: "your-nats-token"
+  
+  # Option 3: NKey Authentication  
+  # nkey: "your-nkey-here"
+  
+  # Option 4: JWT with .creds file (recommended for production)
+  # credsFile: "/etc/nats/creds/rule-engine.creds"
+  
+  # TLS Configuration
+  tls:
+    enable: true
+    certFile: "/etc/ssl/nats/client-cert.pem"
+    keyFile: "/etc/ssl/nats/client-key.pem"
+    caFile: "/etc/ssl/nats/ca.pem"
+    insecure: false                    # Set to true to skip certificate verification
+
+# Watermill NATS JetStream Configuration
+watermill:
+  nats:
+    maxReconnects: -1                  # Unlimited reconnects for resilience
+    reconnectWait: 50ms                # Fast reconnection for high availability
+    publishAsync: true                 # Critical for high throughput
+    maxPendingAsync: 2000             # Support 2000+ msg/sec throughput
+    subscriberCount: 8                 # Parallel consumers (2x CPU cores)
+    ackWaitTimeout: 30s               # Message acknowledgment timeout
+    maxDeliver: 3                     # Max redelivery attempts
+    writeBufferSize: 2097152          # 2MB write buffer for performance
+    reconnectBufSize: 16777216        # 16MB reconnect buffer
+  
+  router:
+    closeTimeout: 30s                  # Graceful shutdown timeout
+  
+  performance:
+    batchSize: 100                     # Optimal batch size for NATS
+    batchTimeout: 1s                   # Max batch wait time
+    bufferSize: 8192                   # Processing buffer size
+  
+  middleware:
+    retryMaxAttempts: 3                # Retry failed message processing
+    retryInterval: 100ms               # Initial retry interval
+    metricsEnabled: true               # Enable comprehensive metrics
+    tracingEnabled: false              # Disable for performance
+
+# Logging Configuration
+logging:
+  level: info                          # debug, info, warn, error
+  outputPath: stdout                   # stdout or file path
+  encoding: json                       # json or console
+
+# Prometheus Metrics Configuration
+metrics:
+  enabled: true
+  address: :2112
+  path: /metrics
+  updateInterval: 15s
+
+# Rule Processing Configuration
+processing:
+  workers: 4                           # Rule processing worker threads
+  queueSize: 1000                      # Internal processing queue size
+  batchSize: 100                       # Message batch size for rule processing
