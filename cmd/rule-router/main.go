@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,14 +28,46 @@ import (
 )
 
 func main() {
-	// Command line flags for config and rules
+	// Parse command line flags
+	cfg, rulesPath := parseFlags()
+
+	// Initialize logger
+	appLogger := initializeLogger(cfg)
+	defer appLogger.Sync()
+
+	// Setup metrics and HTTP server
+	metricsService, metricsCollector, metricsServer := setupMetrics(cfg, appLogger)
+	defer cleanupMetrics(metricsCollector, metricsServer, cfg)
+
+	// Setup signal handling
+	ctx, cancel := setupSignalHandling()
+	defer cancel()
+
+	// Load and process rules
+	processor := loadAndProcessRules(*rulesPath, cfg, appLogger, metricsService)
+	defer processor.Close()
+
+	// Create message handler
+	messageHandler := handler.NewMessageHandler(processor, appLogger, metricsService)
+
+	// Create and configure Watermill broker
+	watermillBroker := createWatermillBroker(cfg, appLogger, metricsService)
+	defer watermillBroker.Close()
+
+	// Setup router with middleware and handlers
+	router := watermillBroker.GetRouter()
+	setupMiddleware(router, cfg, messageHandler, appLogger, metricsService)
+	setupHandlers(router, processor, watermillBroker, cfg, appLogger)
+
+	// Start the router and wait
+	startRouterAndWait(ctx, router, cfg, processor, appLogger, metricsService)
+}
+
+// parseFlags parses command line arguments and applies overrides
+func parseFlags() (*config.Config, *string) {
 	configPath := flag.String("config", "config/config.yaml", "path to config file (YAML or JSON)")
 	rulesPath := flag.String("rules", "rules", "path to rules directory")
-
-	// Add broker type flag
 	brokerTypeFlag := flag.String("broker-type", "", "broker type (mqtt or nats)")
-
-	// Optional override flags
 	workersOverride := flag.Int("workers", 0, "override number of worker threads (0 = use config)")
 	queueSizeOverride := flag.Int("queue-size", 0, "override size of processing queue (0 = use config)")
 	batchSizeOverride := flag.Int("batch-size", 0, "override message batch size (0 = use config)")
@@ -50,7 +83,7 @@ func main() {
 		log.Fatalf("failed to load config: %v", err)
 	}
 
-	// Apply any command line overrides
+	// Apply command line overrides
 	cfg.ApplyOverrides(
 		*brokerTypeFlag,
 		*workersOverride,
@@ -61,71 +94,114 @@ func main() {
 		*metricsIntervalOverride,
 	)
 
-	// Initialize logger
+	return cfg, rulesPath
+}
+
+// initializeLogger creates and configures the application logger
+func initializeLogger(cfg *config.Config) *logger.Logger {
 	appLogger, err := logger.NewLogger(&cfg.Logging)
 	if err != nil {
 		log.Fatalf("failed to initialize logger: %v", err)
 	}
-	defer appLogger.Sync()
+	return appLogger
+}
 
-	// Setup metrics if enabled
-	var metricsService *metrics.Metrics
-	var metricsCollector *metrics.MetricsCollector
-	var metricsServer *http.Server
-
-	if cfg.Metrics.Enabled {
-		// Initialize metrics
-		reg := prometheus.NewRegistry()
-		metricsService, err = metrics.NewMetrics(reg)
-		if err != nil {
-			appLogger.Fatal("failed to create metrics service", "error", err)
-		}
-
-		// Parse metrics update interval
-		updateInterval, err := time.ParseDuration(cfg.Metrics.UpdateInterval)
-		if err != nil {
-			appLogger.Fatal("invalid metrics update interval", "error", err)
-		}
-
-		// Create metrics collector
-		metricsCollector = metrics.NewMetricsCollector(metricsService, updateInterval)
-		metricsCollector.Start()
-		defer metricsCollector.Stop()
-
-		// Setup metrics HTTP server
-		mux := http.NewServeMux()
-		mux.Handle(cfg.Metrics.Path, promhttp.HandlerFor(reg, promhttp.HandlerOpts{
-			Registry:          reg,
-			EnableOpenMetrics: true,
-		}))
-
-		metricsServer = &http.Server{
-			Addr:    cfg.Metrics.Address,
-			Handler: mux,
-		}
-
-		// Start metrics server
-		go func() {
-			appLogger.Info("starting metrics server",
-				"address", cfg.Metrics.Address,
-				"path", cfg.Metrics.Path)
-			if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				appLogger.Error("metrics server error", "error", err)
-			}
-		}()
+// setupMetrics initializes metrics service, collector, and HTTP server
+func setupMetrics(cfg *config.Config, appLogger *logger.Logger) (*metrics.Metrics, *metrics.MetricsCollector, *http.Server) {
+	if !cfg.Metrics.Enabled {
+		return nil, nil, nil
 	}
 
-	// Setup signal handlers
+	// Initialize metrics
+	reg := prometheus.NewRegistry()
+	metricsService, err := metrics.NewMetrics(reg)
+	if err != nil {
+		appLogger.Fatal("failed to create metrics service", "error", err)
+	}
+
+	// Parse metrics update interval
+	updateInterval, err := time.ParseDuration(cfg.Metrics.UpdateInterval)
+	if err != nil {
+		appLogger.Fatal("invalid metrics update interval", "error", err)
+	}
+
+	// Create metrics collector
+	metricsCollector := metrics.NewMetricsCollector(metricsService, updateInterval)
+	metricsCollector.Start()
+
+	// Setup metrics HTTP server
+	mux := http.NewServeMux()
+	mux.Handle(cfg.Metrics.Path, promhttp.HandlerFor(reg, promhttp.HandlerOpts{
+		Registry:          reg,
+		EnableOpenMetrics: true,
+	}))
+
+	metricsServer := &http.Server{
+		Addr:    cfg.Metrics.Address,
+		Handler: mux,
+	}
+
+	// Start metrics server
+	go func() {
+		appLogger.Info("starting metrics server",
+			"address", cfg.Metrics.Address,
+			"path", cfg.Metrics.Path)
+		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			appLogger.Error("metrics server error", "error", err)
+		}
+	}()
+
+	return metricsService, metricsCollector, metricsServer
+}
+
+// cleanupMetrics gracefully shuts down metrics components
+func cleanupMetrics(metricsCollector *metrics.MetricsCollector, metricsServer *http.Server, cfg *config.Config) {
+	if !cfg.Metrics.Enabled {
+		return
+	}
+
+	if metricsCollector != nil {
+		metricsCollector.Stop()
+	}
+
+	if metricsServer != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+			// Log error but don't fail - this is cleanup
+			log.Printf("failed to shutdown metrics server gracefully: %v", err)
+		}
+	}
+}
+
+// setupSignalHandling configures OS signal handling
+func setupSignalHandling() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	
+	go func() {
+		for sig := range sigChan {
+			switch sig {
+			case syscall.SIGHUP:
+				// Handle log rotation - could add logger reopening here
+				continue
+			case syscall.SIGINT, syscall.SIGTERM:
+				cancel()
+				return
+			}
+		}
+	}()
+	
+	return ctx, cancel
+}
 
-	// Create context with cancellation
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+// loadAndProcessRules loads rules from directory and creates processor
+func loadAndProcessRules(rulesPath string, cfg *config.Config, appLogger *logger.Logger, metricsService *metrics.Metrics) *rule.Processor {
 	// Load rules from directory
 	rulesLoader := rule.NewRulesLoader(appLogger)
-	rules, err := rulesLoader.LoadFromDirectory(*rulesPath)
+	rules, err := rulesLoader.LoadFromDirectory(rulesPath)
 	if err != nil {
 		appLogger.Fatal("failed to load rules", "error", err)
 	}
@@ -143,42 +219,39 @@ func main() {
 		appLogger.Fatal("failed to load rules into processor", "error", err)
 	}
 
-	// Create message handler
-	messageHandler := handler.NewMessageHandler(processor, appLogger, metricsService)
+	return processor
+}
 
-	// Create Watermill broker connections to external brokers
-	var watermillBroker interface {
-		GetPublisher() message.Publisher
-		GetSubscriber() message.Subscriber
-		GetRouter() *message.Router
-		Close() error
-	}
-
+// createWatermillBroker creates the appropriate Watermill broker based on configuration
+func createWatermillBroker(cfg *config.Config, appLogger *logger.Logger, metricsService *metrics.Metrics) interface {
+	GetPublisher() message.Publisher
+	GetSubscriber() message.Subscriber
+	GetRouter() *message.Router
+	Close() error
+} {
 	switch cfg.BrokerType {
 	case "nats":
-		appLogger.Info("connecting to external NATS JetStream server",
-			"urls", cfg.NATS.URLs)
-		watermillBroker, err = broker.NewWatermillNATSBroker(cfg, appLogger, metricsService)
+		appLogger.Info("connecting to external NATS JetStream server", "urls", cfg.NATS.URLs)
+		watermillBroker, err := broker.NewWatermillNATSBroker(cfg, appLogger, metricsService)
 		if err != nil {
 			appLogger.Fatal("failed to connect to NATS JetStream server", "error", err)
 		}
+		return watermillBroker
 	case "mqtt":
-		appLogger.Info("connecting to external MQTT broker",
-			"broker", cfg.MQTT.Broker)
-		watermillBroker, err = broker.NewWatermillMQTTBroker(cfg, appLogger, metricsService)
+		appLogger.Info("connecting to external MQTT broker", "broker", cfg.MQTT.Broker)
+		watermillBroker, err := broker.NewWatermillMQTTBroker(cfg, appLogger, metricsService)
 		if err != nil {
 			appLogger.Fatal("failed to connect to MQTT broker", "error", err)
 		}
+		return watermillBroker
 	default:
 		appLogger.Fatal("unsupported broker type", "type", cfg.BrokerType)
+		return nil
 	}
+}
 
-	// Get components from broker
-	publisher := watermillBroker.GetPublisher()
-	subscriber := watermillBroker.GetSubscriber()
-	router := watermillBroker.GetRouter()
-
-	// Add comprehensive middleware stack
+// setupMiddleware configures the Watermill router middleware stack
+func setupMiddleware(router *message.Router, cfg *config.Config, messageHandler *handler.MessageHandler, appLogger *logger.Logger, metricsService *metrics.Metrics) {
 	router.AddMiddleware(
 		// Correlation ID propagation
 		middleware.CorrelationID,
@@ -190,14 +263,7 @@ func main() {
 		handler.RecoveryMiddleware(appLogger),
 		
 		// Conditional metrics middleware
-		func() message.HandlerMiddleware {
-			if cfg.Watermill.Middleware.MetricsEnabled && metricsService != nil {
-				return handler.MetricsMiddleware(metricsService)
-			}
-			return func(h message.HandlerFunc) message.HandlerFunc {
-				return h // Pass-through if metrics disabled
-			}
-		}(),
+		conditionalMetricsMiddleware(cfg, metricsService),
 		
 		// Retry middleware with configuration
 		handler.RetryMiddleware(cfg.Watermill.Middleware.RetryMaxAttempts, appLogger),
@@ -208,7 +274,27 @@ func main() {
 		// Rule engine integration (this is where the magic happens)
 		handler.RuleEngineMiddleware(messageHandler),
 	)
+}
 
+// conditionalMetricsMiddleware returns metrics middleware if enabled, otherwise pass-through
+func conditionalMetricsMiddleware(cfg *config.Config, metricsService *metrics.Metrics) message.HandlerMiddleware {
+	if cfg.Watermill.Middleware.MetricsEnabled && metricsService != nil {
+		return handler.MetricsMiddleware(metricsService)
+	}
+	return func(h message.HandlerFunc) message.HandlerFunc {
+		return h // Pass-through if metrics disabled
+	}
+}
+
+// setupHandlers configures message handlers for each rule topic
+func setupHandlers(router *message.Router, processor *rule.Processor, watermillBroker interface {
+	GetPublisher() message.Publisher
+	GetSubscriber() message.Subscriber
+}, cfg *config.Config, appLogger *logger.Logger) {
+	
+	publisher := watermillBroker.GetPublisher()
+	subscriber := watermillBroker.GetSubscriber()
+	
 	// Extract unique topics from rules and add handlers
 	topics := processor.GetTopics()
 	appLogger.Info("setting up Watermill handlers for rule topics", "topicCount", len(topics))
@@ -246,14 +332,16 @@ func main() {
 			},
 		)
 	}
+}
 
+// startRouterAndWait starts the router and waits for shutdown
+func startRouterAndWait(ctx context.Context, router *message.Router, cfg *config.Config, processor *rule.Processor, appLogger *logger.Logger, metricsService *metrics.Metrics) {
 	// Start the router
 	appLogger.Info("starting Watermill router with external broker connections",
 		"brokerType", cfg.BrokerType,
 		"externalBroker", getExternalBrokerInfo(cfg),
 		"workers", cfg.Processing.Workers,
-		"rulesCount", len(rules),
-		"topicsCount", len(topics),
+		"topicsCount", len(processor.GetTopics()),
 		"metricsEnabled", cfg.Metrics.Enabled)
 
 	go func() {
@@ -268,49 +356,21 @@ func main() {
 
 	// Update metrics
 	if metricsService != nil {
-		metricsService.SetRulesActive(float64(len(rules)))
+		topics := processor.GetTopics()
+		metricsService.SetRulesActive(float64(len(topics)))
 		metricsService.SetWorkerPoolActive(float64(cfg.Processing.Workers))
 	}
 
-	// Handle signals
-	for {
-		sig := <-sigChan
-		switch sig {
-		case syscall.SIGHUP:
-			appLogger.Info("received SIGHUP, reopening logs")
-			appLogger.Sync()
-		case syscall.SIGINT, syscall.SIGTERM:
-			appLogger.Info("shutting down...")
+	// Wait for shutdown signal
+	<-ctx.Done()
+	appLogger.Info("shutting down gracefully...")
 
-			// Graceful shutdown
-			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer shutdownCancel()
-
-			// Shutdown metrics server if enabled
-			if cfg.Metrics.Enabled && metricsServer != nil {
-				if err := metricsServer.Shutdown(shutdownCtx); err != nil {
-					appLogger.Error("failed to shutdown metrics server", "error", err)
-				}
-			}
-
-			// Shutdown Watermill components and close external broker connections
-			cancel() // Cancel main context
-			
-			if err := router.Close(); err != nil {
-				appLogger.Error("failed to close router", "error", err)
-			}
-
-			if err := watermillBroker.Close(); err != nil {
-				appLogger.Error("failed to close external broker connections", "error", err)
-			}
-
-			// Close processor
-			processor.Close()
-
-			appLogger.Info("shutdown complete")
-			return
-		}
+	// Close the router (no additional shutdown context needed since we already have graceful shutdown via ctx)
+	if err := router.Close(); err != nil {
+		appLogger.Error("failed to close router", "error", err)
 	}
+
+	appLogger.Info("shutdown complete")
 }
 
 // getExternalBrokerInfo returns broker connection info for logging
@@ -332,11 +392,11 @@ func getExternalBrokerInfo(cfg *config.Config) string {
 func sanitizeHandlerName(topic string) string {
 	// Replace problematic characters in topic names for handler names
 	sanitized := topic
-	sanitized = replaceString(sanitized, "/", "-")
-	sanitized = replaceString(sanitized, ".", "-")
-	sanitized = replaceString(sanitized, " ", "-")
-	sanitized = replaceString(sanitized, "#", "wildcard")
-	sanitized = replaceString(sanitized, "+", "single")
+	sanitized = strings.ReplaceAll(sanitized, "/", "-")
+	sanitized = strings.ReplaceAll(sanitized, ".", "-")
+	sanitized = strings.ReplaceAll(sanitized, " ", "-")
+	sanitized = strings.ReplaceAll(sanitized, "#", "wildcard")
+	sanitized = strings.ReplaceAll(sanitized, "+", "single")
 	return sanitized
 }
 
@@ -346,24 +406,8 @@ func toNATSSubject(mqttTopic string) string {
 	// MQTT uses / as separators and +/# as wildcards
 	// NATS uses . as separators and */> as wildcards
 	subject := mqttTopic
-	subject = replaceString(subject, "+", "*")
-	subject = replaceString(subject, "#", ">")
-	subject = replaceString(subject, "/", ".")
+	subject = strings.ReplaceAll(subject, "+", "*")
+	subject = strings.ReplaceAll(subject, "#", ">")
+	subject = strings.ReplaceAll(subject, "/", ".")
 	return subject
-}
-
-// replaceString is a simple string replacement function
-func replaceString(s, old, new string) string {
-	result := ""
-	i := 0
-	for i < len(s) {
-		if i <= len(s)-len(old) && s[i:i+len(old)] == old {
-			result += new
-			i += len(old)
-		} else {
-			result += string(s[i])
-			i++
-		}
-	}
-	return result
 }

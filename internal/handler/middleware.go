@@ -4,6 +4,9 @@ package handler
 
 import (
     "fmt"
+    "math"
+    "math/rand"
+    "strings"
     "time"
 
     "github.com/ThreeDotsLabs/watermill/message"
@@ -148,7 +151,7 @@ func ValidationMiddleware(logger *logger.Logger) message.HandlerMiddleware {
     }
 }
 
-// RetryMiddleware creates middleware for retrying failed message processing
+// RetryMiddleware creates middleware for retrying failed message processing with exponential backoff
 func RetryMiddleware(maxRetries int, logger *logger.Logger) message.HandlerMiddleware {
     return func(h message.HandlerFunc) message.HandlerFunc {
         return func(msg *message.Message) ([]*message.Message, error) {
@@ -162,8 +165,8 @@ func RetryMiddleware(maxRetries int, logger *logger.Logger) message.HandlerMiddl
                         "maxRetries", maxRetries,
                         "lastError", lastErr)
                     
-                    // Exponential backoff
-                    backoff := time.Duration(attempt) * 100 * time.Millisecond
+                    // Exponential backoff with jitter
+                    backoff := calculateBackoffWithJitter(attempt)
                     time.Sleep(backoff)
                 }
 
@@ -188,6 +191,24 @@ func RetryMiddleware(maxRetries int, logger *logger.Logger) message.HandlerMiddl
             return nil, fmt.Errorf("processing failed after %d attempts: %w", maxRetries+1, lastErr)
         }
     }
+}
+
+// calculateBackoffWithJitter implements exponential backoff with jitter to prevent thundering herd
+func calculateBackoffWithJitter(attempt int) time.Duration {
+    // Base backoff: 100ms * 2^attempt
+    baseBackoff := 100 * time.Millisecond * time.Duration(math.Pow(2, float64(attempt)))
+    
+    // Cap at 30 seconds
+    if baseBackoff > 30*time.Second {
+        baseBackoff = 30 * time.Second
+    }
+    
+    // Add jitter (±25% of base backoff)
+    jitter := time.Duration(rand.Int63n(int64(baseBackoff/2))) // 0 to 50% of base
+    if rand.Intn(2) == 0 {
+        return baseBackoff + jitter // Add jitter
+    }
+    return baseBackoff - jitter // Subtract jitter
 }
 
 // PoisonQueueMiddleware creates middleware for handling poison messages
@@ -227,26 +248,7 @@ func isPoisonMessage(err error) bool {
     
     // Consider messages with JSON parsing errors as poison
     errorStr := err.Error()
-    return contains(errorStr, "unmarshal") || 
-           contains(errorStr, "invalid character") ||
-           contains(errorStr, "unexpected end of JSON")
-}
-
-// contains checks if a string contains a substring (case-insensitive helper)
-func contains(s, substr string) bool {
-    return len(s) >= len(substr) && 
-           (s == substr || len(substr) == 0 || 
-            (len(s) > len(substr) && (s[:len(substr)] == substr || 
-             s[len(s)-len(substr):] == substr || 
-             indexOf(s, substr) >= 0)))
-}
-
-// indexOf finds the index of substring in string
-func indexOf(s, substr string) int {
-    for i := 0; i <= len(s)-len(substr); i++ {
-        if s[i:i+len(substr)] == substr {
-            return i
-        }
-    }
-    return -1
+    return strings.Contains(errorStr, "unmarshal") || 
+           strings.Contains(errorStr, "invalid character") ||
+           strings.Contains(errorStr, "unexpected end of JSON")
 }

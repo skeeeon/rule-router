@@ -17,6 +17,17 @@ import (
     "rule-router/internal/metrics"
 )
 
+// Pre-compiled regex patterns for template processing (performance optimization)
+var (
+    // New syntax patterns
+    newFunctionPattern = regexp.MustCompile(`@\{(uuid[47]\(\)|timestamp\(\))\}`)
+    newVarPattern      = regexp.MustCompile(`\{([^}@]+)\}`)
+    
+    // Legacy syntax patterns for backward compatibility
+    legacyFunctionPattern = regexp.MustCompile(`\${(uuid[47]\(\))}`)
+    legacyVarPattern     = regexp.MustCompile(`\${([^}]+)}`)
+)
+
 type ProcessorConfig struct {
     Workers    int
     QueueSize  int
@@ -186,6 +197,7 @@ func (p *Processor) processActionTemplate(action *Action, msg map[string]interfa
 }
 
 // processTemplate handles both old ${var} and new {var}/@{func()} syntax for backward compatibility
+// Uses pre-compiled regex patterns for better performance
 func (p *Processor) processTemplate(template string, data map[string]interface{}) (string, error) {
     p.logger.Debug("processing template",
         "template", template,
@@ -193,103 +205,109 @@ func (p *Processor) processTemplate(template string, data map[string]interface{}
 
     result := template
 
-    // Handle new function syntax: @{function()}
-    newFunctionPattern := regexp.MustCompile(`@\{(uuid[47]\(\)|timestamp\(\))\}`)
+    // Handle new function syntax: @{function()} using pre-compiled regex
     result = newFunctionPattern.ReplaceAllStringFunc(result, func(match string) string {
-        // Extract function name from @{function()}
-        function := match[2 : len(match)-1] // remove @{ and }
-
-        switch function {
-        case "uuid4()":
-            id := uuid.New()
-            p.logger.Debug("generated UUIDv4", "uuid", id.String())
-            return id.String()
-        case "uuid7()":
-            id, err := uuid.NewV7()
-            if err != nil {
-                p.logger.Error("failed to generate UUIDv7", "error", err)
-                return ""
-            }
-            p.logger.Debug("generated UUIDv7", "uuid", id.String())
-            return id.String()
-        case "timestamp()":
-            timestamp := time.Now().UTC().Format(time.RFC3339)
-            p.logger.Debug("generated timestamp", "timestamp", timestamp)
-            return timestamp
-        default:
-            p.logger.Debug("unknown function in template",
-                "function", function)
-            return match
-        }
+        return p.processFunctionTemplate(match, false) // false = new syntax
     })
 
     // Handle legacy function syntax: ${function()} for backward compatibility
-    legacyFunctionPattern := regexp.MustCompile(`\${(uuid[47]\(\))}`)
     result = legacyFunctionPattern.ReplaceAllStringFunc(result, func(match string) string {
-        // Extract function name from ${function()}
-        function := match[2 : len(match)-1] // remove ${ and }
-
-        switch function {
-        case "uuid4()":
-            id := uuid.New()
-            p.logger.Debug("generated UUIDv4 (legacy syntax)", "uuid", id.String())
-            return id.String()
-        case "uuid7()":
-            id, err := uuid.NewV7()
-            if err != nil {
-                p.logger.Error("failed to generate UUIDv7 (legacy syntax)", "error", err)
-                return ""
-            }
-            p.logger.Debug("generated UUIDv7 (legacy syntax)", "uuid", id.String())
-            return id.String()
-        default:
-            p.logger.Debug("unknown function in legacy template",
-                "function", function)
-            return match
-        }
+        return p.processFunctionTemplate(match, true) // true = legacy syntax
     })
 
-    // Handle new variable syntax: {variable}
-    newVarPattern := regexp.MustCompile(`\{([^}@]+)\}`)
+    // Handle new variable syntax: {variable} using pre-compiled regex
     result = newVarPattern.ReplaceAllStringFunc(result, func(match string) string {
-        path := strings.Split(match[1:len(match)-1], ".") // remove { and }
-
-        value, err := p.getValueFromPath(data, path)
-        if err != nil {
-            p.logger.Debug("template value not found",
-                "path", strings.Join(path, "."),
-                "error", err)
-            return match
-        }
-
-        strValue := p.convertToString(value)
-        p.logger.Debug("template variable processed",
-            "path", strings.Join(path, "."),
-            "value", strValue)
-        return strValue
+        return p.processVariableTemplate(match, data, false) // false = new syntax
     })
 
     // Handle legacy variable syntax: ${variable} for backward compatibility
-    legacyVarPattern := regexp.MustCompile(`\${([^}]+)}`)
     result = legacyVarPattern.ReplaceAllStringFunc(result, func(match string) string {
-        path := strings.Split(match[2:len(match)-1], ".") // remove ${ and }
-
-        value, err := p.getValueFromPath(data, path)
-        if err != nil {
-            p.logger.Debug("legacy template value not found",
-                "path", strings.Join(path, "."),
-                "error", err)
-            return match
-        }
-
-        strValue := p.convertToString(value)
-        p.logger.Debug("legacy template variable processed",
-            "path", strings.Join(path, "."),
-            "value", strValue)
-        return strValue
+        return p.processVariableTemplate(match, data, true) // true = legacy syntax
     })
 
     return result, nil
+}
+
+// processFunctionTemplate handles function template processing
+func (p *Processor) processFunctionTemplate(match string, isLegacy bool) string {
+    var function string
+    if isLegacy {
+        function = match[2 : len(match)-1] // remove ${ and }
+    } else {
+        function = match[2 : len(match)-1] // remove @{ and }
+    }
+
+    switch function {
+    case "uuid4()":
+        id := uuid.New()
+        syntaxType := "new"
+        if isLegacy {
+            syntaxType = "legacy"
+        }
+        p.logger.Debug("generated UUIDv4", "uuid", id.String(), "syntax", syntaxType)
+        return id.String()
+    case "uuid7()":
+        id, err := uuid.NewV7()
+        if err != nil {
+            syntaxType := "new"
+            if isLegacy {
+                syntaxType = "legacy"
+            }
+            p.logger.Error("failed to generate UUIDv7", "error", err, "syntax", syntaxType)
+            return ""
+        }
+        syntaxType := "new"
+        if isLegacy {
+            syntaxType = "legacy"
+        }
+        p.logger.Debug("generated UUIDv7", "uuid", id.String(), "syntax", syntaxType)
+        return id.String()
+    case "timestamp()":
+        timestamp := time.Now().UTC().Format(time.RFC3339)
+        p.logger.Debug("generated timestamp", "timestamp", timestamp)
+        return timestamp
+    default:
+        p.logger.Debug("unknown function in template",
+            "function", function,
+            "syntax", map[bool]string{true: "legacy", false: "new"}[isLegacy])
+        return match
+    }
+}
+
+// processVariableTemplate handles variable template processing
+func (p *Processor) processVariableTemplate(match string, data map[string]interface{}, isLegacy bool) string {
+    var pathStr string
+    if isLegacy {
+        pathStr = match[2 : len(match)-1] // remove ${ and }
+    } else {
+        pathStr = match[1 : len(match)-1] // remove { and }
+    }
+
+    path := strings.Split(pathStr, ".")
+
+    value, err := p.getValueFromPath(data, path)
+    if err != nil {
+        syntaxType := "new"
+        if isLegacy {
+            syntaxType = "legacy"
+        }
+        p.logger.Debug("template value not found",
+            "path", strings.Join(path, "."),
+            "error", err,
+            "syntax", syntaxType)
+        return match
+    }
+
+    strValue := p.convertToString(value)
+    syntaxType := "new"
+    if isLegacy {
+        syntaxType = "legacy"
+    }
+    p.logger.Debug("template variable processed",
+        "path", strings.Join(path, "."),
+        "value", strValue,
+        "syntax", syntaxType)
+    return strValue
 }
 
 func (p *Processor) getValueFromPath(data map[string]interface{}, path []string) (interface{}, error) {
