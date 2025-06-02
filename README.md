@@ -1,60 +1,19 @@
 # Rule Router
 
-A high-performance message router built on [Watermill.io](https://watermill.io) that connects to external NATS JetStream or MQTT brokers, processes messages through sophisticated rule conditions with **time-based evaluation**, and publishes actions back to the brokers. Completely refactored for enhanced stability, simplified broker management, and production-ready middleware.
-
-## 🚀 What's New in Watermill Version
-
-This is a **complete architectural modernization** that replaces ~1000 lines of custom broker code with Watermill's proven abstractions while preserving all sophisticated rule engine capabilities.
-
-### ✨ Major Improvements
-
-- **🛡️ Enhanced Stability**: Built on Watermill's battle-tested Publisher/Subscriber interfaces
-- **🔗 External Broker Connections**: Connects to your existing NATS JetStream or MQTT infrastructure  
-- **⚡ NATS JetStream First**: High-performance async messaging optimized for 2,000-4,000 msg/sec
-- **🔧 Simplified Configuration**: Reduced complexity with standardized Watermill patterns
-- **🎯 Production Middleware**: Comprehensive stack with retry, circuit breaker, metrics, recovery
-- **🔐 Full Authentication Support**: Username/password, TLS, NATS NKeys, .creds files
-- **⏰ Time-Based Rule Evaluation**: NEW! Rules can now evaluate based on current time, day, date
-- **📝 Enhanced Template Syntax**: New `{variable}` and `@{function()}` syntax with backward compatibility
-- **🔄 Improved Functions**: Added `@{timestamp()}` alongside UUID generation
-
-### 🔗 Template Syntax Evolution
-
-**New Syntax (Recommended)**:
-```yaml
-payload: |
-  {
-    "alert": "High temperature!",
-    "value": {temperature},           # Message data variables
-    "timestamp": "@{timestamp()}",    # System functions  
-    "id": "@{uuid7()}",
-    "currentHour": "{@time.hour}"     # Time-based fields
-  }
-```
-
-**Legacy Syntax (Still Supported)**:
-```yaml
-payload: '{"alert":"High temp!","value":${temperature},"id":"${uuid7()}"}'
-```
+A high-performance message router built on [Watermill.io](https://watermill.io) that connects to external NATS JetStream or MQTT brokers, processes messages through sophisticated rule conditions with time-based evaluation, and publishes actions back to the brokers.
 
 ## Features
 
 - 🚀 **High-Performance Processing**: Built on Watermill for 2,000-4,000 messages/second capability
-- 🔗 **External Broker Integration**:
-  - 🚀 **NATS JetStream** with async publishing and parallel consumers (Primary)
-  - 🔌 **MQTT** with full TLS support (Secondary)
-- 🔐 **Comprehensive Authentication**:
-  - **NATS**: Username/password, Token, NKeys, JWT with .creds files, TLS
-  - **MQTT**: Username/password, TLS client certificates
-- ⏰ **Time-Based Rule Evaluation**: Rules can evaluate based on current time, day of week, date, and timestamps
+- 🔗 **External Broker Integration**: Connect to existing NATS JetStream or MQTT infrastructure
+- 🔐 **Comprehensive Authentication**: Support for various authentication methods and TLS
+- ⏰ **Time-Based Rule Evaluation**: Rules can evaluate based on current time, day of week, date
 - 📝 **Sophisticated Rule Engine**: Complex condition evaluation with AND/OR logic and nested groups
 - 📋 **Flexible Configuration**: YAML and JSON rule files with recursive directory loading
 - 📊 **Production Monitoring**: Comprehensive Prometheus metrics and structured logging
 - 🛡️ **Production Middleware**: Retry, circuit breaker, correlation ID, recovery, poison queue handling
-- ⚙️ **Enhanced Template Processing**: New syntax with backward compatibility
-- 🔍 **Fast Rule Indexing**: Optimized rule matching with object pooling
 
-## Architecture Overview
+## Architecture
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
@@ -74,11 +33,10 @@ payload: '{"alert":"High temp!","value":${temperature},"id":"${uuid7()}"}'
 ## Quick Start
 
 ### Prerequisites
-- **External NATS JetStream server** or **MQTT broker** running and accessible
+- External NATS JetStream server or MQTT broker
 - Go 1.21 or higher
-- SSL certificates (if using TLS)
 
-### Setup
+### Installation
 
 1. **Clone and Build**:
 ```bash
@@ -87,58 +45,208 @@ cd rule-router
 go build -o rule-router ./cmd/rule-router
 ```
 
-2. **Start External Broker** (choose one):
-
-   **Option A: NATS JetStream (Recommended)**
-   ```bash
-   # Using Docker
-   docker run -d --name nats-js -p 4222:4222 nats:latest -js
-   ```
-
-   **Option B: MQTT Broker**
-   ```bash
-   # Using Docker with Eclipse Mosquitto
-   docker run -d --name mosquitto -p 1883:1883 eclipse-mosquitto:latest
-   ```
-
-3. **Configure for Your Broker**:
+2. **Start External Broker**:
 ```bash
-# For NATS JetStream
-cp config/watermill-nats.yaml config/config.yaml
+# NATS JetStream (Recommended)
+docker run -d --name nats-js -p 4222:4222 nats:latest -js
 
-# For MQTT
-cp config/watermill-mqtt.yaml config/config.yaml
-
-# Edit config.yaml with your broker connection details
+# OR MQTT Broker
+docker run -d --name mosquitto -p 1883:1883 eclipse-mosquitto:latest
 ```
 
-4. **Start the Router**:
+3. **Configure**:
+```bash
+# Copy sample configuration
+cp config/watermill-nats.yaml config/config.yaml
+# Edit with your broker details
+```
+
+4. **Run**:
 ```bash
 ./rule-router -config config/config.yaml -rules rules/
 ```
 
-## Time-Based Rule Evaluation
+## Configuration
 
-### Available Time Fields
+### Broker Configuration
 
-The rule engine supports time-based conditions and templates using system time fields:
+**NATS JetStream (Recommended)**:
+```yaml
+brokerType: nats
+nats:
+  urls:                                    # NATS server URLs
+    - nats://server1:4222
+    - nats://server2:4222
+  
+  # Authentication (choose one)
+  username: "service-user"                 # Basic auth username
+  password: "secure-password"              # Basic auth password
+  token: "auth-token"                      # Token authentication
+  nkey: "nkey-string"                      # NKey authentication
+  credsFile: "/path/to/service.creds"      # JWT credentials file
+  
+  # TLS Configuration
+  tls:
+    enable: true                           # Enable TLS
+    certFile: "/path/to/client.pem"        # Client certificate
+    keyFile: "/path/to/client-key.pem"     # Client private key
+    caFile: "/path/to/ca.pem"              # CA certificate
+    insecure: false                        # Skip certificate verification
+```
 
-| Field | Description | Example Values | Type |
-|-------|-------------|----------------|------|
-| `@time.hour` | Hour in 24-hour format | 0-23 | integer |
-| `@time.minute` | Minute | 0-59 | integer |
-| `@day.name` | Day name (lowercase) | "monday", "tuesday", "sunday" | string |
-| `@day.number` | Day number (Monday=1) | 1-7 | integer |
-| `@date.year` | Current year | 2024 | integer |
-| `@date.month` | Month number | 1-12 | integer |
-| `@date.day` | Day of month | 1-31 | integer |
-| `@date.iso` | ISO date format | "2024-01-15" | string |
-| `@timestamp.unix` | Unix timestamp | 1705344000 | integer |
-| `@timestamp.iso` | ISO 8601 timestamp | "2024-01-15T14:30:00Z" | string |
+**MQTT**:
+```yaml
+brokerType: mqtt
+mqtt:
+  broker: "ssl://broker:8883"              # MQTT broker URL
+  clientId: "rule-router"                  # Unique client identifier
+  username: "mqtt-user"                    # MQTT username
+  password: "mqtt-password"                # MQTT password
+  qos: 0                                   # Quality of Service (0, 1, 2)
+  
+  # TLS Configuration
+  tls:
+    enable: true                           # Enable TLS
+    certFile: "/path/to/client.pem"        # Client certificate
+    keyFile: "/path/to/client-key.pem"     # Client private key
+    caFile: "/path/to/ca.pem"              # CA certificate
+    insecure: false                        # Skip certificate verification
+```
 
-### Time-Based Rule Examples
+### Watermill Configuration
 
-**Business Hours Alert (9 AM - 5 PM, Weekdays)**:
+```yaml
+watermill:
+  # NATS JetStream Settings
+  nats:
+    maxReconnects: -1                      # Reconnection attempts (-1 = unlimited)
+    reconnectWait: 50ms                    # Wait between reconnection attempts
+    publishAsync: true                     # Enable async publishing (recommended)
+    maxPendingAsync: 2000                  # Max pending async messages
+    subscriberCount: 8                     # Number of parallel consumers
+    ackWaitTimeout: 30s                    # Message acknowledgment timeout
+    maxDeliver: 3                          # Max redelivery attempts
+    writeBufferSize: 2097152               # Write buffer size (2MB)
+    reconnectBufSize: 16777216             # Reconnection buffer size (16MB)
+  
+  # Router Settings
+  router:
+    closeTimeout: 30s                      # Graceful shutdown timeout
+  
+  # Performance Tuning
+  performance:
+    batchSize: 100                         # Message batch size
+    batchTimeout: 1s                       # Max batch wait time
+    bufferSize: 8192                       # Processing buffer size
+  
+  # Middleware Settings
+  middleware:
+    retryMaxAttempts: 3                    # Max retry attempts for failed messages
+    retryInterval: 100ms                   # Initial retry interval
+    metricsEnabled: true                   # Enable metrics collection
+    tracingEnabled: false                  # Enable distributed tracing
+```
+
+### Application Configuration
+
+```yaml
+# Logging
+logging:
+  level: info                              # Log level: debug, info, warn, error
+  outputPath: stdout                       # Output: stdout or file path
+  encoding: json                           # Format: json or console
+
+# Metrics
+metrics:
+  enabled: true                            # Enable Prometheus metrics
+  address: :2112                           # Metrics server address
+  path: /metrics                           # Metrics endpoint path
+  updateInterval: 15s                      # Metrics update frequency
+
+# Processing
+processing:
+  workers: 4                               # Number of processing workers
+  queueSize: 1000                          # Internal queue size
+  batchSize: 100                           # Processing batch size
+```
+
+## Rule Syntax
+
+### Basic Rule Structure
+
+```yaml
+- topic: "input/topic"                     # Topic to subscribe to
+  conditions:                              # Optional conditions
+    operator: and                          # Logical operator: and, or
+    items:                                 # Individual conditions
+      - field: fieldName                   # Message field name
+        operator: eq                       # Comparison operator
+        value: expectedValue               # Expected value
+    groups:                                # Nested condition groups
+      - operator: or
+        items: [...]
+  action:                                  # Action to execute
+    topic: "output/topic"                  # Topic to publish to
+    payload: "message template"            # Message template
+```
+
+### Evaluation Operators
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `eq` | Equal to | `value: 25` |
+| `neq` | Not equal to | `value: "error"` |
+| `gt` | Greater than | `value: 30` |
+| `lt` | Less than | `value: 10` |
+| `gte` | Greater than or equal | `value: 25` |
+| `lte` | Less than or equal | `value: 100` |
+| `exists` | Field exists | (no value needed) |
+| `contains` | String contains | `value: "warning"` |
+
+### Time-Based Evaluation
+
+Access current time information in rule conditions using `@` system fields:
+
+| Field | Description | Type | Example Values |
+|-------|-------------|------|----------------|
+| `@time.hour` | Current hour (24h) | integer | 0-23 |
+| `@time.minute` | Current minute | integer | 0-59 |
+| `@day.name` | Day name (lowercase) | string | "monday", "friday" |
+| `@day.number` | Day number (Mon=1) | integer | 1-7 |
+| `@date.year` | Current year | integer | 2024 |
+| `@date.month` | Current month | integer | 1-12 |
+| `@date.day` | Day of month | integer | 1-31 |
+| `@date.iso` | ISO date | string | "2024-01-15" |
+| `@timestamp.unix` | Unix timestamp | integer | 1705344000 |
+| `@timestamp.iso` | ISO timestamp | string | "2024-01-15T14:30:00Z" |
+
+### Template Functions
+
+Use these functions in action templates:
+
+| Function | Description | Example Output |
+|----------|-------------|----------------|
+| `@{uuid4()}` | Random UUID v4 | `a1b2c3d4-e5f6-...` |
+| `@{uuid7()}` | Time-ordered UUID v7 | `01234567-89ab-...` |
+| `@{timestamp()}` | Current ISO timestamp | `2024-01-15T14:30:00Z` |
+
+### Template Variables
+
+Access message fields and time data in templates:
+
+```yaml
+payload: |
+  {
+    "messageField": {fieldName},           # Message data
+    "currentHour": "{@time.hour}",         # Time field
+    "generatedId": "@{uuid7()}",           # Function
+    "timestamp": "@{timestamp()}"          # Function
+  }
+```
+
+## Complete Rule Examples
+
+### Business Hours Alert
 ```yaml
 - topic: sensors/temperature
   conditions:
@@ -147,13 +255,13 @@ The rule engine supports time-based conditions and templates using system time f
       - field: temperature
         operator: gt
         value: 30
-      - field: "@time.hour"
+      - field: "@time.hour"                # Only during business hours
         operator: gte
         value: 9
       - field: "@time.hour"
         operator: lt
         value: 17
-      - field: "@day.number"
+      - field: "@day.number"               # Monday through Friday
         operator: lte
         value: 5
   action:
@@ -162,252 +270,155 @@ The rule engine supports time-based conditions and templates using system time f
       {
         "alert": "High temperature during business hours",
         "temperature": {temperature},
+        "location": {location},
         "detectedAt": "{@timestamp.iso}",
         "businessDay": "{@day.name}",
-        "currentTime": "{@time.hour}:{@time.minute}"
+        "currentTime": "{@time.hour}:{@time.minute}",
+        "alertId": "@{uuid7()}"
       }
 ```
 
-**Weekend Escalation**:
+### Complex Nested Conditions
 ```yaml
-- topic: system/errors
-  conditions:
-    operator: and
-    items:
-      - field: severity
-        operator: eq
-        value: "critical"
-      - field: "@day.number"
-        operator: gt
-        value: 5  # Saturday (6) or Sunday (7)
-  action:
-    topic: alerts/weekend_critical
-    payload: |
-      {
-        "alert": "WEEKEND CRITICAL - Page On-Call",
-        "error": {error_message},
-        "weekendDay": "{@day.name}",
-        "escalation": "immediate"
-      }
-```
-
-**Maintenance Window Suppression**:
-```yaml
-- topic: system/alerts
-  conditions:
-    operator: and
-    items:
-      - field: alert_type
-        operator: neq
-        value: "critical"
-      - field: "@day.name"
-        operator: eq
-        value: "sunday"
-      - field: "@time.hour"
-        operator: gte
-        value: 2
-      - field: "@time.hour"
-        operator: lt
-        value: 4
-  action:
-    topic: alerts/suppressed
-    payload: "Alert suppressed during Sunday 2-4 AM maintenance window"
-```
-
-## Rule Configuration
-
-### Enhanced Template Processing
-
-**Available Template Functions**:
-- `@{uuid4()}`: Random UUID v4
-- `@{uuid7()}`: Time-ordered UUID v7
-- `@{timestamp()}`: ISO8601 timestamp
-
-**Template Variables**:
-- `{fieldName}`: Message field values
-- `{@time.field}`: Time-based system fields
-
-**Complete Example**:
-```yaml
-- topic: sensors/environment
+- topic: system/monitoring
   conditions:
     operator: and
     items:
       - field: status
         operator: eq
-        value: active
+        value: "active"
     groups:
       - operator: or
         items:
-          - field: temperature
+          - field: cpu_usage
             operator: gt
-            value: 32
+            value: 80
         groups:
           - operator: and
             items:
-              - field: humidity
+              - field: memory_usage
                 operator: gt
-                value: 85
-              - field: pressure
-                operator: lt
-                value: 990
+                value: 90
+              - field: "@time.hour"        # Night hours escalation
+                operator: gte
+                value: 22
   action:
-    topic: alerts/environment
+    topic: alerts/critical
     payload: |
       {
-        "alert": "Critical environmental conditions!",
-        "conditions": {
-          "temperature": {temperature},
-          "humidity": {humidity},
-          "pressure": {pressure}
+        "alert": "Critical system condition",
+        "metrics": {
+          "cpu": {cpu_usage},
+          "memory": {memory_usage},
+          "status": {status}
         },
-        "timestamp": "@{timestamp()}",
-        "alertId": "@{uuid7()}",
-        "detectedAt": "{@timestamp.iso}",
-        "currentHour": "{@time.hour}"
+        "escalation": "immediate",
+        "detectedAt": "@{timestamp()}",
+        "incidentId": "@{uuid7()}"
       }
 ```
 
-## Configuration
-
-### NATS JetStream (Recommended)
-
+### Weekend Processing
 ```yaml
-# High-Performance NATS Configuration
-brokerType: nats
-
-nats:
-  urls:
-    - nats://nats-server:4222
-  
-  # Authentication (choose one)
-  username: "rule-router-service"      # Username/password
-  password: "secure-password"
-  # token: "your-nats-token"           # OR Token auth
-  # nkey: "your-nkey"                  # OR NKey auth  
-  # credsFile: "/path/to/app.creds"    # OR JWT with .creds file
-  
-  tls:
-    enable: true
-    certFile: "/etc/ssl/nats/client.pem"
-    keyFile: "/etc/ssl/nats/client-key.pem"
-    caFile: "/etc/ssl/nats/ca.pem"
-
-watermill:
-  nats:
-    publishAsync: true              # Critical for high throughput
-    maxPendingAsync: 2000          # Support 2000+ msg/sec
-    subscriberCount: 8             # Parallel consumers
+- topic: tasks/batch
+  conditions:
+    operator: and
+    items:
+      - field: task_type
+        operator: eq
+        value: "report"
+      - field: "@day.number"               # Weekend days
+        operator: gt
+        value: 5
+  action:
+    topic: processing/weekend
+    payload: |
+      {
+        "task": {task_data},
+        "priority": "low",
+        "sla": "24 hours",
+        "weekendProcessing": true,
+        "scheduledDay": "{@day.name}",
+        "queuedAt": "{@timestamp.iso}",
+        "batchId": "@{uuid4()}"
+      }
 ```
 
-### MQTT Configuration
-
-```yaml
-# MQTT Configuration
-brokerType: mqtt
-
-mqtt:
-  broker: ssl://mqtt-broker:8883
-  clientId: rule-router
-  username: "mqtt-user"
-  password: "mqtt-password"
-  qos: 0                         # High throughput
-  
-  tls:
-    enable: true
-    certFile: "/etc/ssl/mqtt/client.pem"
-    keyFile: "/etc/ssl/mqtt/client-key.pem"  
-    caFile: "/etc/ssl/mqtt/ca.pem"
-```
-
-## Performance Characteristics
-
-### Benchmarks
-- **Target Throughput**: 2,000-4,000 messages/second with complex rules
-- **Watermill NATS Capability**: 50,668 msg/s publish, 34,713 msg/s subscribe
-- **Latency**: Sub-100ms rule evaluation maintained
-- **Memory**: Efficient with object pooling
-
-### Time Evaluation Performance
-- **Time Field Lookup**: Pre-computed fields for O(1) access
-- **Time Context Creation**: Once per message batch for consistency
-- **Overhead**: Minimal (~5% for time-heavy rules)
-
-### Optimization Features
-- **NATS JetStream**: Async publishing with high pending message limits
-- **Parallel Processing**: Multiple consumers based on CPU cores
-- **Batch Processing**: Configurable message batching
-- **Connection Pooling**: Optimized connection management
-- **Object Pooling**: Memory-efficient message processing
-
-## Monitoring & Observability
+## Monitoring
 
 ### Prometheus Metrics
-- `messages_total` - Message processing by status
-- `rule_matches_total` - Rule evaluation statistics  
-- `actions_total` - Action execution by result
-- `template_operations_total` - Template processing stats
-- `watermill_handler_execution_duration_seconds` - Processing latency
+- `messages_total{status}` - Messages processed by status
+- `rule_matches_total` - Rule evaluation statistics
+- `actions_total{status}` - Actions executed by result
+- `template_operations_total{status}` - Template processing stats
 - `process_memory_bytes` - Memory usage
+- `worker_pool_active` - Active workers
 
-### Structured Logging
-```json
-{
-  "timestamp": "2024-02-14T12:00:00Z",
-  "level": "info",
-  "msg": "message processing complete",
-  "uuid": "01HV123...",
-  "topic": "sensors/temperature",
-  "actionsGenerated": 2,
-  "duration": "15ms"
-}
+### Health Checks
+```bash
+# Metrics endpoint
+curl http://localhost:2112/metrics
+
+# Key indicators
+curl -s http://localhost:2112/metrics | grep messages_total
 ```
 
 ## Command Line Options
 
 ```bash
-./rule-router \
-  -config config/watermill-nats.yaml \
-  -rules rules/ \
-  -broker-type nats \
-  -workers 8 \
-  -metrics-addr :2112
+./rule-router [options]
+
+Options:
+  -config string
+        Path to config file (default "config/config.yaml")
+  -rules string
+        Path to rules directory (default "rules")
+  -broker-type string
+        Override broker type (mqtt or nats)
+  -workers int
+        Override number of worker threads
+  -metrics-addr string
+        Override metrics server address
 ```
 
 ## Production Deployment
 
-### Infrastructure Requirements
-- **NATS JetStream**: 3+ node cluster with persistent storage (SSD recommended)
-- **Monitoring**: Prometheus + Grafana with Watermill dashboard
-- **Resources**: 2+ CPU cores, 4GB+ RAM for high throughput
+### Resource Requirements
+- **CPU**: 2+ cores for high throughput
+- **Memory**: 4GB+ RAM
+- **Storage**: SSD recommended for NATS JetStream persistence
 
-### Production Configuration
+### High Availability Setup
 ```yaml
+# NATS Cluster Configuration
+nats:
+  urls:
+    - nats://nats-1:4222
+    - nats://nats-2:4222
+    - nats://nats-3:4222
+  
 watermill:
   nats:
     publishAsync: true
     maxPendingAsync: 2000
-    subscriberCount: 16        # Scale with load
-  performance:
-    batchSize: 100
-    batchTimeout: 1s
-  middleware:
-    retryMaxAttempts: 5
-    metricsEnabled: true
+    subscriberCount: 16                    # Scale with load
 ```
 
-### Health Checks
-- HTTP endpoint: `http://localhost:2112/metrics`
-- Key metrics: `watermill_handler_execution_duration_seconds`
-- Alert on: Circuit breaker trips, high error rates, queue depth
+### Docker Deployment
+```dockerfile
+FROM golang:1.21-alpine AS builder
+WORKDIR /app
+COPY . .
+RUN go build -o rule-router ./cmd/rule-router
 
-## Contributing
-
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing-feature`)  
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open Pull Request
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
+WORKDIR /app
+COPY --from=builder /app/rule-router .
+COPY config/ ./config/
+COPY rules/ ./rules/
+CMD ["./rule-router", "-config", "config/config.yaml", "-rules", "rules/"]
+```
 
 ## License
 
