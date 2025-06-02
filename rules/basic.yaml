@@ -1,0 +1,18 @@
+- topic: sensors/temperature
+  conditions:
+    operator: and
+    items:
+      - field: temperature
+        operator: gt
+        value: 30
+  action:
+    topic: alerts/temperature
+    payload: |
+      {
+        "alert": "High temperature detected!",
+        "value": {temperature},        # Message data
+        "deviceId": {deviceId},
+        "timestamp": "@{timestamp()}",  # System function
+        "alertId": "@{uuid7()}",       # Time-ordered UUID
+        "correlationId": "@{uuid4()}"  # Random UUID
+      }

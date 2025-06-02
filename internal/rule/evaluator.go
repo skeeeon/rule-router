@@ -8,7 +8,7 @@ import (
     "strings"
 )
 
-func (p *Processor) evaluateConditions(conditions *Conditions, msg map[string]interface{}) bool {
+func (p *Processor) evaluateConditions(conditions *Conditions, msg map[string]interface{}, timeCtx *TimeContext) bool {
     if conditions == nil || (len(conditions.Items) == 0 && len(conditions.Groups) == 0) {
         p.logger.Debug("no conditions to evaluate")
         return true
@@ -22,7 +22,7 @@ func (p *Processor) evaluateConditions(conditions *Conditions, msg map[string]in
     results := make([]bool, 0, len(conditions.Items)+len(conditions.Groups))
 
     for i, condition := range conditions.Items {
-        result := p.evaluateCondition(&condition, msg)
+        result := p.evaluateCondition(&condition, msg, timeCtx)
         results = append(results, result)
         
         p.logger.Debug("evaluated individual condition",
@@ -34,7 +34,7 @@ func (p *Processor) evaluateConditions(conditions *Conditions, msg map[string]in
     }
 
     for i, group := range conditions.Groups {
-        result := p.evaluateConditions(&group, msg)
+        result := p.evaluateConditions(&group, msg, timeCtx)
         results = append(results, result)
         
         p.logger.Debug("evaluated nested group",
@@ -73,20 +73,39 @@ func (p *Processor) evaluateConditions(conditions *Conditions, msg map[string]in
     return finalResult
 }
 
-func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{}) bool {
-    value, ok := msg[cond.Field]
-    if !ok {
-        p.logger.Debug("field not found in message",
+func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{}, timeCtx *TimeContext) bool {
+    var value interface{}
+    var ok bool
+    
+    // Check if this is a system time field
+    if strings.HasPrefix(cond.Field, "@") {
+        value, ok = timeCtx.GetField(cond.Field)
+        if !ok {
+            p.logger.Debug("unknown system time field in condition",
+                "field", cond.Field,
+                "availableTimeFields", timeCtx.GetAllFieldNames())
+            return false
+        }
+        p.logger.Debug("evaluating time field condition",
             "field", cond.Field,
-            "availableFields", getMapKeys(msg))
-        return false
+            "operator", cond.Operator,
+            "expectedValue", cond.Value,
+            "actualTimeValue", value)
+    } else {
+        // Regular message field
+        value, ok = msg[cond.Field]
+        if !ok {
+            p.logger.Debug("field not found in message",
+                "field", cond.Field,
+                "availableFields", getMapKeys(msg))
+            return false
+        }
+        p.logger.Debug("evaluating message field condition",
+            "field", cond.Field,
+            "operator", cond.Operator,
+            "expectedValue", cond.Value,
+            "actualValue", value)
     }
-
-    p.logger.Debug("evaluating condition",
-        "field", cond.Field,
-        "operator", cond.Operator,
-        "expectedValue", cond.Value,
-        "actualValue", value)
 
     var result bool
     switch cond.Operator {
@@ -122,6 +141,8 @@ func (p *Processor) compareNumeric(a, b interface{}, op string) bool {
     switch v := a.(type) {
     case float64:
         numA = v
+    case int:
+        numA = float64(v)
     case string:
         numA, err = strconv.ParseFloat(v, 64)
         if err != nil {
@@ -140,6 +161,8 @@ func (p *Processor) compareNumeric(a, b interface{}, op string) bool {
     switch v := b.(type) {
     case float64:
         numB = v
+    case int:
+        numB = float64(v)
     case string:
         numB, err = strconv.ParseFloat(v, 64)
         if err != nil {

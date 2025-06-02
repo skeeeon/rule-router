@@ -26,6 +26,9 @@ var (
     // Legacy syntax patterns for backward compatibility
     legacyFunctionPattern = regexp.MustCompile(`\${(uuid[47]\(\))}`)
     legacyVarPattern     = regexp.MustCompile(`\${([^}]+)}`)
+    
+    // Time field pattern for both conditions and templates
+    timeFieldPattern     = regexp.MustCompile(`\{(@[^}]+)\}`)
 )
 
 type ProcessorConfig struct {
@@ -35,15 +38,16 @@ type ProcessorConfig struct {
 }
 
 type Processor struct {
-    index      *RuleIndex
-    msgPool    *MessagePool
-    resultPool *ResultPool
-    workers    int
-    jobChan    chan *ProcessingMessage
-    logger     *logger.Logger
-    metrics    *metrics.Metrics
-    stats      ProcessorStats
-    wg         sync.WaitGroup
+    index        *RuleIndex
+    msgPool      *MessagePool
+    resultPool   *ResultPool
+    timeProvider TimeProvider
+    workers      int
+    jobChan      chan *ProcessingMessage
+    logger       *logger.Logger
+    metrics      *metrics.Metrics
+    stats        ProcessorStats
+    wg           sync.WaitGroup
 }
 
 type ProcessorStats struct {
@@ -61,13 +65,14 @@ func NewProcessor(cfg ProcessorConfig, log *logger.Logger, metrics *metrics.Metr
     }
 
     p := &Processor{
-        index:      NewRuleIndex(log),
-        msgPool:    NewMessagePool(log),
-        resultPool: NewResultPool(log),
-        workers:    cfg.Workers,
-        jobChan:    make(chan *ProcessingMessage, cfg.QueueSize),
-        logger:     log,
-        metrics:    metrics,
+        index:        NewRuleIndex(log),
+        msgPool:      NewMessagePool(log),
+        resultPool:   NewResultPool(log),
+        timeProvider: NewSystemTimeProvider(),
+        workers:      cfg.Workers,
+        jobChan:      make(chan *ProcessingMessage, cfg.QueueSize),
+        logger:       log,
+        metrics:      metrics,
     }
 
     p.logger.Info("initializing processor",
@@ -114,6 +119,12 @@ func (p *Processor) Process(topic string, payload []byte) ([]*Action, error) {
         "topic", topic,
         "payloadSize", len(payload))
 
+    // Get time context once for this message processing
+    timeCtx := p.timeProvider.GetCurrentContext()
+    p.logger.Debug("created time context",
+        "timestamp", timeCtx.timestamp.Format(time.RFC3339),
+        "timeFields", len(timeCtx.fields))
+
     msg := p.msgPool.Get()
     msg.Topic = topic
     msg.Payload = payload
@@ -138,8 +149,10 @@ func (p *Processor) Process(topic string, payload []byte) ([]*Action, error) {
     }
 
     for _, rule := range msg.Rules {
-        if rule.Conditions == nil || p.evaluateConditions(rule.Conditions, msg.Values) {
-            action, err := p.processActionTemplate(rule.Action, msg.Values)
+        // Pass timeCtx to condition evaluation
+        if rule.Conditions == nil || p.evaluateConditions(rule.Conditions, msg.Values, timeCtx) {
+            // Pass timeCtx to action template processing
+            action, err := p.processActionTemplate(rule.Action, msg.Values, timeCtx)
             if err != nil {
                 if p.metrics != nil {
                     p.metrics.IncTemplateOpsTotal("error")
@@ -172,7 +185,7 @@ func (p *Processor) Process(topic string, payload []byte) ([]*Action, error) {
     return actions, nil
 }
 
-func (p *Processor) processActionTemplate(action *Action, msg map[string]interface{}) (*Action, error) {
+func (p *Processor) processActionTemplate(action *Action, msg map[string]interface{}, timeCtx *TimeContext) (*Action, error) {
     processedAction := &Action{
         Topic:   action.Topic,
         Payload: action.Payload,
@@ -180,14 +193,14 @@ func (p *Processor) processActionTemplate(action *Action, msg map[string]interfa
 
     // Check for both old and new template syntax in topic
     if strings.Contains(action.Topic, "{") {
-        topic, err := p.processTemplate(action.Topic, msg)
+        topic, err := p.processTemplate(action.Topic, msg, timeCtx)
         if err != nil {
             return nil, fmt.Errorf("failed to process topic template: %w", err)
         }
         processedAction.Topic = topic
     }
 
-    payload, err := p.processTemplate(action.Payload, msg)
+    payload, err := p.processTemplate(action.Payload, msg, timeCtx)
     if err != nil {
         return nil, fmt.Errorf("failed to process payload template: %w", err)
     }
@@ -198,12 +211,31 @@ func (p *Processor) processActionTemplate(action *Action, msg map[string]interfa
 
 // processTemplate handles both old ${var} and new {var}/@{func()} syntax for backward compatibility
 // Uses pre-compiled regex patterns for better performance
-func (p *Processor) processTemplate(template string, data map[string]interface{}) (string, error) {
+func (p *Processor) processTemplate(template string, data map[string]interface{}, timeCtx *TimeContext) (string, error) {
     p.logger.Debug("processing template",
         "template", template,
-        "dataKeys", getMapKeys(data))
+        "dataKeys", getMapKeys(data),
+        "timeFields", timeCtx.GetAllFieldNames())
 
     result := template
+
+    // Handle time field replacements first: {@time.hour}, {@day.name}, etc.
+    result = timeFieldPattern.ReplaceAllStringFunc(result, func(match string) string {
+        fieldName := match[1 : len(match)-1] // remove { and }
+        
+        if value, exists := timeCtx.GetField(fieldName); exists {
+            strValue := p.convertToString(value)
+            p.logger.Debug("time field processed in template",
+                "field", fieldName,
+                "value", strValue)
+            return strValue
+        }
+        
+        p.logger.Debug("unknown time field in template",
+            "field", fieldName,
+            "availableTimeFields", timeCtx.GetAllFieldNames())
+        return match // Keep original if unknown
+    })
 
     // Handle new function syntax: @{function()} using pre-compiled regex
     result = newFunctionPattern.ReplaceAllStringFunc(result, func(match string) string {

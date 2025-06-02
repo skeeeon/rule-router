@@ -1,0 +1,274 @@
+# Time-Based Rule Examples for rule-router
+# Demonstrates new time evaluation capabilities using @ system fields
+
+# Business Hours Temperature Alert
+# Only alerts during business hours (9 AM - 5 PM, weekdays)
+- topic: sensors/temperature
+  conditions:
+    operator: and
+    items:
+      - field: temperature
+        operator: gt
+        value: 25
+      - field: "@time.hour"
+        operator: gte
+        value: 9
+      - field: "@time.hour"
+        operator: lt
+        value: 17
+      - field: "@day.number"
+        operator: gte
+        value: 1        # Monday
+      - field: "@day.number"
+        operator: lte
+        value: 5        # Friday
+  action:
+    topic: alerts/business_hours
+    payload: |
+      {
+        "alert": "High temperature during business hours",
+        "temperature": {temperature},
+        "detectedAt": "{@timestamp.iso}",
+        "businessDay": "{@day.name}",
+        "currentTime": "{@time.hour}:{@time.minute}",
+        "alertId": "@{uuid7()}"
+      }
+
+# Weekend Critical Alert Escalation
+# Escalates critical alerts on weekends for immediate attention
+- topic: system/errors
+  conditions:
+    operator: and
+    items:
+      - field: severity
+        operator: eq
+        value: "critical"
+      - field: "@day.number"
+        operator: gt
+        value: 5        # Saturday (6) or Sunday (7)
+  action:
+    topic: alerts/weekend_critical
+    payload: |
+      {
+        "alert": "WEEKEND CRITICAL - Page On-Call",
+        "error": {error_message},
+        "severity": {severity},
+        "escalation": "immediate",
+        "weekendDay": "{@day.name}",
+        "detectedAt": "{@timestamp.iso}",
+        "correlationId": "@{uuid4()}"
+      }
+
+# Night Mode Motion Detection
+# Different behavior for motion detection during night hours
+- topic: sensors/motion
+  conditions:
+    operator: and
+    items:
+      - field: motion_detected
+        operator: eq
+        value: true
+      - field: "@time.hour"
+        operator: gte
+        value: 22       # After 10 PM
+    groups:
+      - operator: or
+        items:
+          - field: "@time.hour"
+            operator: lt
+            value: 6    # Before 6 AM
+  action:
+    topic: alerts/night_motion
+    payload: |
+      {
+        "alert": "Motion detected during night hours",
+        "location": {location},
+        "nightHours": true,
+        "currentTime": "{@time.hour}:{@time.minute}",
+        "date": "{@date.iso}",
+        "timestamp": "@{timestamp()}"
+      }
+
+# Maintenance Window Suppression
+# Suppress alerts during scheduled maintenance (Sunday 2-4 AM)
+- topic: system/alerts
+  conditions:
+    operator: and
+    items:
+      - field: alert_type
+        operator: neq
+        value: "critical"
+      - field: "@day.name"
+        operator: eq
+        value: "sunday"
+      - field: "@time.hour"
+        operator: gte
+        value: 2
+      - field: "@time.hour"
+        operator: lt
+        value: 4
+  action:
+    topic: alerts/suppressed
+    payload: |
+      {
+        "message": "Alert suppressed during maintenance window",
+        "originalAlert": {alert_type},
+        "maintenanceWindow": "Sunday 2-4 AM",
+        "suppressedAt": "{@timestamp.iso}",
+        "resumeProcessing": "Sunday 4:00 AM"
+      }
+
+# Time-Sensitive Data Routing
+# Route data differently based on time of day
+- topic: data/processing
+  conditions:
+    operator: and
+    items:
+      - field: data_type
+        operator: eq
+        value: "analytics"
+      - field: "@time.hour"
+        operator: gte
+        value: 18       # After 6 PM
+      - field: "@time.hour"
+        operator: lt
+        value: 24       # Before midnight
+  action:
+    topic: processing/evening_batch
+    payload: |
+      {
+        "data": {data},
+        "processing_mode": "evening_batch",
+        "priority": "low",
+        "scheduledFor": "next business day",
+        "queuedAt": "{@timestamp.iso}",
+        "currentHour": "{@time.hour}"
+      }
+
+# Monthly Report Trigger
+# Trigger monthly reports on the first day of each month
+- topic: scheduler/daily_check
+  conditions:
+    operator: and
+    items:
+      - field: check_type
+        operator: eq
+        value: "monthly"
+      - field: "@date.day"
+        operator: eq
+        value: 1        # First day of month
+      - field: "@time.hour"
+        operator: eq
+        value: 8        # 8 AM
+      - field: "@time.minute"
+        operator: eq
+        value: 0        # Exactly 8:00 AM
+  action:
+    topic: reports/generate_monthly
+    payload: |
+      {
+        "report_type": "monthly_summary",
+        "period": "{@date.year}-{@date.month}",
+        "triggerDate": "{@date.iso}",
+        "triggerTime": "{@time.hour}:{@time.minute}",
+        "requestId": "@{uuid7()}"
+      }
+
+# Workday vs Weekend Processing
+# Different processing rules for workdays vs weekends
+- topic: tasks/processing
+  conditions:
+    operator: and
+    items:
+      - field: task_type
+        operator: eq
+        value: "batch_job"
+      - field: "@day.number"
+        operator: lte
+        value: 5        # Monday through Friday
+  action:
+    topic: processing/workday_queue
+    payload: |
+      {
+        "task": {task_data},
+        "processing_queue": "workday_high_priority",
+        "sla": "4 hours",
+        "scheduledDay": "{@day.name}",
+        "priority": "high",
+        "timestamp": "{@timestamp.iso}"
+      }
+
+# Weekend processing (different SLA)
+- topic: tasks/processing
+  conditions:
+    operator: and
+    items:
+      - field: task_type
+        operator: eq
+        value: "batch_job"
+      - field: "@day.number"
+        operator: gt
+        value: 5        # Saturday and Sunday
+  action:
+    topic: processing/weekend_queue
+    payload: |
+      {
+        "task": {task_data},
+        "processing_queue": "weekend_low_priority",
+        "sla": "24 hours",
+        "weekendDay": "{@day.name}",
+        "priority": "low",
+        "timestamp": "{@timestamp.iso}"
+      }
+
+# Holiday Detection (Christmas Example)
+# Special handling for specific dates
+- topic: events/special
+  conditions:
+    operator: and
+    items:
+      - field: event_type
+        operator: eq
+        value: "notification"
+      - field: "@date.month"
+        operator: eq
+        value: 12       # December
+      - field: "@date.day"
+        operator: eq
+        value: 25       # 25th
+  action:
+    topic: notifications/holiday
+    payload: |
+      {
+        "message": "Holiday notification - Christmas Day",
+        "event": {event_data},
+        "holiday": "Christmas",
+        "date": "{@date.iso}",
+        "year": "{@date.year}",
+        "specialHandling": true,
+        "greetingId": "@{uuid4()}"
+      }
+
+# Time Zone Aware Processing
+# Example showing how current time can be used for scheduling
+- topic: scheduling/requests
+  conditions:
+    operator: and
+    items:
+      - field: schedule_type
+        operator: eq
+        value: "delayed"
+      - field: delay_hours
+        operator: gt
+        value: 0
+  action:
+    topic: scheduling/delayed_tasks
+    payload: |
+      {
+        "original_request": {request_data},
+        "scheduled_for": "in {delay_hours} hours",
+        "current_time": "{@time.hour}:{@time.minute}",
+        "current_date": "{@date.iso}",
+        "delay_requested": {delay_hours},
+        "scheduler_id": "@{uuid7()}"
+      }

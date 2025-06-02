@@ -1,0 +1,35 @@
+- topic: sensors/environment
+  conditions:
+    operator: and
+    items:
+      - field: status
+        operator: eq
+        value: active
+    groups:
+      - operator: or
+        items:
+          - field: temperature
+            operator: gt
+            value: 32
+        groups:
+          - operator: and
+            items:
+              - field: humidity
+                operator: gt
+                value: 85
+              - field: pressure
+                operator: lt
+                value: 990
+  action:
+    topic: alerts/environment
+    payload: |
+      {
+        "alert": "Critical environmental conditions!",
+        "conditions": {
+          "temperature": {temperature},
+          "humidity": {humidity},
+          "pressure": {pressure}
+        },
+        "timestamp": "@{timestamp()}",
+        "alertId": "@{uuid7()}"
+      }
