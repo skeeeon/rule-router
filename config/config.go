@@ -15,28 +15,11 @@ import (
 )
 
 type Config struct {
-	BrokerType string        `json:"brokerType" yaml:"brokerType"` // "mqtt" or "nats"
-	MQTT       MQTTConfig    `json:"mqtt" yaml:"mqtt"`
-	NATS       NATSConfig    `json:"nats" yaml:"nats"`
-	Logging    LogConfig     `json:"logging" yaml:"logging"`
-	Metrics    MetricsConfig `json:"metrics" yaml:"metrics"`
-	Processing ProcConfig    `json:"processing" yaml:"processing"`
+	NATS       NATSConfig      `json:"nats" yaml:"nats"`
+	Logging    LogConfig       `json:"logging" yaml:"logging"`
+	Metrics    MetricsConfig   `json:"metrics" yaml:"metrics"`
+	Processing ProcConfig      `json:"processing" yaml:"processing"`
 	Watermill  WatermillConfig `json:"watermill" yaml:"watermill"`
-}
-
-type MQTTConfig struct {
-	Broker   string `json:"broker" yaml:"broker"`
-	ClientID string `json:"clientId" yaml:"clientId"`
-	Username string `json:"username" yaml:"username"`
-	Password string `json:"password" yaml:"password"`
-	QoS      byte   `json:"qos" yaml:"qos"`
-	TLS      struct {
-		Enable   bool   `json:"enable" yaml:"enable"`
-		CertFile string `json:"certFile" yaml:"certFile"`
-		KeyFile  string `json:"keyFile" yaml:"keyFile"`
-		CAFile   string `json:"caFile" yaml:"caFile"`
-		Insecure bool   `json:"insecure" yaml:"insecure"` // Skip certificate verification
-	} `json:"tls" yaml:"tls"`
 }
 
 type NATSConfig struct {
@@ -159,11 +142,6 @@ func Load(path string) (*Config, error) {
 
 // setDefaults sets default values for configuration
 func setDefaults(cfg *Config) {
-	// Default broker type
-	if cfg.BrokerType == "" {
-		cfg.BrokerType = "nats" // Default to NATS for new installations
-	}
-
 	// Logging defaults
 	if cfg.Logging.Level == "" {
 		cfg.Logging.Level = "info"
@@ -197,13 +175,8 @@ func setDefaults(cfg *Config) {
 		cfg.Processing.BatchSize = 100
 	}
 
-	// MQTT defaults
-	if cfg.MQTT.QoS == 0 && cfg.BrokerType == "mqtt" {
-		cfg.MQTT.QoS = 0 // Default to QoS 0 for high throughput
-	}
-
 	// NATS defaults
-	if len(cfg.NATS.URLs) == 0 && cfg.BrokerType == "nats" {
+	if len(cfg.NATS.URLs) == 0 {
 		cfg.NATS.URLs = []string{"nats://localhost:4222"}
 	}
 
@@ -262,74 +235,47 @@ func setDefaults(cfg *Config) {
 
 // validateConfig performs validation of all configuration values
 func validateConfig(cfg *Config) error {
-	// Validate broker type
-	switch cfg.BrokerType {
-	case "mqtt":
-		if cfg.MQTT.Broker == "" {
-			return fmt.Errorf("mqtt broker address is required")
-		}
-		if cfg.MQTT.ClientID == "" {
-			return fmt.Errorf("mqtt client ID is required")
-		}
+	// Validate NATS configuration
+	if len(cfg.NATS.URLs) == 0 {
+		return fmt.Errorf("at least one NATS server URL is required")
+	}
 
-		// Validate MQTT TLS config if enabled
-		if cfg.MQTT.TLS.Enable {
-			if cfg.MQTT.TLS.CertFile == "" {
-				return fmt.Errorf("mqtt tls cert file is required when tls is enabled")
-			}
-			if cfg.MQTT.TLS.KeyFile == "" {
-				return fmt.Errorf("mqtt tls key file is required when tls is enabled")
-			}
-			if cfg.MQTT.TLS.CAFile == "" {
-				return fmt.Errorf("mqtt tls ca file is required when tls is enabled")
-			}
-		}
+	// Validate authentication options are not conflicting
+	authCount := 0
+	if cfg.NATS.Username != "" {
+		authCount++
+	}
+	if cfg.NATS.Token != "" {
+		authCount++
+	}
+	if cfg.NATS.NKey != "" {
+		authCount++
+	}
+	if cfg.NATS.CredsFile != "" {
+		authCount++
+	}
+	if authCount > 1 {
+		return fmt.Errorf("only one NATS authentication method should be specified")
+	}
 
-	case "nats":
-		if len(cfg.NATS.URLs) == 0 {
-			return fmt.Errorf("at least one nats server URL is required")
+	// Validate NATS TLS config if enabled
+	if cfg.NATS.TLS.Enable {
+		if cfg.NATS.TLS.CertFile == "" {
+			return fmt.Errorf("NATS TLS cert file is required when TLS is enabled")
 		}
+		if cfg.NATS.TLS.KeyFile == "" {
+			return fmt.Errorf("NATS TLS key file is required when TLS is enabled")
+		}
+		if cfg.NATS.TLS.CAFile == "" {
+			return fmt.Errorf("NATS TLS CA file is required when TLS is enabled")
+		}
+	}
 
-		// Validate authentication options are not conflicting
-		authCount := 0
-		if cfg.NATS.Username != "" {
-			authCount++
+	// Validate .creds file exists if specified
+	if cfg.NATS.CredsFile != "" {
+		if _, err := os.Stat(cfg.NATS.CredsFile); os.IsNotExist(err) {
+			return fmt.Errorf("NATS creds file does not exist: %s", cfg.NATS.CredsFile)
 		}
-		if cfg.NATS.Token != "" {
-			authCount++
-		}
-		if cfg.NATS.NKey != "" {
-			authCount++
-		}
-		if cfg.NATS.CredsFile != "" {
-			authCount++
-		}
-		if authCount > 1 {
-			return fmt.Errorf("only one NATS authentication method should be specified")
-		}
-
-		// Validate NATS TLS config if enabled
-		if cfg.NATS.TLS.Enable {
-			if cfg.NATS.TLS.CertFile == "" {
-				return fmt.Errorf("nats tls cert file is required when tls is enabled")
-			}
-			if cfg.NATS.TLS.KeyFile == "" {
-				return fmt.Errorf("nats tls key file is required when tls is enabled")
-			}
-			if cfg.NATS.TLS.CAFile == "" {
-				return fmt.Errorf("nats tls ca file is required when tls is enabled")
-			}
-		}
-
-		// Validate .creds file exists if specified
-		if cfg.NATS.CredsFile != "" {
-			if _, err := os.Stat(cfg.NATS.CredsFile); os.IsNotExist(err) {
-				return fmt.Errorf("nats creds file does not exist: %s", cfg.NATS.CredsFile)
-			}
-		}
-
-	default:
-		return fmt.Errorf("unsupported broker type: %s", cfg.BrokerType)
 	}
 
 	// Validate logging config
@@ -381,11 +327,7 @@ func validateConfig(cfg *Config) error {
 }
 
 // ApplyOverrides applies command line flag overrides to the configuration
-func (c *Config) ApplyOverrides(brokerType string, workers, queueSize, batchSize int, metricsAddr, metricsPath string, metricsInterval time.Duration) {
-	if brokerType != "" {
-		c.BrokerType = brokerType
-	}
-	
+func (c *Config) ApplyOverrides(workers, queueSize, batchSize int, metricsAddr, metricsPath string, metricsInterval time.Duration) {
 	if workers > 0 {
 		c.Processing.Workers = workers
 	}

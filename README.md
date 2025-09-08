@@ -1,12 +1,12 @@
 # Rule Router
 
-A high-performance message router built on [Watermill.io](https://watermill.io) that connects to external NATS JetStream or MQTT brokers, processes messages through sophisticated rule conditions with time-based evaluation, and publishes actions back to the brokers.
+A high-performance message router built on [Watermill.io](https://watermill.io) that connects to NATS JetStream, processes messages through sophisticated rule conditions with time-based evaluation, and publishes actions back to NATS.
 
 ## Features
 
 - 🚀 **High-Performance Processing**: Built on Watermill for 2,000-4,000 messages/second capability
-- 🔗 **External Broker Integration**: Connect to existing NATS JetStream or MQTT infrastructure
-- 🔐 **Comprehensive Authentication**: Support for various authentication methods and TLS
+- 🔗 **NATS JetStream Integration**: Connect to existing NATS JetStream infrastructure
+- 🔐 **Comprehensive Authentication**: Support for various NATS authentication methods and TLS
 - ⏰ **Time-Based Rule Evaluation**: Rules can evaluate based on current time, day of week, date
 - 📝 **Sophisticated Rule Engine**: Complex condition evaluation with AND/OR logic and nested groups
 - 📋 **Flexible Configuration**: YAML and JSON rule files with recursive directory loading
@@ -17,23 +17,23 @@ A high-performance message router built on [Watermill.io](https://watermill.io) 
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   External      │◄──►│  Watermill       │───▶│  Rule Engine    │
-│   NATS/MQTT     │    │  Router +        │    │  + Time-Based   │
-│   Brokers       │    │  Middleware      │    │  Evaluation     │
+│   NATS          │◄──►│  Watermill       │───▶│  Rule Engine    │
+│   JetStream     │    │  Router +        │    │  + Time-Based   │
+│                 │    │  Middleware      │    │  Evaluation     │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
                                 │
                                 ▼
                        ┌──────────────────┐
                        │   Actions        │
                        │   Published      │
-                       │   to Brokers     │
+                       │   to NATS        │
                        └──────────────────┘
 ```
 
 ## Quick Start
 
 ### Prerequisites
-- External NATS JetStream server or MQTT broker
+- NATS JetStream server
 - Go 1.21 or higher
 
 ### Installation
@@ -45,36 +45,32 @@ cd rule-router
 go build -o rule-router ./cmd/rule-router
 ```
 
-2. **Start External Broker**:
+2. **Start NATS JetStream**:
 ```bash
-# NATS JetStream (Recommended)
+# NATS JetStream
 docker run -d --name nats-js -p 4222:4222 nats:latest -js
-
-# OR MQTT Broker
-docker run -d --name mosquitto -p 1883:1883 eclipse-mosquitto:latest
 ```
 
 3. **Configure**:
 ```bash
 # Copy sample configuration
-cp config/watermill-nats.yaml config/config.yaml
-# Edit with your broker details
+cp config/config.yaml config/my-config.yaml
+# Edit with your NATS server details
 ```
 
 4. **Run**:
 ```bash
-./rule-router -config config/config.yaml -rules rules/
+./rule-router -config config/my-config.yaml -rules rules/
 ```
 
 ## Configuration
 
-### Broker Configuration
+### NATS JetStream Configuration
 
-**NATS JetStream (Recommended)**:
 ```yaml
-brokerType: nats
+# NATS Server Connection Configuration
 nats:
-  urls:                                    # NATS server URLs
+  urls:
     - nats://server1:4222
     - nats://server2:4222
   
@@ -84,25 +80,6 @@ nats:
   token: "auth-token"                      # Token authentication
   nkey: "nkey-string"                      # NKey authentication
   credsFile: "/path/to/service.creds"      # JWT credentials file
-  
-  # TLS Configuration
-  tls:
-    enable: true                           # Enable TLS
-    certFile: "/path/to/client.pem"        # Client certificate
-    keyFile: "/path/to/client-key.pem"     # Client private key
-    caFile: "/path/to/ca.pem"              # CA certificate
-    insecure: false                        # Skip certificate verification
-```
-
-**MQTT**:
-```yaml
-brokerType: mqtt
-mqtt:
-  broker: "ssl://broker:8883"              # MQTT broker URL
-  clientId: "rule-router"                  # Unique client identifier
-  username: "mqtt-user"                    # MQTT username
-  password: "mqtt-password"                # MQTT password
-  qos: 0                                   # Quality of Service (0, 1, 2)
   
   # TLS Configuration
   tls:
@@ -175,7 +152,7 @@ processing:
 ### Basic Rule Structure
 
 ```yaml
-- topic: "input/topic"                     # Topic to subscribe to
+- topic: "input.subject"                   # NATS subject to subscribe to
   conditions:                              # Optional conditions
     operator: and                          # Logical operator: and, or
     items:                                 # Individual conditions
@@ -186,7 +163,7 @@ processing:
       - operator: or
         items: [...]
   action:                                  # Action to execute
-    topic: "output/topic"                  # Topic to publish to
+    topic: "output.subject"                # NATS subject to publish to
     payload: "message template"            # Message template
 ```
 
@@ -246,9 +223,56 @@ payload: |
 
 ## Complete Rule Examples
 
+### Basic Temperature Alert
+```yaml
+- topic: sensors.temperature
+  conditions:
+    operator: and
+    items:
+      - field: temperature
+        operator: gt
+        value: 30
+  action:
+    topic: alerts.temperature
+    payload: |
+      {
+        "alert": "High temperature detected!",
+        "temperature": {temperature},
+        "location": {location},
+        "detectedAt": "@{timestamp()}",
+        "alertId": "@{uuid7()}"
+      }
+```
+
+### Nested Field Access Example
+```yaml
+# Message: {"sensor": {"reading": {"value": 32.1, "unit": "celsius"}, "location": "bedroom"}}
+- topic: sensors.data
+  conditions:
+    operator: and
+    items:
+      - field: sensor.reading.value        # ✅ Nested field in condition
+        operator: gt
+        value: 30
+      - field: sensor.reading.unit         # ✅ Nested string field
+        operator: eq
+        value: "celsius"
+  action:
+    topic: alerts.temperature
+    payload: |
+      {
+        "alert": "High temperature detected!",
+        "reading": {sensor.reading.value}, # ✅ Nested field in template
+        "unit": {sensor.reading.unit},
+        "location": {sensor.location},
+        "detectedAt": "@{timestamp()}",
+        "alertId": "@{uuid7()}"
+      }
+```
+
 ### Business Hours Alert
 ```yaml
-- topic: sensors/temperature
+- topic: sensors.temperature
   conditions:
     operator: and
     items:
@@ -265,7 +289,7 @@ payload: |
         operator: lte
         value: 5
   action:
-    topic: alerts/business_hours
+    topic: alerts.business-hours
     payload: |
       {
         "alert": "High temperature during business hours",
@@ -280,7 +304,7 @@ payload: |
 
 ### Complex Nested Conditions
 ```yaml
-- topic: system/monitoring
+- topic: system.monitoring
   conditions:
     operator: and
     items:
@@ -303,7 +327,7 @@ payload: |
                 operator: gte
                 value: 22
   action:
-    topic: alerts/critical
+    topic: alerts.critical
     payload: |
       {
         "alert": "Critical system condition",
@@ -320,7 +344,7 @@ payload: |
 
 ### Weekend Processing
 ```yaml
-- topic: tasks/batch
+- topic: tasks.batch
   conditions:
     operator: and
     items:
@@ -331,7 +355,7 @@ payload: |
         operator: gt
         value: 5
   action:
-    topic: processing/weekend
+    topic: processing.weekend
     payload: |
       {
         "task": {task_data},
@@ -373,12 +397,18 @@ Options:
         Path to config file (default "config/config.yaml")
   -rules string
         Path to rules directory (default "rules")
-  -broker-type string
-        Override broker type (mqtt or nats)
   -workers int
         Override number of worker threads
+  -queue-size int
+        Override size of processing queue
+  -batch-size int
+        Override message batch size
   -metrics-addr string
         Override metrics server address
+  -metrics-path string
+        Override metrics endpoint path
+  -metrics-interval duration
+        Override metrics collection interval
 ```
 
 ## Production Deployment

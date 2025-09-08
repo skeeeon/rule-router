@@ -13,18 +13,11 @@ import (
 
 	"github.com/ThreeDotsLabs/watermill/message"
 	"rule-router/config"
+	"rule-router/internal/broker"
 	"rule-router/internal/logger"
 	"rule-router/internal/metrics"
 	"rule-router/internal/rule"
 )
-
-// BrokerInterface defines the interface for message brokers
-type BrokerInterface interface {
-	GetPublisher() message.Publisher
-	GetSubscriber() message.Subscriber
-	GetRouter() *message.Router
-	Close() error
-}
 
 // App represents the main application with all its components
 type App struct {
@@ -33,7 +26,7 @@ type App struct {
 	logger           *logger.Logger
 	metrics          *metrics.Metrics
 	processor        *rule.Processor
-	broker           BrokerInterface
+	broker           *broker.NATSBroker
 	router           *message.Router
 	httpServer       *http.Server
 	metricsCollector *metrics.MetricsCollector
@@ -59,8 +52,8 @@ func NewApp(cfg *config.Config, rulesPath string) (*App, error) {
 		return nil, fmt.Errorf("failed to setup rules: %w", err)
 	}
 
-	if err := app.setupBroker(); err != nil {
-		return nil, fmt.Errorf("failed to setup broker: %w", err)
+	if err := app.setupNATSBroker(); err != nil {
+		return nil, fmt.Errorf("failed to setup NATS broker: %w", err)
 	}
 
 	if err := app.setupRouter(); err != nil {
@@ -77,9 +70,8 @@ func (a *App) Run(ctx context.Context) error {
 	defer cancel()
 
 	// Start the router
-	a.logger.Info("starting Watermill router with external broker connections",
-		"brokerType", a.config.BrokerType,
-		"externalBroker", a.getExternalBrokerInfo(),
+	a.logger.Info("starting Watermill router with NATS JetStream connection",
+		"natsUrls", a.config.NATS.URLs,
 		"workers", a.config.Processing.Workers,
 		"topicsCount", len(a.processor.GetTopics()),
 		"metricsEnabled", a.config.Metrics.Enabled)
@@ -142,10 +134,10 @@ func (a *App) Close() error {
 		}
 	}
 
-	// Close broker
+	// Close NATS broker
 	if a.broker != nil {
 		if err := a.broker.Close(); err != nil {
-			errors = append(errors, fmt.Errorf("failed to close broker: %w", err))
+			errors = append(errors, fmt.Errorf("failed to close NATS broker: %w", err))
 		}
 	}
 
@@ -169,17 +161,10 @@ func (a *App) Close() error {
 	return nil
 }
 
-// getExternalBrokerInfo returns broker connection info for logging
-func (a *App) getExternalBrokerInfo() string {
-	switch a.config.BrokerType {
-	case "nats":
-		if len(a.config.NATS.URLs) > 0 {
-			return a.config.NATS.URLs[0]
-		}
-		return "nats://localhost:4222"
-	case "mqtt":
-		return a.config.MQTT.Broker
-	default:
-		return "unknown"
+// getNATSBrokerInfo returns NATS connection info for logging
+func (a *App) getNATSBrokerInfo() string {
+	if len(a.config.NATS.URLs) > 0 {
+		return a.config.NATS.URLs[0]
 	}
+	return "nats://localhost:4222"
 }

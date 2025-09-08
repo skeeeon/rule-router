@@ -1,4 +1,4 @@
-- topic: sensors/environment
+- topic: sensors.environment                    # NATS subject format
   conditions:
     operator: and
     items:
@@ -21,7 +21,7 @@
                 operator: lt
                 value: 990
   action:
-    topic: alerts/environment
+    topic: alerts.environment                   # NATS output subject
     payload: |
       {
         "alert": "Critical environmental conditions!",

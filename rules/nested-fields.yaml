@@ -1,0 +1,311 @@
+# Nested Field Access Examples for rule-router
+# Demonstrates consistent nested field support in both conditions and templates
+
+# Example 1: IoT Sensor Data with Nested Structure
+# Sample message:
+# {
+#   "device": {
+#     "id": "sensor001",
+#     "type": "temperature",
+#     "location": "bedroom"
+#   },
+#   "data": {
+#     "reading": {
+#       "value": 25.5,
+#       "unit": "celsius",
+#       "accuracy": 0.1
+#     },
+#     "timestamp": "2024-01-15T14:30:00Z"
+#   },
+#   "metadata": {
+#     "quality": "good",
+#     "calibrated": true
+#   }
+# }
+
+- topic: sensors.data
+  conditions:
+    operator: and
+    items:
+      # Nested field access in conditions (NOW SUPPORTED!)
+      - field: device.type                     # ✅ Nested field access
+        operator: eq
+        value: "temperature"
+      - field: data.reading.value              # ✅ Deep nested access
+        operator: gt
+        value: 25
+      - field: data.reading.unit               # ✅ Nested string field
+        operator: eq
+        value: "celsius"
+      - field: metadata.calibrated             # ✅ Nested boolean field
+        operator: eq
+        value: true
+  action:
+    topic: alerts.high-temperature
+    payload: |
+      {
+        "alert": "High temperature detected",
+        "device": {
+          "id": {device.id},                   # ✅ Template nested access
+          "type": {device.type},
+          "location": {device.location}
+        },
+        "reading": {
+          "value": {data.reading.value},       # ✅ Deep nested template
+          "unit": {data.reading.unit},
+          "accuracy": {data.reading.accuracy}
+        },
+        "quality": {metadata.quality},         # ✅ Nested template access
+        "timestamp": {data.timestamp},
+        "alertId": "@{uuid7()}"
+      }
+
+# Example 2: Complex Business Event Processing
+# Sample message:
+# {
+#   "event": {
+#     "type": "order",
+#     "action": "created"
+#   },
+#   "order": {
+#     "id": "ORD-12345",
+#     "customer": {
+#       "id": "CUST-789",
+#       "tier": "premium",
+#       "region": "us-west"
+#     },
+#     "items": {
+#       "total_value": 1250.00,
+#       "count": 3,
+#       "categories": ["electronics", "accessories"]
+#     },
+#     "payment": {
+#       "method": "credit_card",
+#       "status": "pending"
+#     }
+#   }
+# }
+
+- topic: events.orders
+  conditions:
+    operator: and
+    items:
+      - field: event.type                      # ✅ Nested condition
+        operator: eq
+        value: "order"
+      - field: event.action                    # ✅ Nested condition
+        operator: eq
+        value: "created"
+      - field: order.customer.tier             # ✅ Deep nested condition
+        operator: eq
+        value: "premium"
+      - field: order.items.total_value         # ✅ Nested numeric condition
+        operator: gte
+        value: 1000
+      - field: order.payment.method            # ✅ Nested string condition
+        operator: eq
+        value: "credit_card"
+  action:
+    topic: processing.premium-orders
+    payload: |
+      {
+        "message": "Premium customer large order created",
+        "order_id": {order.id},                # ✅ Nested template
+        "customer": {
+          "id": {order.customer.id},           # ✅ Deep nested template
+          "tier": {order.customer.tier},
+          "region": {order.customer.region}
+        },
+        "order_details": {
+          "value": {order.items.total_value},  # ✅ Nested numeric template
+          "item_count": {order.items.count},
+          "payment_method": {order.payment.method}
+        },
+        "processing": {
+          "priority": "high",
+          "assigned_at": "@{timestamp()}",
+          "processor_id": "@{uuid7()}"
+        }
+      }
+
+# Example 3: API Response Processing with Error Handling
+# Sample message:
+# {
+#   "response": {
+#     "status": {
+#       "code": 200,
+#       "message": "OK"
+#     },
+#     "headers": {
+#       "content_type": "application/json",
+#       "server": "nginx/1.18"
+#     },
+#     "body": {
+#       "data": {
+#         "user_count": 1500,
+#         "system_health": "healthy"
+#       },
+#       "errors": []
+#     }
+#   },
+#   "request": {
+#     "endpoint": "/api/v1/status",
+#     "method": "GET"
+#   }
+# }
+
+- topic: api.responses
+  conditions:
+    operator: and
+    items:
+      - field: response.status.code            # ✅ Nested numeric condition
+        operator: eq
+        value: 200
+      - field: response.headers.content_type   # ✅ Nested string condition
+        operator: eq
+        value: "application/json"
+      - field: response.body.data.user_count   # ✅ Deep nested condition
+        operator: gt
+        value: 1000
+      - field: response.body.data.system_health # ✅ Nested health check
+        operator: eq
+        value: "healthy"
+  action:
+    topic: monitoring.healthy-systems
+    payload: |
+      {
+        "status": "System healthy with high user count",
+        "endpoint": {request.endpoint},        # ✅ Nested template
+        "method": {request.method},
+        "response_details": {
+          "status_code": {response.status.code}, # ✅ Nested template
+          "status_message": {response.status.message},
+          "server": {response.headers.server},
+          "user_count": {response.body.data.user_count}, # ✅ Deep nested template
+          "system_health": {response.body.data.system_health}
+        },
+        "monitoring": {
+          "checked_at": "@{timestamp()}",
+          "check_id": "@{uuid7()}"
+        }
+      }
+
+# Example 4: Mixed Conditions (Top-level and Nested)
+# Sample message:
+# {
+#   "priority": "high",
+#   "source": "production",
+#   "alert": {
+#     "severity": "critical",
+#     "category": "performance",
+#     "details": {
+#       "cpu_usage": 95.5,
+#       "memory_usage": 87.2,
+#       "disk_space": 15.1
+#     }
+#   }
+# }
+
+- topic: system.alerts
+  conditions:
+    operator: and
+    items:
+      # Mix of top-level and nested conditions
+      - field: priority                       # ✅ Top-level field (backward compatible)
+        operator: eq
+        value: "high"
+      - field: source                         # ✅ Top-level field
+        operator: eq
+        value: "production"
+      - field: alert.severity                 # ✅ Nested field
+        operator: eq
+        value: "critical"
+      - field: alert.details.cpu_usage       # ✅ Deep nested numeric field
+        operator: gte
+        value: 90
+      - field: alert.details.memory_usage     # ✅ Deep nested numeric field
+        operator: gte
+        value: 85
+    groups:
+      - operator: or
+        items:
+          - field: alert.details.disk_space   # ✅ Nested in group condition
+            operator: lte
+            value: 20
+          - field: alert.category             # ✅ Nested condition in OR group
+            operator: eq
+            value: "performance"
+  action:
+    topic: alerts.critical-system
+    payload: |
+      {
+        "alert": "Critical system performance issue",
+        "severity": {alert.severity},         # ✅ Nested template
+        "category": {alert.category},
+        "priority": {priority},               # ✅ Top-level template
+        "source": {source},
+        "metrics": {
+          "cpu": {alert.details.cpu_usage},  # ✅ Deep nested template
+          "memory": {alert.details.memory_usage},
+          "disk": {alert.details.disk_space}
+        },
+        "escalation": {
+          "level": "immediate",
+          "escalated_at": "@{timestamp()}",
+          "incident_id": "@{uuid7()}"
+        }
+      }
+
+# Example 5: Array Element Access (Note: Individual array items not supported, 
+# but you can access array properties like length if exposed by JSON unmarshaling)
+# Sample message:
+# {
+#   "user": {
+#     "profile": {
+#       "name": "John Doe",
+#       "preferences": {
+#         "notifications": true,
+#         "theme": "dark"
+#       }
+#     },
+#     "activity": {
+#       "last_login": "2024-01-15T10:30:00Z",
+#       "session_count": 15
+#     }
+#   }
+# }
+
+- topic: users.activity
+  conditions:
+    operator: and
+    items:
+      - field: user.profile.preferences.notifications  # ✅ Very deep nesting
+        operator: eq
+        value: true
+      - field: user.activity.session_count             # ✅ Nested numeric
+        operator: gt
+        value: 10
+      - field: user.profile.preferences.theme          # ✅ Deep nested string
+        operator: eq
+        value: "dark"
+  action:
+    topic: analytics.active-users
+    payload: |
+      {
+        "user_profile": {
+          "name": {user.profile.name},                  # ✅ Deep nested template
+          "preferences": {
+            "notifications": {user.profile.preferences.notifications},
+            "theme": {user.profile.preferences.theme}
+          }
+        },
+        "activity": {
+          "last_login": {user.activity.last_login},    # ✅ Nested template
+          "session_count": {user.activity.session_count}
+        },
+        "analysis": {
+          "user_type": "active_dark_theme_user",
+          "analyzed_at": "@{timestamp()}",
+          "analysis_id": "@{uuid7()}"
+        }
+      }

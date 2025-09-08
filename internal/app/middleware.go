@@ -54,7 +54,7 @@ func (a *App) conditionalMetricsMiddleware() message.HandlerMiddleware {
 	}
 }
 
-// setupHandlers configures message handlers for each rule topic
+// setupHandlers configures message handlers for each rule topic using NATS subjects
 func (a *App) setupHandlers() {
 	publisher := a.broker.GetPublisher()
 	subscriber := a.broker.GetSubscriber()
@@ -66,14 +66,9 @@ func (a *App) setupHandlers() {
 	for _, topic := range topics {
 		handlerName := fmt.Sprintf("processor-%s", a.sanitizeHandlerName(topic))
 
-		// Convert MQTT topic format to NATS subject format if using NATS
+		// Use topic directly - it's already in NATS subject format
 		subscribeTopic := topic
 		publishTopic := "processed." + topic
-
-		if a.config.BrokerType == "nats" {
-			subscribeTopic = a.toNATSSubject(topic)
-			publishTopic = a.toNATSSubject(publishTopic)
-		}
 
 		a.logger.Debug("adding handler",
 			"handlerName", handlerName,
@@ -98,26 +93,13 @@ func (a *App) setupHandlers() {
 	}
 }
 
-// sanitizeHandlerName ensures handler names are valid for Watermill
+// sanitizeHandlerName ensures handler names are valid for Watermill with NATS subjects
 func (a *App) sanitizeHandlerName(topic string) string {
-	// Replace problematic characters in topic names for handler names
+	// Replace NATS-specific characters in subject names for handler names
 	sanitized := topic
-	sanitized = strings.ReplaceAll(sanitized, "/", "-")
 	sanitized = strings.ReplaceAll(sanitized, ".", "-")
+	sanitized = strings.ReplaceAll(sanitized, "*", "wildcard")
+	sanitized = strings.ReplaceAll(sanitized, ">", "multi-wildcard")
 	sanitized = strings.ReplaceAll(sanitized, " ", "-")
-	sanitized = strings.ReplaceAll(sanitized, "#", "wildcard")
-	sanitized = strings.ReplaceAll(sanitized, "+", "single")
 	return sanitized
-}
-
-// toNATSSubject converts MQTT topic format to NATS subject format
-func (a *App) toNATSSubject(mqttTopic string) string {
-	// Convert MQTT topic format to NATS subject format
-	// MQTT uses / as separators and +/# as wildcards
-	// NATS uses . as separators and */> as wildcards
-	subject := mqttTopic
-	subject = strings.ReplaceAll(subject, "+", "*")
-	subject = strings.ReplaceAll(subject, "#", ">")
-	subject = strings.ReplaceAll(subject, "/", ".")
-	return subject
 }

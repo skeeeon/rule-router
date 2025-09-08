@@ -317,7 +317,9 @@ func (p *Processor) processVariableTemplate(match string, data map[string]interf
 
     path := strings.Split(pathStr, ".")
 
-    value, err := p.getValueFromPath(data, path)
+    // Use the same getValueFromPath method that's defined in evaluator.go
+    // We need to call it on a processor instance that has access to the evaluator methods
+    value, err := p.getValueFromPathForTemplate(data, path)
     if err != nil {
         syntaxType := "new"
         if isLegacy {
@@ -342,7 +344,9 @@ func (p *Processor) processVariableTemplate(match string, data map[string]interf
     return strValue
 }
 
-func (p *Processor) getValueFromPath(data map[string]interface{}, path []string) (interface{}, error) {
+// getValueFromPathForTemplate is a helper method for template processing
+// It uses the same logic as the evaluator's getValueFromPath method
+func (p *Processor) getValueFromPathForTemplate(data map[string]interface{}, path []string) (interface{}, error) {
     var current interface{} = data
 
     for _, key := range path {

@@ -1,5 +1,5 @@
-# Watermill NATS JetStream Configuration for High-Performance Message Routing
-brokerType: nats
+# NATS-Only Configuration for Rule Router
+# High-Performance Message Routing with NATS JetStream
 
 # NATS Server Connection Configuration
 nats:
@@ -28,7 +28,7 @@ nats:
     certFile: "/etc/ssl/nats/client-cert.pem"
     keyFile: "/etc/ssl/nats/client-key.pem"
     caFile: "/etc/ssl/nats/ca.pem"
-    insecure: false                    # Set to true to skip certificate verification
+    insecure: false                    # Skip certificate verification
 
 # Watermill NATS JetStream Configuration
 watermill:

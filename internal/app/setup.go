@@ -121,31 +121,17 @@ func (a *App) setupRules() error {
 	return nil
 }
 
-// setupBroker creates the appropriate Watermill broker based on configuration
-func (a *App) setupBroker() error {
-	switch a.config.BrokerType {
-	case "nats":
-		a.logger.Info("connecting to external NATS JetStream server", "urls", a.config.NATS.URLs)
-		watermillBroker, err := broker.NewWatermillNATSBroker(a.config, a.logger, a.metrics)
-		if err != nil {
-			return fmt.Errorf("failed to connect to NATS JetStream server: %w", err)
-		}
-		a.broker = watermillBroker
-		a.logger.Info("successfully connected to NATS JetStream")
-
-	case "mqtt":
-		a.logger.Info("connecting to external MQTT broker", "broker", a.config.MQTT.Broker)
-		watermillBroker, err := broker.NewWatermillMQTTBroker(a.config, a.logger, a.metrics)
-		if err != nil {
-			return fmt.Errorf("failed to connect to MQTT broker: %w", err)
-		}
-		a.broker = watermillBroker
-		a.logger.Info("successfully connected to MQTT broker")
-
-	default:
-		return fmt.Errorf("unsupported broker type: %s", a.config.BrokerType)
+// setupNATSBroker creates the NATS broker connection
+func (a *App) setupNATSBroker() error {
+	a.logger.Info("connecting to NATS JetStream server", "urls", a.config.NATS.URLs)
+	
+	natsBroker, err := broker.NewNATSBroker(a.config, a.logger, a.metrics)
+	if err != nil {
+		return fmt.Errorf("failed to connect to NATS JetStream server: %w", err)
 	}
-
+	a.broker = natsBroker
+	a.logger.Info("successfully connected to NATS JetStream")
+	
 	return nil
 }
 

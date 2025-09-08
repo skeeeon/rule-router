@@ -1,4 +1,4 @@
-//file: internal/broker/nats_watermill.go
+//file: internal/broker/nats.go
 
 package broker
 
@@ -15,27 +15,23 @@ import (
 	"rule-router/internal/metrics"
 )
 
-// WatermillNATSBroker connects to external NATS JetStream servers
-type WatermillNATSBroker struct {
-	publisher   message.Publisher
-	subscriber  message.Subscriber
-	router      *message.Router
-	logger      *logger.Logger
-	metrics     *metrics.Metrics
-	config      *config.Config
+// NATSBroker connects to external NATS JetStream servers
+type NATSBroker struct {
+	publisher       message.Publisher
+	subscriber      message.Subscriber
+	router          *message.Router
+	logger          *logger.Logger
+	metrics         *metrics.Metrics
+	config          *config.Config
 	watermillLogger watermill.LoggerAdapter
 }
 
-// NewWatermillNATSBroker creates a new Watermill NATS broker that connects to external NATS servers
-func NewWatermillNATSBroker(cfg *config.Config, log *logger.Logger, metrics *metrics.Metrics) (*WatermillNATSBroker, error) {
-	if cfg.BrokerType != "nats" {
-		return nil, fmt.Errorf("broker type must be 'nats' for NATS broker")
-	}
+// NewNATSBroker creates a new NATS broker that connects to external NATS servers
+func NewNATSBroker(cfg *config.Config, log *logger.Logger, metrics *metrics.Metrics) (*NATSBroker, error) {
+	// Create logger adapter
+	watermillLogger := NewLoggerAdapter(log)
 
-	// Create Watermill logger adapter
-	watermillLogger := NewWatermillLoggerAdapter(log)
-
-	broker := &WatermillNATSBroker{
+	broker := &NATSBroker{
 		logger:          log,
 		metrics:         metrics,
 		config:          cfg,
@@ -59,7 +55,7 @@ func NewWatermillNATSBroker(cfg *config.Config, log *logger.Logger, metrics *met
 }
 
 // initializePublisher creates a publisher that connects to external NATS JetStream
-func (b *WatermillNATSBroker) initializePublisher() error {
+func (b *NATSBroker) initializePublisher() error {
 	b.logger.Info("connecting to external NATS JetStream server for publishing",
 		"urls", b.config.NATS.URLs)
 
@@ -96,7 +92,7 @@ func (b *WatermillNATSBroker) initializePublisher() error {
 }
 
 // initializeSubscriber creates a subscriber that connects to external NATS JetStream
-func (b *WatermillNATSBroker) initializeSubscriber() error {
+func (b *NATSBroker) initializeSubscriber() error {
 	b.logger.Info("connecting to external NATS JetStream server for subscription",
 		"urls", b.config.NATS.URLs,
 		"subscriberCount", b.config.Watermill.NATS.SubscriberCount)
@@ -140,7 +136,7 @@ func (b *WatermillNATSBroker) initializeSubscriber() error {
 }
 
 // buildNATSOptions creates NATS connection options with proper authentication and TLS
-func (b *WatermillNATSBroker) buildNATSOptions() ([]watermillNats.Option, error) {
+func (b *NATSBroker) buildNATSOptions() ([]watermillNats.Option, error) {
 	var natsOptions []watermillNats.Option
 
 	// Connection behavior options
@@ -199,7 +195,7 @@ func (b *WatermillNATSBroker) buildNATSOptions() ([]watermillNats.Option, error)
 }
 
 // initializeRouter creates the Watermill router
-func (b *WatermillNATSBroker) initializeRouter() error {
+func (b *NATSBroker) initializeRouter() error {
 	b.logger.Info("initializing Watermill router")
 
 	var err error
@@ -215,22 +211,22 @@ func (b *WatermillNATSBroker) initializeRouter() error {
 }
 
 // GetPublisher returns the NATS publisher
-func (b *WatermillNATSBroker) GetPublisher() message.Publisher {
+func (b *NATSBroker) GetPublisher() message.Publisher {
 	return b.publisher
 }
 
 // GetSubscriber returns the NATS subscriber
-func (b *WatermillNATSBroker) GetSubscriber() message.Subscriber {
+func (b *NATSBroker) GetSubscriber() message.Subscriber {
 	return b.subscriber
 }
 
 // GetRouter returns the Watermill router
-func (b *WatermillNATSBroker) GetRouter() *message.Router {
+func (b *NATSBroker) GetRouter() *message.Router {
 	return b.router
 }
 
 // Close shuts down the broker connections
-func (b *WatermillNATSBroker) Close() error {
+func (b *NATSBroker) Close() error {
 	b.logger.Info("closing connections to NATS JetStream server")
 
 	var errors []error
@@ -261,17 +257,17 @@ func (b *WatermillNATSBroker) Close() error {
 	return nil
 }
 
-// WatermillLoggerAdapter adapts our logger to Watermill's interface
-type WatermillLoggerAdapter struct {
+// LoggerAdapter adapts our logger to Watermill's interface
+type LoggerAdapter struct {
 	logger *logger.Logger
 }
 
-// NewWatermillLoggerAdapter creates a new logger adapter
-func NewWatermillLoggerAdapter(logger *logger.Logger) *WatermillLoggerAdapter {
-	return &WatermillLoggerAdapter{logger: logger}
+// NewLoggerAdapter creates a new logger adapter
+func NewLoggerAdapter(logger *logger.Logger) *LoggerAdapter {
+	return &LoggerAdapter{logger: logger}
 }
 
-func (l *WatermillLoggerAdapter) Error(msg string, err error, fields watermill.LogFields) {
+func (l *LoggerAdapter) Error(msg string, err error, fields watermill.LogFields) {
 	args := []interface{}{"error", err}
 	for k, v := range fields {
 		args = append(args, k, v)
@@ -279,7 +275,7 @@ func (l *WatermillLoggerAdapter) Error(msg string, err error, fields watermill.L
 	l.logger.Error(msg, args...)
 }
 
-func (l *WatermillLoggerAdapter) Info(msg string, fields watermill.LogFields) {
+func (l *LoggerAdapter) Info(msg string, fields watermill.LogFields) {
 	args := make([]interface{}, 0, len(fields)*2)
 	for k, v := range fields {
 		args = append(args, k, v)
@@ -287,7 +283,7 @@ func (l *WatermillLoggerAdapter) Info(msg string, fields watermill.LogFields) {
 	l.logger.Info(msg, args...)
 }
 
-func (l *WatermillLoggerAdapter) Debug(msg string, fields watermill.LogFields) {
+func (l *LoggerAdapter) Debug(msg string, fields watermill.LogFields) {
 	args := make([]interface{}, 0, len(fields)*2)
 	for k, v := range fields {
 		args = append(args, k, v)
@@ -295,7 +291,7 @@ func (l *WatermillLoggerAdapter) Debug(msg string, fields watermill.LogFields) {
 	l.logger.Debug(msg, args...)
 }
 
-func (l *WatermillLoggerAdapter) Trace(msg string, fields watermill.LogFields) {
+func (l *LoggerAdapter) Trace(msg string, fields watermill.LogFields) {
 	args := make([]interface{}, 0, len(fields)*2)
 	for k, v := range fields {
 		args = append(args, k, v)
@@ -303,13 +299,13 @@ func (l *WatermillLoggerAdapter) Trace(msg string, fields watermill.LogFields) {
 	l.logger.Debug(msg, args...) // Map Trace to Debug
 }
 
-func (l *WatermillLoggerAdapter) With(fields watermill.LogFields) watermill.LoggerAdapter {
+func (l *LoggerAdapter) With(fields watermill.LogFields) watermill.LoggerAdapter {
 	// For simplicity, return the same logger
 	return l
 }
 
 // getFirstNATSURL returns the first NATS URL or a default
-func (b *WatermillNATSBroker) getFirstNATSURL() string {
+func (b *NATSBroker) getFirstNATSURL() string {
 	if len(b.config.NATS.URLs) > 0 {
 		return b.config.NATS.URLs[0]
 	}

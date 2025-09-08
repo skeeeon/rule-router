@@ -92,19 +92,41 @@ func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{
             "expectedValue", cond.Value,
             "actualTimeValue", value)
     } else {
-        // Regular message field
-        value, ok = msg[cond.Field]
-        if !ok {
-            p.logger.Debug("field not found in message",
+        // Regular message field - now supports nested paths
+        if strings.Contains(cond.Field, ".") {
+            // Nested field access using dot notation
+            path := strings.Split(cond.Field, ".")
+            var err error
+            value, err = p.getValueFromPath(msg, path)
+            if err != nil {
+                p.logger.Debug("nested field not found in message",
+                    "field", cond.Field,
+                    "path", path,
+                    "error", err,
+                    "availableTopLevelFields", getMapKeys(msg))
+                return false
+            }
+            p.logger.Debug("evaluating nested message field condition",
                 "field", cond.Field,
-                "availableFields", getMapKeys(msg))
-            return false
+                "path", path,
+                "operator", cond.Operator,
+                "expectedValue", cond.Value,
+                "actualValue", value)
+        } else {
+            // Direct field access (backward compatibility)
+            value, ok = msg[cond.Field]
+            if !ok {
+                p.logger.Debug("field not found in message",
+                    "field", cond.Field,
+                    "availableFields", getMapKeys(msg))
+                return false
+            }
+            p.logger.Debug("evaluating message field condition",
+                "field", cond.Field,
+                "operator", cond.Operator,
+                "expectedValue", cond.Value,
+                "actualValue", value)
         }
-        p.logger.Debug("evaluating message field condition",
-            "field", cond.Field,
-            "operator", cond.Operator,
-            "expectedValue", cond.Value,
-            "actualValue", value)
     }
 
     var result bool
@@ -190,6 +212,33 @@ func (p *Processor) compareNumeric(a, b interface{}, op string) bool {
     default:
         return false
     }
+}
+
+// getValueFromPath traverses a nested map using a path array
+// This is the same logic used in template processing for consistency
+func (p *Processor) getValueFromPath(data map[string]interface{}, path []string) (interface{}, error) {
+    var current interface{} = data
+
+    for _, key := range path {
+        switch v := current.(type) {
+        case map[string]interface{}:
+            var ok bool
+            current, ok = v[key]
+            if !ok {
+                return nil, fmt.Errorf("key not found: %s", key)
+            }
+        case map[interface{}]interface{}:
+            var ok bool
+            current, ok = v[key]
+            if !ok {
+                return nil, fmt.Errorf("key not found: %s", key)
+            }
+        default:
+            return nil, fmt.Errorf("invalid path: %s is not a map", key)
+        }
+    }
+
+    return current, nil
 }
 
 func getMapKeys(m map[string]interface{}) []string {
