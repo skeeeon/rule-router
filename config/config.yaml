@@ -1,4 +1,4 @@
-# NATS-Only Configuration for Rule Router
+# NATS Rule Router Configuration
 # High-Performance Message Routing with NATS JetStream
 
 # NATS Server Connection Configuration
@@ -46,11 +46,6 @@ watermill:
   router:
     closeTimeout: 30s                  # Graceful shutdown timeout
   
-  performance:
-    batchSize: 100                     # Optimal batch size for NATS
-    batchTimeout: 1s                   # Max batch wait time
-    bufferSize: 8192                   # Processing buffer size
-  
   middleware:
     retryMaxAttempts: 3                # Retry failed message processing
     retryInterval: 100ms               # Initial retry interval
@@ -69,9 +64,3 @@ metrics:
   address: :2112
   path: /metrics
   updateInterval: 15s
-
-# Rule Processing Configuration
-processing:
-  workers: 4                           # Rule processing worker threads
-  queueSize: 1000                      # Internal processing queue size
-  batchSize: 100                       # Message batch size for rule processing

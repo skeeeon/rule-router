@@ -99,13 +99,8 @@ func (a *App) setupRules() error {
 		return fmt.Errorf("failed to load rules: %w", err)
 	}
 
-	// Create rule processor
-	processorCfg := rule.ProcessorConfig{
-		Workers:   a.config.Processing.Workers,
-		QueueSize: a.config.Processing.QueueSize,
-		BatchSize: a.config.Processing.BatchSize,
-	}
-	a.processor = rule.NewProcessor(processorCfg, a.logger, a.metrics)
+	// Create rule processor - no configuration struct needed
+	a.processor = rule.NewProcessor(a.logger, a.metrics)
 
 	// Load rules into processor
 	if err := a.processor.LoadRules(rules); err != nil {
@@ -113,10 +108,7 @@ func (a *App) setupRules() error {
 	}
 
 	a.logger.Info("rules loaded successfully",
-		"ruleCount", len(rules),
-		"workers", processorCfg.Workers,
-		"queueSize", processorCfg.QueueSize,
-		"batchSize", processorCfg.BatchSize)
+		"ruleCount", len(rules))
 
 	return nil
 }
@@ -143,11 +135,11 @@ func (a *App) setupRouter() error {
 	// Setup middleware stack
 	a.setupMiddleware()
 
-	// Setup message handlers
+	// Setup message handlers - now they do the real work
 	a.setupHandlers()
 
 	a.logger.Info("router configured successfully",
-		"middlewareCount", "full stack",
+		"middlewareCount", "operational stack",
 		"handlerCount", len(a.processor.GetTopics()))
 
 	return nil

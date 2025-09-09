@@ -17,9 +17,9 @@ type Metrics struct {
 	ruleMatchesTotal prometheus.Counter
 	rulesActive      prometheus.Gauge
 
-	// MQTT metrics
-	mqttConnectionStatus prometheus.Gauge
-	mqttReconnectsTotal prometheus.Counter
+	// NATS metrics (renamed from MQTT for clarity)
+	natsConnectionStatus prometheus.Gauge
+	natsReconnectsTotal prometheus.Counter
 
 	// Action metrics
 	actionsTotal *prometheus.CounterVec
@@ -30,7 +30,6 @@ type Metrics struct {
 	// System metrics
 	processGoroutines  prometheus.Gauge
 	processMemoryBytes prometheus.Gauge
-	workerPoolActive   prometheus.Gauge
 }
 
 // NewMetrics creates and registers all prometheus metrics
@@ -67,16 +66,16 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 				Help: "Current number of active rules",
 			},
 		),
-		mqttConnectionStatus: prometheus.NewGauge(
+		natsConnectionStatus: prometheus.NewGauge(
 			prometheus.GaugeOpts{
-				Name: "mqtt_connection_status",
-				Help: "Current MQTT connection status (0/1)",
+				Name: "nats_connection_status",
+				Help: "Current NATS connection status (0/1)",
 			},
 		),
-		mqttReconnectsTotal: prometheus.NewCounter(
+		natsReconnectsTotal: prometheus.NewCounter(
 			prometheus.CounterOpts{
-				Name: "mqtt_reconnects_total",
-				Help: "Total number of MQTT reconnection attempts",
+				Name: "nats_reconnects_total",
+				Help: "Total number of NATS reconnection attempts",
 			},
 		),
 		actionsTotal: prometheus.NewCounterVec(
@@ -105,12 +104,6 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 				Help: "Current memory usage in bytes",
 			},
 		),
-		workerPoolActive: prometheus.NewGauge(
-			prometheus.GaugeOpts{
-				Name: "worker_pool_active",
-				Help: "Current number of active workers",
-			},
-		),
 	}
 
 	// Register all metrics
@@ -120,13 +113,12 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.processingBacklog,
 		m.ruleMatchesTotal,
 		m.rulesActive,
-		m.mqttConnectionStatus,
-		m.mqttReconnectsTotal,
+		m.natsConnectionStatus,
+		m.natsReconnectsTotal,
 		m.actionsTotal,
 		m.templateOpsTotal,
 		m.processGoroutines,
 		m.processMemoryBytes,
-		m.workerPoolActive,
 	}
 
 	for _, metric := range metrics {
@@ -163,18 +155,18 @@ func (m *Metrics) SetRulesActive(count float64) {
 	m.rulesActive.Set(count)
 }
 
-// SetMQTTConnectionStatus sets the MQTT connection status
-func (m *Metrics) SetMQTTConnectionStatus(connected bool) {
+// SetNATSConnectionStatus sets the NATS connection status
+func (m *Metrics) SetNATSConnectionStatus(connected bool) {
 	if connected {
-		m.mqttConnectionStatus.Set(1)
+		m.natsConnectionStatus.Set(1)
 	} else {
-		m.mqttConnectionStatus.Set(0)
+		m.natsConnectionStatus.Set(0)
 	}
 }
 
-// IncMQTTReconnects increments the MQTT reconnects counter
-func (m *Metrics) IncMQTTReconnects() {
-	m.mqttReconnectsTotal.Inc()
+// IncNATSReconnects increments the NATS reconnects counter
+func (m *Metrics) IncNATSReconnects() {
+	m.natsReconnectsTotal.Inc()
 }
 
 // IncActionsTotal increments the actions counter for a given status
@@ -193,7 +185,20 @@ func (m *Metrics) SetProcessMetrics(goroutines, memoryBytes float64) {
 	m.processMemoryBytes.Set(memoryBytes)
 }
 
-// SetWorkerPoolActive sets the number of active workers
+// Legacy compatibility methods for MQTT metrics (now mapping to NATS)
+// Keeping these to avoid breaking existing code
+
+// SetMQTTConnectionStatus sets the NATS connection status (legacy method)
+func (m *Metrics) SetMQTTConnectionStatus(connected bool) {
+	m.SetNATSConnectionStatus(connected)
+}
+
+// IncMQTTReconnects increments the NATS reconnects counter (legacy method)
+func (m *Metrics) IncMQTTReconnects() {
+	m.IncNATSReconnects()
+}
+
+// SetWorkerPoolActive is now a no-op since we removed worker pools
 func (m *Metrics) SetWorkerPoolActive(count float64) {
-	m.workerPoolActive.Set(count)
+	// No-op - worker pool metrics removed
 }

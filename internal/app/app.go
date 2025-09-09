@@ -72,7 +72,6 @@ func (a *App) Run(ctx context.Context) error {
 	// Start the router
 	a.logger.Info("starting Watermill router with NATS JetStream connection",
 		"natsUrls", a.config.NATS.URLs,
-		"workers", a.config.Processing.Workers,
 		"topicsCount", len(a.processor.GetTopics()),
 		"metricsEnabled", a.config.Metrics.Enabled)
 
@@ -90,7 +89,7 @@ func (a *App) Run(ctx context.Context) error {
 	if a.metrics != nil {
 		topics := a.processor.GetTopics()
 		a.metrics.SetRulesActive(float64(len(topics)))
-		a.metrics.SetWorkerPoolActive(float64(a.config.Processing.Workers))
+		// Note: Removed worker pool metrics since we don't use pools anymore
 	}
 
 	// Wait for shutdown signal
@@ -141,7 +140,7 @@ func (a *App) Close() error {
 		}
 	}
 
-	// Close processor
+	// Close processor (simplified - no workers to wait for)
 	if a.processor != nil {
 		a.processor.Close()
 	}

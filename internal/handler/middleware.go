@@ -14,16 +14,6 @@ import (
     "rule-router/internal/metrics"
 )
 
-// RuleEngineMiddleware creates middleware that integrates with the rule engine
-func RuleEngineMiddleware(handler *MessageHandler) message.HandlerMiddleware {
-    return func(h message.HandlerFunc) message.HandlerFunc {
-        return func(msg *message.Message) ([]*message.Message, error) {
-            // Process message through rule engine
-            return handler.ProcessMessage(msg)
-        }
-    }
-}
-
 // LoggingMiddleware creates middleware for comprehensive request logging
 func LoggingMiddleware(logger *logger.Logger) message.HandlerMiddleware {
     return func(h message.HandlerFunc) message.HandlerFunc {
@@ -62,22 +52,12 @@ func LoggingMiddleware(logger *logger.Logger) message.HandlerMiddleware {
 func MetricsMiddleware(metrics *metrics.Metrics) message.HandlerMiddleware {
     return func(h message.HandlerFunc) message.HandlerFunc {
         return func(msg *message.Message) ([]*message.Message, error) {
-            if metrics != nil {
-                metrics.IncMessagesTotal("received")
-            }
-
+            // Metrics are now handled in the handlers themselves
+            // This middleware just passes through
             results, err := h(msg)
             
+            // Optional: Add middleware-level metrics here if needed
             if metrics != nil {
-                if err != nil {
-                    metrics.IncMessagesTotal("error")
-                } else {
-                    metrics.IncMessagesTotal("processed")
-                    for range results {
-                        metrics.IncActionsTotal("success")
-                    }
-                }
-                
                 // Update processing metrics
                 metrics.SetMessageQueueDepth(0) // Watermill handles queuing
             }
@@ -126,27 +106,6 @@ func CorrelationIDMiddleware() message.HandlerMiddleware {
             }
 
             return results, err
-        }
-    }
-}
-
-// ValidationMiddleware creates middleware for message validation
-func ValidationMiddleware(logger *logger.Logger) message.HandlerMiddleware {
-    return func(h message.HandlerFunc) message.HandlerFunc {
-        return func(msg *message.Message) ([]*message.Message, error) {
-            // Basic validation
-            if len(msg.Payload) == 0 {
-                logger.Debug("empty payload received", "uuid", msg.UUID)
-                return nil, fmt.Errorf("empty message payload")
-            }
-
-            topic := msg.Metadata.Get("topic")
-            if topic == "" {
-                logger.Debug("no topic in message metadata", "uuid", msg.UUID)
-                // Don't fail, just log - some messages might not have topics
-            }
-
-            return h(msg)
         }
     }
 }

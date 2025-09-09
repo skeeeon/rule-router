@@ -10,20 +10,19 @@ import (
 	"github.com/ThreeDotsLabs/watermill/message/router/middleware"
 
 	"rule-router/internal/handler"
+	"rule-router/internal/logger"
 )
 
-// setupMiddleware configures the complete Watermill router middleware stack
+// setupMiddleware configures the Watermill router middleware stack
+// Simplified to focus on operational concerns, not business logic
 func (a *App) setupMiddleware() {
-	messageHandler := handler.NewMessageHandler(a.processor, a.logger, a.metrics)
-
 	a.router.AddMiddleware(
 		// Correlation ID propagation (Watermill built-in)
 		middleware.CorrelationID,
 
-		// Custom middleware stack
+		// Custom operational middleware stack
 		handler.CorrelationIDMiddleware(),
 		handler.LoggingMiddleware(a.logger),
-		handler.ValidationMiddleware(a.logger),
 		handler.RecoveryMiddleware(a.logger),
 
 		// Conditional metrics middleware
@@ -35,8 +34,7 @@ func (a *App) setupMiddleware() {
 		// Poison queue handling
 		handler.PoisonQueueMiddleware(a.logger, a.metrics),
 
-		// Rule engine integration (this is where the magic happens)
-		handler.RuleEngineMiddleware(messageHandler),
+		// NOTE: RuleEngineMiddleware REMOVED - processing now happens in handlers
 	)
 
 	a.logger.Info("middleware stack configured",
@@ -55,9 +53,11 @@ func (a *App) conditionalMetricsMiddleware() message.HandlerMiddleware {
 }
 
 // setupHandlers configures message handlers for each rule topic using NATS subjects
+// NOW handlers do the actual processing work
 func (a *App) setupHandlers() {
 	publisher := a.broker.GetPublisher()
 	subscriber := a.broker.GetSubscriber()
+	messageHandler := handler.NewMessageHandler(a.processor, a.logger, a.metrics)
 
 	// Extract unique topics from rules and add handlers
 	topics := a.processor.GetTopics()
@@ -68,29 +68,63 @@ func (a *App) setupHandlers() {
 
 		// Use topic directly - it's already in NATS subject format
 		subscribeTopic := topic
-		publishTopic := "processed." + topic
 
 		a.logger.Debug("adding handler",
 			"handlerName", handlerName,
-			"subscribeTopic", subscribeTopic,
-			"publishTopic", publishTopic)
+			"subscribeTopic", subscribeTopic)
 
+		// Create a custom publisher that routes to action topics
+		customPublisher := &ActionTopicPublisher{
+			publisher: publisher,
+			logger:    a.logger,
+		}
+
+		// Handler now does the real work via CreateHandlerFunc
 		a.router.AddHandler(
 			handlerName,
 			subscribeTopic,
 			subscriber,
-			publishTopic,
-			publisher,
-			func(msg *message.Message) ([]*message.Message, error) {
-				// Set topic in metadata for rule processing
-				msg.Metadata.Set("topic", topic)
-
-				// The actual processing happens in the middleware chain
-				// This handler just passes the message through
-				return []*message.Message{msg}, nil
-			},
+			"", // No fixed publish topic - determined by action
+			customPublisher,
+			messageHandler.CreateHandlerFunc(subscribeTopic),
 		)
 	}
+}
+
+// ActionTopicPublisher is a custom publisher that routes messages based on their metadata
+type ActionTopicPublisher struct {
+	publisher message.Publisher
+	logger    *logger.Logger
+}
+
+// Publish publishes a message to the topic specified in its metadata
+func (p *ActionTopicPublisher) Publish(topic string, messages ...*message.Message) error {
+	for _, msg := range messages {
+		// Get the actual destination topic from metadata
+		destinationTopic := msg.Metadata.Get("destination_topic")
+		if destinationTopic == "" {
+			p.logger.Error("no destination_topic in message metadata",
+				"messageUUID", msg.UUID,
+				"fallbackTopic", topic)
+			destinationTopic = topic // Fallback
+		}
+
+		// Publish to the action-specified topic
+		err := p.publisher.Publish(destinationTopic, msg)
+		if err != nil {
+			return fmt.Errorf("failed to publish to topic %s: %w", destinationTopic, err)
+		}
+
+		p.logger.Debug("published action message",
+			"destinationTopic", destinationTopic,
+			"messageUUID", msg.UUID)
+	}
+	return nil
+}
+
+// Close implements message.Publisher interface
+func (p *ActionTopicPublisher) Close() error {
+	return p.publisher.Close()
 }
 
 // sanitizeHandlerName ensures handler names are valid for Watermill with NATS subjects

@@ -8,7 +8,6 @@ import (
     "regexp"
     "strconv"
     "strings"
-    "sync"
     "sync/atomic"
     "time"
 
@@ -31,23 +30,12 @@ var (
     timeFieldPattern     = regexp.MustCompile(`\{(@[^}]+)\}`)
 )
 
-type ProcessorConfig struct {
-    Workers    int
-    QueueSize  int
-    BatchSize  int
-}
-
 type Processor struct {
     index        *RuleIndex
-    msgPool      *MessagePool
-    resultPool   *ResultPool
     timeProvider TimeProvider
-    workers      int
-    jobChan      chan *ProcessingMessage
     logger       *logger.Logger
     metrics      *metrics.Metrics
     stats        ProcessorStats
-    wg           sync.WaitGroup
 }
 
 type ProcessorStats struct {
@@ -56,34 +44,15 @@ type ProcessorStats struct {
     Errors    uint64
 }
 
-func NewProcessor(cfg ProcessorConfig, log *logger.Logger, metrics *metrics.Metrics) *Processor {
-    if cfg.Workers <= 0 {
-        cfg.Workers = 1
-    }
-    if cfg.QueueSize <= 0 {
-        cfg.QueueSize = 1000
-    }
-
+func NewProcessor(log *logger.Logger, metrics *metrics.Metrics) *Processor {
     p := &Processor{
         index:        NewRuleIndex(log),
-        msgPool:      NewMessagePool(log),
-        resultPool:   NewResultPool(log),
         timeProvider: NewSystemTimeProvider(),
-        workers:      cfg.Workers,
-        jobChan:      make(chan *ProcessingMessage, cfg.QueueSize),
         logger:       log,
         metrics:      metrics,
     }
 
-    p.logger.Info("initializing processor",
-        "workers", cfg.Workers,
-        "queueSize", cfg.QueueSize,
-        "batchSize", cfg.BatchSize)
-
-    if p.metrics != nil {
-        p.metrics.SetWorkerPoolActive(float64(cfg.Workers))
-    }
-    p.startWorkers()
+    p.logger.Info("initializing processor")
     return p
 }
 
@@ -110,10 +79,8 @@ func (p *Processor) GetTopics() []string {
     return topics
 }
 
-func (p *Processor) GetJobChannel() chan *ProcessingMessage {
-    return p.jobChan
-}
-
+// Process processes a message and returns actions to be executed
+// Simplified to work directly without object pools
 func (p *Processor) Process(topic string, payload []byte) ([]*Action, error) {
     p.logger.Debug("processing message",
         "topic", topic,
@@ -125,19 +92,16 @@ func (p *Processor) Process(topic string, payload []byte) ([]*Action, error) {
         "timestamp", timeCtx.timestamp.Format(time.RFC3339),
         "timeFields", len(timeCtx.fields))
 
-    msg := p.msgPool.Get()
-    msg.Topic = topic
-    msg.Payload = payload
-
-    msg.Rules = p.index.Find(topic)
-    if len(msg.Rules) == 0 {
+    // Find matching rules
+    rules := p.index.Find(topic)
+    if len(rules) == 0 {
         p.logger.Debug("no matching rules found for topic", "topic", topic)
-        p.msgPool.Put(msg)
         return nil, nil
     }
 
-    if err := json.Unmarshal(payload, &msg.Values); err != nil {
-        p.msgPool.Put(msg)
+    // Parse message payload
+    var msgValues map[string]interface{}
+    if err := json.Unmarshal(payload, &msgValues); err != nil {
         atomic.AddUint64(&p.stats.Errors, 1)
         if p.metrics != nil {
             p.metrics.IncMessagesTotal("error")
@@ -148,11 +112,13 @@ func (p *Processor) Process(topic string, payload []byte) ([]*Action, error) {
         return nil, fmt.Errorf("failed to unmarshal message: %w", err)
     }
 
-    for _, rule := range msg.Rules {
+    // Process each rule
+    var actions []*Action
+    for _, rule := range rules {
         // Pass timeCtx to condition evaluation
-        if rule.Conditions == nil || p.evaluateConditions(rule.Conditions, msg.Values, timeCtx) {
+        if rule.Conditions == nil || p.evaluateConditions(rule.Conditions, msgValues, timeCtx) {
             // Pass timeCtx to action template processing
-            action, err := p.processActionTemplate(rule.Action, msg.Values, timeCtx)
+            action, err := p.processActionTemplate(rule.Action, msgValues, timeCtx)
             if err != nil {
                 if p.metrics != nil {
                     p.metrics.IncTemplateOpsTotal("error")
@@ -166,13 +132,11 @@ func (p *Processor) Process(topic string, payload []byte) ([]*Action, error) {
                 p.metrics.IncTemplateOpsTotal("success")
                 p.metrics.IncRuleMatches()
             }
-            msg.Actions = append(msg.Actions, action)
+            actions = append(actions, action)
         }
     }
 
-    actions := make([]*Action, len(msg.Actions))
-    copy(actions, msg.Actions)
-
+    // Update stats
     atomic.AddUint64(&p.stats.Processed, 1)
     if len(actions) > 0 {
         atomic.AddUint64(&p.stats.Matched, 1)
@@ -181,7 +145,6 @@ func (p *Processor) Process(topic string, payload []byte) ([]*Action, error) {
             "matchedActions", len(actions))
     }
 
-    p.msgPool.Put(msg)
     return actions, nil
 }
 
@@ -214,7 +177,7 @@ func (p *Processor) processActionTemplate(action *Action, msg map[string]interfa
 func (p *Processor) processTemplate(template string, data map[string]interface{}, timeCtx *TimeContext) (string, error) {
     p.logger.Debug("processing template",
         "template", template,
-        "dataKeys", getMapKeys(data),
+        "dataKeys", getMapKeys(data), // Use function from evaluator.go
         "timeFields", timeCtx.GetAllFieldNames())
 
     result := template
@@ -317,9 +280,8 @@ func (p *Processor) processVariableTemplate(match string, data map[string]interf
 
     path := strings.Split(pathStr, ".")
 
-    // Use the same getValueFromPath method that's defined in evaluator.go
-    // We need to call it on a processor instance that has access to the evaluator methods
-    value, err := p.getValueFromPathForTemplate(data, path)
+    // Use the existing getValueFromPath method from evaluator.go
+    value, err := p.getValueFromPath(data, path)
     if err != nil {
         syntaxType := "new"
         if isLegacy {
@@ -342,33 +304,6 @@ func (p *Processor) processVariableTemplate(match string, data map[string]interf
         "value", strValue,
         "syntax", syntaxType)
     return strValue
-}
-
-// getValueFromPathForTemplate is a helper method for template processing
-// It uses the same logic as the evaluator's getValueFromPath method
-func (p *Processor) getValueFromPathForTemplate(data map[string]interface{}, path []string) (interface{}, error) {
-    var current interface{} = data
-
-    for _, key := range path {
-        switch v := current.(type) {
-        case map[string]interface{}:
-            var ok bool
-            current, ok = v[key]
-            if !ok {
-                return nil, fmt.Errorf("key not found: %s", key)
-            }
-        case map[interface{}]interface{}:
-            var ok bool
-            current, ok = v[key]
-            if !ok {
-                return nil, fmt.Errorf("key not found: %s", key)
-            }
-        default:
-            return nil, fmt.Errorf("invalid path: %s is not a map", key)
-        }
-    }
-
-    return current, nil
 }
 
 func (p *Processor) convertToString(value interface{}) string {
@@ -396,44 +331,6 @@ func (p *Processor) convertToString(value interface{}) string {
     }
 }
 
-func (p *Processor) startWorkers() {
-    p.logger.Info("starting worker pool",
-        "workerCount", p.workers)
-
-    for i := 0; i < p.workers; i++ {
-        p.wg.Add(1)
-        go p.worker()
-    }
-}
-
-func (p *Processor) worker() {
-    defer p.wg.Done()
-
-    for msg := range p.jobChan {
-        p.processMessage(msg)
-    }
-}
-
-func (p *Processor) processMessage(msg *ProcessingMessage) {
-    defer p.msgPool.Put(msg)
-
-    if err := json.Unmarshal(msg.Payload, &msg.Values); err != nil {
-        atomic.AddUint64(&p.stats.Errors, 1)
-        if p.metrics != nil {
-            p.metrics.IncMessagesTotal("error")
-        }
-        p.logger.Error("failed to unmarshal message",
-            "error", err,
-            "topic", msg.Topic)
-        return
-    }
-
-    atomic.AddUint64(&p.stats.Processed, 1)
-    if len(msg.Actions) > 0 {
-        atomic.AddUint64(&p.stats.Matched, 1)
-    }
-}
-
 func (p *Processor) GetStats() ProcessorStats {
     stats := ProcessorStats{
         Processed: atomic.LoadUint64(&p.stats.Processed),
@@ -451,6 +348,4 @@ func (p *Processor) GetStats() ProcessorStats {
 
 func (p *Processor) Close() {
     p.logger.Info("shutting down processor")
-    close(p.jobChan)
-    p.wg.Wait()
 }

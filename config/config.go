@@ -18,7 +18,6 @@ type Config struct {
 	NATS       NATSConfig      `json:"nats" yaml:"nats"`
 	Logging    LogConfig       `json:"logging" yaml:"logging"`
 	Metrics    MetricsConfig   `json:"metrics" yaml:"metrics"`
-	Processing ProcConfig      `json:"processing" yaml:"processing"`
 	Watermill  WatermillConfig `json:"watermill" yaml:"watermill"`
 }
 
@@ -60,13 +59,6 @@ type WatermillConfig struct {
 		CloseTimeout time.Duration `json:"closeTimeout" yaml:"closeTimeout"`
 	} `json:"router" yaml:"router"`
 	
-	// Performance tuning
-	Performance struct {
-		BatchSize       int           `json:"batchSize" yaml:"batchSize"`
-		BatchTimeout    time.Duration `json:"batchTimeout" yaml:"batchTimeout"`
-		BufferSize      int           `json:"bufferSize" yaml:"bufferSize"`
-	} `json:"performance" yaml:"performance"`
-	
 	// Middleware configuration
 	Middleware struct {
 		RetryMaxAttempts int           `json:"retryMaxAttempts" yaml:"retryMaxAttempts"`
@@ -87,12 +79,6 @@ type MetricsConfig struct {
 	Address        string `json:"address" yaml:"address"`
 	Path           string `json:"path" yaml:"path"`
 	UpdateInterval string `json:"updateInterval" yaml:"updateInterval"` // Duration string
-}
-
-type ProcConfig struct {
-	Workers    int `json:"workers" yaml:"workers"`
-	QueueSize  int `json:"queueSize" yaml:"queueSize"`
-	BatchSize  int `json:"batchSize" yaml:"batchSize"`
 }
 
 // Load reads and parses the configuration file
@@ -164,17 +150,6 @@ func setDefaults(cfg *Config) {
 		cfg.Metrics.UpdateInterval = "15s"
 	}
 
-	// Processing defaults
-	if cfg.Processing.Workers <= 0 {
-		cfg.Processing.Workers = runtime.NumCPU()
-	}
-	if cfg.Processing.QueueSize <= 0 {
-		cfg.Processing.QueueSize = 1000
-	}
-	if cfg.Processing.BatchSize <= 0 {
-		cfg.Processing.BatchSize = 100
-	}
-
 	// NATS defaults
 	if len(cfg.NATS.URLs) == 0 {
 		cfg.NATS.URLs = []string{"nats://localhost:4222"}
@@ -210,17 +185,6 @@ func setDefaults(cfg *Config) {
 	// Router defaults
 	if cfg.Watermill.Router.CloseTimeout == 0 {
 		cfg.Watermill.Router.CloseTimeout = 30 * time.Second
-	}
-
-	// Performance defaults
-	if cfg.Watermill.Performance.BatchSize == 0 {
-		cfg.Watermill.Performance.BatchSize = 100
-	}
-	if cfg.Watermill.Performance.BatchTimeout == 0 {
-		cfg.Watermill.Performance.BatchTimeout = 1 * time.Second
-	}
-	if cfg.Watermill.Performance.BufferSize == 0 {
-		cfg.Watermill.Performance.BufferSize = 8192
 	}
 
 	// Middleware defaults
@@ -298,26 +262,12 @@ func validateConfig(cfg *Config) error {
 		}
 	}
 
-	// Validate processing config
-	if cfg.Processing.Workers < 1 {
-		return fmt.Errorf("workers must be greater than 0")
-	}
-	if cfg.Processing.QueueSize < 1 {
-		return fmt.Errorf("queue size must be greater than 0")
-	}
-	if cfg.Processing.BatchSize < 1 {
-		return fmt.Errorf("batch size must be greater than 0")
-	}
-
 	// Validate Watermill config
 	if cfg.Watermill.NATS.SubscriberCount < 1 {
 		return fmt.Errorf("subscriber count must be greater than 0")
 	}
 	if cfg.Watermill.NATS.MaxPendingAsync < 100 {
 		return fmt.Errorf("max pending async must be at least 100 for reasonable performance")
-	}
-	if cfg.Watermill.Performance.BatchSize < 1 {
-		return fmt.Errorf("batch size must be greater than 0")
 	}
 	if cfg.Watermill.Middleware.RetryMaxAttempts < 0 {
 		return fmt.Errorf("retry max attempts cannot be negative")
@@ -327,17 +277,7 @@ func validateConfig(cfg *Config) error {
 }
 
 // ApplyOverrides applies command line flag overrides to the configuration
-func (c *Config) ApplyOverrides(workers, queueSize, batchSize int, metricsAddr, metricsPath string, metricsInterval time.Duration) {
-	if workers > 0 {
-		c.Processing.Workers = workers
-	}
-	if queueSize > 0 {
-		c.Processing.QueueSize = queueSize
-	}
-	if batchSize > 0 {
-		c.Processing.BatchSize = batchSize
-		c.Watermill.Performance.BatchSize = batchSize
-	}
+func (c *Config) ApplyOverrides(metricsAddr, metricsPath string, metricsInterval time.Duration) {
 	if metricsAddr != "" {
 		c.Metrics.Address = metricsAddr
 	}
