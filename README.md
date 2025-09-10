@@ -216,9 +216,9 @@ Use these functions in action templates:
 
 | Function | Description | Example Output |
 |----------|-------------|----------------|
-| `@{uuid4()}` | Random UUID v4 | `a1b2c3d4-e5f6-...` |
-| `@{uuid7()}` | Time-ordered UUID v7 | `01234567-89ab-...` |
-| `@{timestamp()}` | Current ISO timestamp | `2024-01-15T14:30:00Z` |
+| `{@uuid4()}` | Random UUID v4 | `a1b2c3d4-e5f6-...` |
+| `{@uuid7()}` | Time-ordered UUID v7 | `01234567-89ab-...` |
+| `{@timestamp()}` | Current ISO timestamp | `2024-01-15T14:30:00Z` |
 
 ### Template Variables
 
@@ -230,8 +230,8 @@ payload: |
     "messageField": {fieldName},           # Message data
     "nestedField": {user.profile.name},    # Nested message data
     "currentHour": "{@time.hour}",         # Time field
-    "generatedId": "@{uuid7()}",           # Function
-    "timestamp": "@{timestamp()}"          # Function
+    "generatedId": "{@uuid7()}",           # Function
+    "timestamp": "{@timestamp()}"          # Function
   }
 ```
 
@@ -253,8 +253,8 @@ payload: |
         "alert": "High temperature detected!",
         "temperature": {temperature},
         "location": {location},
-        "detectedAt": "@{timestamp()}",
-        "alertId": "@{uuid7()}"
+        "detectedAt": "{@timestamp()}",
+        "alertId": "{@uuid7()}"
       }
 ```
 
@@ -286,7 +286,7 @@ payload: |
         "detectedAt": "{@timestamp.iso}",
         "businessDay": "{@day.name}",
         "currentTime": "{@time.hour}:{@time.minute}",
-        "alertId": "@{uuid7()}"
+        "alertId": "{@uuid7()}"
       }
 ```
 
@@ -407,10 +407,8 @@ CMD ["./rule-router", "-config", "config/config.yaml", "-rules", "rules/"]
 
 ## Known Limitations
 
-- **Exact Topic Matching**: Cannot subscribe to wildcard patterns like `sensors.*` (coming in future update)
 - **JSON Only**: Message payloads must be valid JSON
 - **Startup Rule Loading**: Rules only loaded at application start (hot reloading planned)
-- **Single Instance**: No built-in clustering support
 
 ## License
 
