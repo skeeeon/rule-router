@@ -8,7 +8,7 @@ import (
     "strings"
 )
 
-func (p *Processor) evaluateConditions(conditions *Conditions, msg map[string]interface{}, timeCtx *TimeContext) bool {
+func (p *Processor) evaluateConditions(conditions *Conditions, msg map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext) bool {
     if conditions == nil || (len(conditions.Items) == 0 && len(conditions.Groups) == 0) {
         p.logger.Debug("no conditions to evaluate")
         return true
@@ -22,7 +22,7 @@ func (p *Processor) evaluateConditions(conditions *Conditions, msg map[string]in
     results := make([]bool, 0, len(conditions.Items)+len(conditions.Groups))
 
     for i, condition := range conditions.Items {
-        result := p.evaluateCondition(&condition, msg, timeCtx)
+        result := p.evaluateCondition(&condition, msg, timeCtx, subjectCtx)
         results = append(results, result)
         
         p.logger.Debug("evaluated individual condition",
@@ -34,7 +34,7 @@ func (p *Processor) evaluateConditions(conditions *Conditions, msg map[string]in
     }
 
     for i, group := range conditions.Groups {
-        result := p.evaluateConditions(&group, msg, timeCtx)
+        result := p.evaluateConditions(&group, msg, timeCtx, subjectCtx)
         results = append(results, result)
         
         p.logger.Debug("evaluated nested group",
@@ -73,26 +73,46 @@ func (p *Processor) evaluateConditions(conditions *Conditions, msg map[string]in
     return finalResult
 }
 
-func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{}, timeCtx *TimeContext) bool {
+func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext) bool {
     var value interface{}
     var ok bool
     
-    // Check if this is a system time field
+    // Check if this is a system field (time or subject)
     if strings.HasPrefix(cond.Field, "@") {
-        value, ok = timeCtx.GetField(cond.Field)
+        // Try subject context first (for @subject.X fields)
+        if strings.HasPrefix(cond.Field, "@subject") {
+            value, ok = subjectCtx.GetField(cond.Field)
+            if ok {
+                p.logger.Debug("evaluating subject field condition",
+                    "field", cond.Field,
+                    "operator", cond.Operator,
+                    "expectedValue", cond.Value,
+                    "actualSubjectValue", value)
+            }
+        }
+        
+        // If not found in subject context, try time context
         if !ok {
-            p.logger.Debug("unknown system time field in condition",
+            value, ok = timeCtx.GetField(cond.Field)
+            if ok {
+                p.logger.Debug("evaluating time field condition",
+                    "field", cond.Field,
+                    "operator", cond.Operator,
+                    "expectedValue", cond.Value,
+                    "actualTimeValue", value)
+            }
+        }
+        
+        // If still not found, log available fields for debugging
+        if !ok {
+            p.logger.Debug("unknown system field in condition",
                 "field", cond.Field,
-                "availableTimeFields", timeCtx.GetAllFieldNames())
+                "availableTimeFields", timeCtx.GetAllFieldNames(),
+                "availableSubjectFields", subjectCtx.GetAllFieldNames())
             return false
         }
-        p.logger.Debug("evaluating time field condition",
-            "field", cond.Field,
-            "operator", cond.Operator,
-            "expectedValue", cond.Value,
-            "actualTimeValue", value)
     } else {
-        // Regular message field - now supports nested paths
+        // Regular message field - supports nested paths
         if strings.Contains(cond.Field, ".") {
             // Nested field access using dot notation
             path := strings.Split(cond.Field, ".")

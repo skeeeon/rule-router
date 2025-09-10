@@ -18,7 +18,7 @@ import (
 
 // Pre-compiled regex patterns for template processing (clean and efficient)
 var (
-    // System fields and functions: {@time.hour}, {@uuid7()}, {@timestamp()}
+    // System fields and functions: {@time.hour}, {@uuid7()}, {@timestamp()}, {@subject.1}
     systemFieldPattern = regexp.MustCompile(`\{@([^}]+)\}`)
     
     // Regular message variables: {temperature}, {sensor.location}
@@ -47,7 +47,7 @@ func NewProcessor(log *logger.Logger, metrics *metrics.Metrics) *Processor {
         metrics:      metrics,
     }
 
-    p.logger.Info("initializing processor")
+    p.logger.Info("initializing processor with wildcard support")
     return p
 }
 
@@ -62,33 +62,47 @@ func (p *Processor) LoadRules(rules []Rule) error {
     }
 
     if p.metrics != nil {
-        p.metrics.SetRulesActive(float64(len(rules)))
+        exactCount, patternCount := p.index.GetRuleCounts()
+        p.metrics.SetRulesActive(float64(exactCount + patternCount))
     }
-    p.logger.Info("rules loaded successfully", "count", len(rules))
+    
+    p.logger.Info("rules loaded successfully",
+        "totalRules", len(rules),
+        "exactRules", func() int { e, _ := p.index.GetRuleCounts(); return e }(),
+        "patternRules", func() int { _, p := p.index.GetRuleCounts(); return p }())
+    
     return nil
 }
 
 func (p *Processor) GetTopics() []string {
-    topics := p.index.GetTopics()
-    p.logger.Debug("retrieved topics from index", "topicCount", len(topics))
+    topics := p.index.GetSubscriptionTopics()
+    p.logger.Debug("retrieved subscription topics from index", "topicCount", len(topics))
     return topics
 }
 
-// Process processes a message and returns actions to be executed
-func (p *Processor) Process(topic string, payload []byte) ([]*Action, error) {
-    p.logger.Debug("processing message",
-        "topic", topic,
+// Process processes a message against rules using the actual NATS subject
+// This is the NEW enhanced method that supports wildcards
+func (p *Processor) ProcessWithSubject(actualSubject string, payload []byte) ([]*Action, error) {
+    p.logger.Debug("processing message with subject context",
+        "actualSubject", actualSubject,
         "payloadSize", len(payload))
 
     // Get time context once for this message processing
     timeCtx := p.timeProvider.GetCurrentContext()
 
-    // Find matching rules
-    rules := p.index.Find(topic)
+    // Create subject context for template and condition access
+    subjectCtx := NewSubjectContext(actualSubject)
+
+    // Find ALL matching rules (exact + patterns)
+    rules := p.index.FindAllMatching(actualSubject)
     if len(rules) == 0 {
-        p.logger.Debug("no matching rules found for topic", "topic", topic)
+        p.logger.Debug("no matching rules found for subject", "subject", actualSubject)
         return nil, nil
     }
+
+    p.logger.Debug("found matching rules",
+        "subject", actualSubject,
+        "matchingRules", len(rules))
 
     // Parse message payload
     var msgValues map[string]interface{}
@@ -99,31 +113,46 @@ func (p *Processor) Process(topic string, payload []byte) ([]*Action, error) {
         }
         p.logger.Error("failed to unmarshal message",
             "error", err,
-            "topic", topic)
+            "subject", actualSubject)
         return nil, fmt.Errorf("failed to unmarshal message: %w", err)
     }
 
-    // Process each rule
+    // Process each matching rule
     var actions []*Action
     for _, rule := range rules {
-        // Evaluate conditions
-        if rule.Conditions == nil || p.evaluateConditions(rule.Conditions, msgValues, timeCtx) {
-            // Process action template
-            action, err := p.processActionTemplate(rule.Action, msgValues, timeCtx)
+        p.logger.Debug("evaluating rule",
+            "rulePattern", rule.Topic,
+            "actualSubject", actualSubject)
+
+        // Evaluate conditions with subject context support
+        if rule.Conditions == nil || p.evaluateConditions(rule.Conditions, msgValues, timeCtx, subjectCtx) {
+            // Process action template with subject context
+            action, err := p.processActionTemplate(rule.Action, msgValues, timeCtx, subjectCtx)
             if err != nil {
                 if p.metrics != nil {
                     p.metrics.IncTemplateOpsTotal("error")
                 }
                 p.logger.Error("failed to process action template",
                     "error", err,
-                    "topic", rule.Topic)
+                    "rulePattern", rule.Topic,
+                    "actualSubject", actualSubject)
                 continue
             }
             if p.metrics != nil {
                 p.metrics.IncTemplateOpsTotal("success")
                 p.metrics.IncRuleMatches()
             }
+            
+            p.logger.Debug("rule matched and action created",
+                "rulePattern", rule.Topic,
+                "actualSubject", actualSubject,
+                "actionTopic", action.Topic)
+                
             actions = append(actions, action)
+        } else {
+            p.logger.Debug("rule conditions not met",
+                "rulePattern", rule.Topic,
+                "actualSubject", actualSubject)
         }
     }
 
@@ -133,10 +162,21 @@ func (p *Processor) Process(topic string, payload []byte) ([]*Action, error) {
         atomic.AddUint64(&p.stats.Matched, 1)
     }
 
+    p.logger.Debug("processing complete",
+        "subject", actualSubject,
+        "rulesEvaluated", len(rules),
+        "actionsGenerated", len(actions))
+
     return actions, nil
 }
 
-func (p *Processor) processActionTemplate(action *Action, msg map[string]interface{}, timeCtx *TimeContext) (*Action, error) {
+// Process maintains backward compatibility for existing callers
+func (p *Processor) Process(topic string, payload []byte) ([]*Action, error) {
+    // For backward compatibility, use the topic as both pattern and actual subject
+    return p.ProcessWithSubject(topic, payload)
+}
+
+func (p *Processor) processActionTemplate(action *Action, msg map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext) (*Action, error) {
     processedAction := &Action{
         Topic:   action.Topic,
         Payload: action.Payload,
@@ -144,7 +184,7 @@ func (p *Processor) processActionTemplate(action *Action, msg map[string]interfa
 
     // Process topic template if it contains variables
     if strings.Contains(action.Topic, "{") {
-        topic, err := p.processTemplate(action.Topic, msg, timeCtx)
+        topic, err := p.processTemplate(action.Topic, msg, timeCtx, subjectCtx)
         if err != nil {
             return nil, fmt.Errorf("failed to process topic template: %w", err)
         }
@@ -152,7 +192,7 @@ func (p *Processor) processActionTemplate(action *Action, msg map[string]interfa
     }
 
     // Process payload template
-    payload, err := p.processTemplate(action.Payload, msg, timeCtx)
+    payload, err := p.processTemplate(action.Payload, msg, timeCtx, subjectCtx)
     if err != nil {
         return nil, fmt.Errorf("failed to process payload template: %w", err)
     }
@@ -161,20 +201,20 @@ func (p *Processor) processActionTemplate(action *Action, msg map[string]interfa
     return processedAction, nil
 }
 
-// processTemplate handles the new consistent {@} syntax - clean and efficient
-func (p *Processor) processTemplate(template string, data map[string]interface{}, timeCtx *TimeContext) (string, error) {
+// processTemplate handles the enhanced {@} syntax with subject support
+func (p *Processor) processTemplate(template string, data map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext) (string, error) {
     result := template
 
-    // Process system fields and functions: {@time.hour}, {@uuid7()}, {@timestamp()}
+    // Process system fields and functions: {@time.hour}, {@uuid7()}, {@timestamp()}, {@subject.1}
     result = systemFieldPattern.ReplaceAllStringFunc(result, func(match string) string {
-        systemRef := match[2 : len(match)-1] // remove {@ and }, get "time.hour" or "uuid7()"
+        systemRef := match[2 : len(match)-1] // remove {@ and }, get "time.hour" or "uuid7()" or "subject.1"
         
         if strings.HasSuffix(systemRef, "()") {
             // It's a function: uuid7(), timestamp()
             return p.processSystemFunction(systemRef)
         } else {
-            // It's a system field: time.hour, day.name
-            return p.processSystemField("@"+systemRef, timeCtx) // Add @ back for timeCtx lookup
+            // It's a system field: time.hour, day.name, subject.1
+            return p.processSystemField("@"+systemRef, timeCtx, subjectCtx) // Add @ back for lookup
         }
     })
 
@@ -212,11 +252,21 @@ func (p *Processor) processSystemFunction(function string) string {
     }
 }
 
-// processSystemField handles system time fields: @time.hour, @day.name
-func (p *Processor) processSystemField(systemField string, timeCtx *TimeContext) string {
+// processSystemField handles system time fields and subject fields
+func (p *Processor) processSystemField(systemField string, timeCtx *TimeContext, subjectCtx *SubjectContext) string {
+    // Try subject context first
+    if strings.HasPrefix(systemField, "@subject") {
+        if value, exists := subjectCtx.GetField(systemField); exists {
+            strValue := p.convertToString(value)
+            p.logger.Debug("processed subject field", "field", systemField, "value", strValue)
+            return strValue
+        }
+    }
+    
+    // Try time context
     if value, exists := timeCtx.GetField(systemField); exists {
         strValue := p.convertToString(value)
-        p.logger.Debug("processed system field", "field", systemField, "value", strValue)
+        p.logger.Debug("processed time field", "field", systemField, "value", strValue)
         return strValue
     }
     
