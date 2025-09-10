@@ -28,10 +28,10 @@
       {
         "alert": "High temperature during business hours",
         "temperature": {temperature},
-        "detectedAt": "{@timestamp.iso}",
+        "detectedAt": "{@timestamp()}",
         "businessDay": "{@day.name}",
         "currentTime": "{@time.hour}:{@time.minute}",
-        "alertId": "@{uuid7()}"
+        "alertId": "{@uuid7()}"
       }
 
 # Weekend Critical Alert Escalation
@@ -55,8 +55,8 @@
         "severity": {severity},
         "escalation": "immediate",
         "weekendDay": "{@day.name}",
-        "detectedAt": "{@timestamp.iso}",
-        "correlationId": "@{uuid4()}"
+        "detectedAt": "{@timestamp()}",
+        "correlationId": "{@uuid4()}"
       }
 
 # Night Mode Motion Detection
@@ -86,7 +86,7 @@
         "nightHours": true,
         "currentTime": "{@time.hour}:{@time.minute}",
         "date": "{@date.iso}",
-        "timestamp": "@{timestamp()}"
+        "timestamp": "{@timestamp()}"
       }
 
 # Maintenance Window Suppression
@@ -114,7 +114,7 @@
         "message": "Alert suppressed during maintenance window",
         "originalAlert": {alert_type},
         "maintenanceWindow": "Sunday 2-4 AM",
-        "suppressedAt": "{@timestamp.iso}",
+        "suppressedAt": "{@timestamp()}",
         "resumeProcessing": "Sunday 4:00 AM"
       }
 
@@ -141,7 +141,7 @@
         "processing_mode": "evening_batch",
         "priority": "low",
         "scheduledFor": "next business day",
-        "queuedAt": "{@timestamp.iso}",
+        "queuedAt": "{@timestamp()}",
         "currentHour": "{@time.hour}"
       }
 
@@ -171,7 +171,7 @@
         "period": "{@date.year}-{@date.month}",
         "triggerDate": "{@date.iso}",
         "triggerTime": "{@time.hour}:{@time.minute}",
-        "requestId": "@{uuid7()}"
+        "requestId": "{@uuid7()}"
       }
 
 # Workday vs Weekend Processing
@@ -195,7 +195,7 @@
         "sla": "4 hours",
         "scheduledDay": "{@day.name}",
         "priority": "high",
-        "timestamp": "{@timestamp.iso}"
+        "timestamp": "{@timestamp()}"
       }
 
 # Weekend processing (different SLA)
@@ -218,7 +218,7 @@
         "sla": "24 hours",
         "weekendDay": "{@day.name}",
         "priority": "low",
-        "timestamp": "{@timestamp.iso}"
+        "timestamp": "{@timestamp()}"
       }
 
 # Holiday Detection (Christmas Example)
@@ -246,7 +246,7 @@
         "date": "{@date.iso}",
         "year": "{@date.year}",
         "specialHandling": true,
-        "greetingId": "@{uuid4()}"
+        "greetingId": "{@uuid4()}"
       }
 
 # Time Zone Aware Processing
@@ -270,5 +270,5 @@
         "current_time": "{@time.hour}:{@time.minute}",
         "current_date": "{@date.iso}",
         "delay_requested": {delay_hours},
-        "scheduler_id": "@{uuid7()}"
+        "scheduler_id": "{@uuid7()}"
       }

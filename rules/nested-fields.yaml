@@ -57,7 +57,7 @@
         },
         "quality": {metadata.quality},         # ✅ Nested template access
         "timestamp": {data.timestamp},
-        "alertId": "@{uuid7()}"
+        "alertId": "{@uuid7()}"
       }
 
 # Example 2: Complex Business Event Processing
@@ -123,8 +123,8 @@
         },
         "processing": {
           "priority": "high",
-          "assigned_at": "@{timestamp()}",
-          "processor_id": "@{uuid7()}"
+          "assigned_at": "{@timestamp()}",
+          "processor_id": "{@uuid7()}"
         }
       }
 
@@ -185,8 +185,8 @@
           "system_health": {response.body.data.system_health}
         },
         "monitoring": {
-          "checked_at": "@{timestamp()}",
-          "check_id": "@{uuid7()}"
+          "checked_at": "{@timestamp()}",
+          "check_id": "{@uuid7()}"
         }
       }
 
@@ -251,8 +251,8 @@
         },
         "escalation": {
           "level": "immediate",
-          "escalated_at": "@{timestamp()}",
-          "incident_id": "@{uuid7()}"
+          "escalated_at": "{@timestamp()}",
+          "incident_id": "{@uuid7()}"
         }
       }
 
@@ -305,7 +305,7 @@
         },
         "analysis": {
           "user_type": "active_dark_theme_user",
-          "analyzed_at": "@{timestamp()}",
-          "analysis_id": "@{uuid7()}"
+          "analyzed_at": "{@timestamp()}",
+          "analysis_id": "{@uuid7()}"
         }
       }

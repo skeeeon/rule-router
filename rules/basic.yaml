@@ -13,9 +13,9 @@
         "alert": "High temperature detected!",
         "value": {temperature},        # Message data
         "deviceId": {deviceId},
-        "timestamp": "@{timestamp()}",  # System function
-        "alertId": "@{uuid7()}",       # Time-ordered UUID
-        "correlationId": "@{uuid4()}"  # Random UUID
+        "timestamp": "{@timestamp()}",  # System function
+        "alertId": "{@uuid7()}",       # Time-ordered UUID
+        "correlationId": "{@uuid4()}"  # Random UUID
       }
 
 # Basic rule with nested field access
@@ -38,6 +38,6 @@
         "sensor_id": {sensor.id},         # ✅ Nested field in template
         "reading": {sensor.reading},      # ✅ Nested numeric field  
         "location": {sensor.location},    # ✅ Nested string field
-        "timestamp": "@{timestamp()}",
-        "alertId": "@{uuid7()}"
+        "timestamp": "{@timestamp()}",
+        "alertId": "{@uuid7()}"
       }

@@ -30,6 +30,6 @@
           "humidity": {humidity},
           "pressure": {pressure}
         },
-        "timestamp": "@{timestamp()}",
-        "alertId": "@{uuid7()}"
+        "timestamp": "{@timestamp()}",
+        "alertId": "{@uuid7()}"
       }

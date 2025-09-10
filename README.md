@@ -316,8 +316,8 @@ payload: |
         "item_count": {order.items.count},       # ✅ Deep nested template
         "processing": {
           "priority": "high",
-          "assigned_at": "@{timestamp()}",
-          "processor_id": "@{uuid7()}"
+          "assigned_at": "{@timestamp()}",
+          "processor_id": "{@uuid7()}"
         }
       }
 ```
