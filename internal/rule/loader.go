@@ -90,13 +90,13 @@ func (l *RulesLoader) LoadFromDirectory(path string) ([]Rule, error) {
         // Validate and filter rules
         for i, rule := range ruleSet {
             if err := l.validateRule(&rule, filePath, i); err != nil {
-                l.logger.Error("skipping invalid rule", "file", filePath, "index", i, "topic", rule.Topic, "error", err)
+                l.logger.Error("skipping invalid rule", "file", filePath, "index", i, "subject", rule.Subject, "error", err)
                 errorCount++
                 continue
             }
             
             validRules = append(validRules, rule)
-            l.logger.Debug("validated rule successfully", "file", filePath, "index", i, "topic", rule.Topic, "isPattern", containsWildcards(rule.Topic))
+            l.logger.Debug("validated rule successfully", "file", filePath, "index", i, "subject", rule.Subject, "isPattern", containsWildcards(rule.Subject))
         }
 
         return nil
@@ -121,30 +121,30 @@ func (l *RulesLoader) validateRule(rule *Rule, filePath string, ruleIndex int) e
         return fmt.Errorf("rule cannot be nil")
     }
 
-    if rule.Topic == "" {
-        return fmt.Errorf("rule topic cannot be empty")
+    if rule.Subject == "" {
+        return fmt.Errorf("rule subject cannot be empty")
     }
 
     // Validate wildcard patterns if present
-    if containsWildcards(rule.Topic) {
-        if err := l.validateWildcardPattern(rule.Topic); err != nil {
-            return fmt.Errorf("invalid wildcard pattern '%s': %w", rule.Topic, err)
+    if containsWildcards(rule.Subject) {
+        if err := l.validateWildcardPattern(rule.Subject); err != nil {
+            return fmt.Errorf("invalid wildcard pattern '%s': %w", rule.Subject, err)
         }
         
-        l.logger.Debug("validated wildcard pattern", "topic", rule.Topic, "file", filePath, "index", ruleIndex)
+        l.logger.Debug("validated wildcard pattern", "subject", rule.Subject, "file", filePath, "index", ruleIndex)
     }
 
     if rule.Action == nil {
         return fmt.Errorf("rule action cannot be nil")
     }
 
-    if rule.Action.Topic == "" {
-        return fmt.Errorf("action topic cannot be empty")
+    if rule.Action.Subject == "" {
+        return fmt.Errorf("action subject cannot be empty")
     }
 
-    // Validate action topic for wildcard patterns too - using Info instead of Warn
-    if containsWildcards(rule.Action.Topic) {
-        l.logger.Info("action topic contains wildcards - ensure this is intentional", "actionTopic", rule.Action.Topic, "ruleTopic", rule.Topic, "file", filePath, "index", ruleIndex)
+    // Validate action subject for wildcard patterns too - using Info instead of Warn
+    if containsWildcards(rule.Action.Subject) {
+        l.logger.Info("action subject contains wildcards - ensure this is intentional", "actionSubject", rule.Action.Subject, "ruleSubject", rule.Subject, "file", filePath, "index", ruleIndex)
     }
 
     // Validate KV field references in action payload
@@ -152,9 +152,9 @@ func (l *RulesLoader) validateRule(rule *Rule, filePath string, ruleIndex int) e
         return fmt.Errorf("invalid KV field in action payload: %w", err)
     }
 
-    // Validate KV field references in action topic template
-    if err := l.validateKVFieldsInTemplate(rule.Action.Topic); err != nil {
-        return fmt.Errorf("invalid KV field in action topic: %w", err)
+    // Validate KV field references in action subject template
+    if err := l.validateKVFieldsInTemplate(rule.Action.Subject); err != nil {
+        return fmt.Errorf("invalid KV field in action subject: %w", err)
     }
 
     if rule.Conditions != nil {
@@ -167,19 +167,19 @@ func (l *RulesLoader) validateRule(rule *Rule, filePath string, ruleIndex int) e
 }
 
 // validateWildcardPattern validates NATS wildcard pattern syntax
-func (l *RulesLoader) validateWildcardPattern(topic string) error {
+func (l *RulesLoader) validateWildcardPattern(subject string) error {
     // Use the existing ValidatePattern function from pattern.go
-    if err := ValidatePattern(topic); err != nil {
+    if err := ValidatePattern(subject); err != nil {
         return err
     }
     
     // Additional validation for common mistakes
-    if strings.Contains(topic, "**") {
+    if strings.Contains(subject, "**") {
         return fmt.Errorf("double wildcards '**' are not valid, use '>' for multi-level wildcards")
     }
     
     // Check for empty tokens which are common mistakes
-    if strings.Contains(topic, "..") {
+    if strings.Contains(subject, "..") {
         return fmt.Errorf("empty tokens ('..') are not allowed in patterns")
     }
     

@@ -165,7 +165,7 @@ func (a *App) setupRouter() error {
 
 	a.logger.Info("router configured successfully",
 		"middlewareCount", "operational stack",
-		"handlerCount", len(a.processor.GetTopics()))
+		"handlerCount", len(a.processor.GetSubjects()))
 
 	return nil
 }

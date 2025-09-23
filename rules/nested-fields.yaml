@@ -23,7 +23,7 @@
 #   }
 # }
 
-- topic: sensors.data
+- subject: sensors.data
   conditions:
     operator: and
     items:
@@ -41,7 +41,7 @@
         operator: eq
         value: true
   action:
-    topic: alerts.high-temperature
+    subject: alerts.high-temperature
     payload: |
       {
         "alert": "High temperature detected",
@@ -86,7 +86,7 @@
 #   }
 # }
 
-- topic: events.orders
+- subject: events.orders
   conditions:
     operator: and
     items:
@@ -106,7 +106,7 @@
         operator: eq
         value: "credit_card"
   action:
-    topic: processing.premium-orders
+    subject: processing.premium-orders
     payload: |
       {
         "message": "Premium customer large order created",
@@ -154,7 +154,7 @@
 #   }
 # }
 
-- topic: api.responses
+- subject: api.responses
   conditions:
     operator: and
     items:
@@ -171,7 +171,7 @@
         operator: eq
         value: "healthy"
   action:
-    topic: monitoring.healthy-systems
+    subject: monitoring.healthy-systems
     payload: |
       {
         "status": "System healthy with high user count",
@@ -206,7 +206,7 @@
 #   }
 # }
 
-- topic: system.alerts
+- subject: system.alerts
   conditions:
     operator: and
     items:
@@ -236,7 +236,7 @@
             operator: eq
             value: "performance"
   action:
-    topic: alerts.critical-system
+    subject: alerts.critical-system
     payload: |
       {
         "alert": "Critical system performance issue",
@@ -275,7 +275,7 @@
 #   }
 # }
 
-- topic: users.activity
+- subject: users.activity
   conditions:
     operator: and
     items:
@@ -289,7 +289,7 @@
         operator: eq
         value: "dark"
   action:
-    topic: analytics.active-users
+    subject: analytics.active-users
     payload: |
       {
         "user_profile": {

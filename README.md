@@ -155,7 +155,7 @@ metrics:
 ### Basic Rule Structure
 
 ```yaml
-- topic: "input.subject"                   # NATS subject to subscribe to
+- subject: "input.subject"                 # NATS subject to subscribe to
   conditions:                              # Optional conditions
     operator: and                          # Logical operator: and, or
     items:                                 # Individual conditions
@@ -166,7 +166,7 @@ metrics:
       - operator: or
         items: [...]
   action:                                  # Action to execute
-    topic: "output.subject"                # NATS subject to publish to
+    subject: "output.subject"              # NATS subject to publish to
     payload: "message template"            # Message template
 ```
 
@@ -199,7 +199,7 @@ conditions:
       operator: eq
       value: "dark"
 action:
-  topic: user.preferences
+  subject: user.preferences
   payload: |
     {
       "user": {user.profile.name},         # ✅ Nested in templates too
@@ -323,7 +323,7 @@ payload: |
 
 ### Basic Temperature Alert with KV Status Check
 ```yaml
-- topic: sensors.temperature
+- subject: sensors.temperature
   conditions:
     operator: and
     items:
@@ -334,7 +334,7 @@ payload: |
         operator: gt
         value: 30
   action:
-    topic: alerts.temperature
+    subject: alerts.temperature
     payload: |
       {
         "alert": "High temperature from active device",
@@ -354,7 +354,7 @@ payload: |
 
 ### Business Hours Processing with Customer Data
 ```yaml
-- topic: orders.new
+- subject: orders.new
   conditions:
     operator: and
     items:
@@ -371,7 +371,7 @@ payload: |
         operator: gt
         value: 1000
   action:
-    topic: fulfillment.priority
+    subject: fulfillment.priority
     payload: |
       {
         "priority_order": "Premium customer large order during business hours",
@@ -409,7 +409,7 @@ payload: |
 #   },
 #   "location": {"building": "A", "floor": 2}
 # }
-- topic: equipment.*.maintenance.*.schedule
+- subject: equipment.*.maintenance.*.schedule
   conditions:
     operator: and
     items:
@@ -419,7 +419,7 @@ payload: |
         operator: eq
         value: "routine"
   action:
-    topic: maintenance.scheduled
+    subject: maintenance.scheduled
     payload: |
       {
         "maintenance": "Equipment maintenance scheduled",
@@ -446,7 +446,7 @@ payload: |
 
 ### Multi-Bucket KV Lookup with Fallback Logic
 ```yaml
-- topic: user.activity
+- subject: user.activity
   conditions:
     operator: or                                    # Fallback logic
     items:
@@ -457,7 +457,7 @@ payload: |
         operator: eq
         value: "admin"
   action:
-    topic: dashboard.access-granted
+    subject: dashboard.access-granted
     payload: |
       {
         "access": "Dashboard access granted",
@@ -642,13 +642,13 @@ nats kv watch device_status  # Watch for changes
 
 ```yaml
 # Single-level wildcard
-- topic: sensors.*                         # matches sensors.temperature, sensors.pressure
+- subject: sensors.*                         # matches sensors.temperature, sensors.pressure
   
 # Multi-level wildcard  
-- topic: building.>                        # matches building.floor1.room1.temperature
+- subject: building.>                        # matches building.floor1.room1.temperature
   
 # Mixed patterns
-- topic: devices.*.data                    # matches devices.sensor001.data
+- subject: devices.*.data                    # matches devices.sensor001.data
 ```
 
 ### Complex Condition Groups
@@ -675,7 +675,7 @@ conditions:
 
 ```yaml
 action:
-  topic: "alerts.{@subject.1}.{severity}"  # Dynamic topic from subject and message
+  subject: "alerts.{@subject.1}.{severity}"  # Dynamic subject from subject and message
   payload: |
     {
       "routed_to": "alerts.{@subject.1}.{severity}",

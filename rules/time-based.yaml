@@ -3,7 +3,7 @@
 
 # Business Hours Temperature Alert
 # Only alerts during business hours (9 AM - 5 PM, weekdays)
-- topic: sensors.temperature                   # NATS subject format
+- subject: sensors.temperature                   # NATS subject format
   conditions:
     operator: and
     items:
@@ -23,7 +23,7 @@
         operator: lte
         value: 5        # Friday
   action:
-    topic: alerts.business-hours               # NATS output subject
+    subject: alerts.business-hours               # NATS output subject
     payload: |
       {
         "alert": "High temperature during business hours",
@@ -36,7 +36,7 @@
 
 # Weekend Critical Alert Escalation
 # Escalates critical alerts on weekends for immediate attention
-- topic: system.errors                         # NATS subject format
+- subject: system.errors                         # NATS subject format
   conditions:
     operator: and
     items:
@@ -47,7 +47,7 @@
         operator: gt
         value: 5        # Saturday (6) or Sunday (7)
   action:
-    topic: alerts.weekend-critical             # NATS output subject
+    subject: alerts.weekend-critical             # NATS output subject
     payload: |
       {
         "alert": "WEEKEND CRITICAL - Page On-Call",
@@ -61,7 +61,7 @@
 
 # Night Mode Motion Detection
 # Different behavior for motion detection during night hours
-- topic: sensors.motion                        # NATS subject format
+- subject: sensors.motion                        # NATS subject format
   conditions:
     operator: and
     items:
@@ -78,7 +78,7 @@
             operator: lt
             value: 6    # Before 6 AM
   action:
-    topic: alerts.night-motion                 # NATS output subject
+    subject: alerts.night-motion                 # NATS output subject
     payload: |
       {
         "alert": "Motion detected during night hours",
@@ -91,7 +91,7 @@
 
 # Maintenance Window Suppression
 # Suppress alerts during scheduled maintenance (Sunday 2-4 AM)
-- topic: system.alerts                         # NATS subject format
+- subject: system.alerts                         # NATS subject format
   conditions:
     operator: and
     items:
@@ -108,7 +108,7 @@
         operator: lt
         value: 4
   action:
-    topic: alerts.suppressed                   # NATS output subject
+    subject: alerts.suppressed                   # NATS output subject
     payload: |
       {
         "message": "Alert suppressed during maintenance window",
@@ -120,7 +120,7 @@
 
 # Time-Sensitive Data Routing
 # Route data differently based on time of day
-- topic: data.processing                       # NATS subject format
+- subject: data.processing                       # NATS subject format
   conditions:
     operator: and
     items:
@@ -134,7 +134,7 @@
         operator: lt
         value: 24       # Before midnight
   action:
-    topic: processing.evening-batch            # NATS output subject
+    subject: processing.evening-batch            # NATS output subject
     payload: |
       {
         "data": {data},
@@ -147,7 +147,7 @@
 
 # Monthly Report Trigger
 # Trigger monthly reports on the first day of each month
-- topic: scheduler.daily-check                 # NATS subject format
+- subject: scheduler.daily-check                 # NATS subject format
   conditions:
     operator: and
     items:
@@ -164,7 +164,7 @@
         operator: eq
         value: 0        # Exactly 8:00 AM
   action:
-    topic: reports.generate-monthly            # NATS output subject
+    subject: reports.generate-monthly            # NATS output subject
     payload: |
       {
         "report_type": "monthly_summary",
@@ -176,7 +176,7 @@
 
 # Workday vs Weekend Processing
 # Different processing rules for workdays vs weekends
-- topic: tasks.processing                      # NATS subject format
+- subject: tasks.processing                      # NATS subject format
   conditions:
     operator: and
     items:
@@ -187,7 +187,7 @@
         operator: lte
         value: 5        # Monday through Friday
   action:
-    topic: processing.workday-queue            # NATS output subject
+    subject: processing.workday-queue            # NATS output subject
     payload: |
       {
         "task": {task_data},
@@ -199,7 +199,7 @@
       }
 
 # Weekend processing (different SLA)
-- topic: tasks.processing                      # NATS subject format
+- subject: tasks.processing                      # NATS subject format
   conditions:
     operator: and
     items:
@@ -210,7 +210,7 @@
         operator: gt
         value: 5        # Saturday and Sunday
   action:
-    topic: processing.weekend-queue            # NATS output subject
+    subject: processing.weekend-queue            # NATS output subject
     payload: |
       {
         "task": {task_data},
@@ -223,7 +223,7 @@
 
 # Holiday Detection (Christmas Example)
 # Special handling for specific dates
-- topic: events.special                        # NATS subject format
+- subject: events.special                        # NATS subject format
   conditions:
     operator: and
     items:
@@ -237,7 +237,7 @@
         operator: eq
         value: 25       # 25th
   action:
-    topic: notifications.holiday               # NATS output subject
+    subject: notifications.holiday               # NATS output subject
     payload: |
       {
         "message": "Holiday notification - Christmas Day",
@@ -251,7 +251,7 @@
 
 # Time Zone Aware Processing
 # Example showing how current time can be used for scheduling
-- topic: scheduling.requests                   # NATS subject format
+- subject: scheduling.requests                   # NATS subject format
   conditions:
     operator: and
     items:
@@ -262,7 +262,7 @@
         operator: gt
         value: 0
   action:
-    topic: scheduling.delayed-tasks            # NATS output subject
+    subject: scheduling.delayed-tasks            # NATS output subject
     payload: |
       {
         "original_request": {request_data},

@@ -4,7 +4,7 @@
 # Example 1: Single-Level Wildcard for All Sensors
 # Matches: sensors.temperature, sensors.pressure, sensors.humidity
 # Does NOT match: sensors.room1.temperature (multi-level)
-- topic: sensors.*
+- subject: sensors.*
   conditions:
     operator: and
     items:
@@ -15,7 +15,7 @@
         operator: neq
         value: "test"                 # Skip test sensors
   action:
-    topic: alerts.{@subject.1}        # Dynamic routing: alerts.temperature, alerts.pressure
+    subject: alerts.{@subject.1}        # Dynamic routing: alerts.temperature, alerts.pressure
     payload: |
       {
         "alert": "High {@subject.1} reading detected",
@@ -29,7 +29,7 @@
 
 # Example 2: Multi-Level Wildcard for Building Infrastructure  
 # Matches: building.floor1.room1.temperature, building.hvac.status, building.security.door1.locked
-- topic: building.>
+- subject: building.>
   conditions:
     operator: and
     items:
@@ -40,7 +40,7 @@
         operator: gte  
         value: 3
   action:
-    topic: facilities.alerts.{@subject.1}  # Route by system: facilities.alerts.hvac, facilities.alerts.security
+    subject: facilities.alerts.{@subject.1}  # Route by system: facilities.alerts.hvac, facilities.alerts.security
     payload: |
       {
         "building_alert": "Alert from building system",
@@ -65,7 +65,7 @@
 
 # Example 3: Mixed Pattern for IoT Device Management
 # Matches: devices.sensor001.data, devices.camera002.status, devices.lock003.battery
-- topic: devices.*.* 
+- subject: devices.*.* 
   conditions:
     operator: and
     items:
@@ -76,7 +76,7 @@
         operator: eq
         value: "online"
   action:
-    topic: monitoring.{@subject.1}.{@subject.2}  # monitoring.sensor001.data
+    subject: monitoring.{@subject.1}.{@subject.2}  # monitoring.sensor001.data
     payload: |
       {
         "device_monitoring": "IoT device data processed",
@@ -89,14 +89,14 @@
         },
         "routing": {
           "from_subject": "{@subject}",
-          "to_topic": "monitoring.{@subject.1}.{@subject.2}",
+          "to_subject": "monitoring.{@subject.1}.{@subject.2}",
           "processed_at": "{@timestamp()}"
         }
       }
 
 # Example 4: Company Organizational Routing with Multi-Level
 # Matches: company.engineering.backend.deploy, company.sales.reports.monthly, company.hr.onboarding.checklist  
-- topic: company.>
+- subject: company.>
   conditions:
     operator: and
     items:
@@ -110,7 +110,7 @@
         operator: in
         value: ["engineering", "sales", "hr", "marketing"]
   action:
-    topic: escalation.{@subject.1}.{@subject.2}  # escalation.engineering.backend
+    subject: escalation.{@subject.1}.{@subject.2}  # escalation.engineering.backend
     payload: |
       {
         "escalation": "High priority organizational alert",
@@ -141,7 +141,7 @@
 
 # Example 5: Exact Match Combined with Wildcards (Both Should Fire)
 # This shows how exact and wildcard rules can coexist
-- topic: sensors.temperature           # Exact match for temperature
+- subject: sensors.temperature           # Exact match for temperature
   conditions:
     operator: and
     items:
@@ -149,7 +149,7 @@
         operator: gt
         value: 25
   action:
-    topic: alerts.temperature.specific
+    subject: alerts.temperature.specific
     payload: |
       {
         "alert": "Specific temperature handler triggered",
@@ -161,7 +161,7 @@
 
 # Example 6: Subject Token Conditional Logic
 # Route based on subject structure  
-- topic: monitoring.>
+- subject: monitoring.>
   conditions:
     operator: or
     groups:
@@ -182,7 +182,7 @@
             operator: gt
             value: 1000
   action:
-    topic: ops.{@subject.1}.alerts    # ops.health.alerts or ops.performance.alerts
+    subject: ops.{@subject.1}.alerts    # ops.health.alerts or ops.performance.alerts
     payload: |
       {
         "ops_alert": "{@subject.1} monitoring triggered",
@@ -204,9 +204,9 @@
         }
       }
 
-# Example 7: Wildcard in Action Topic (Advanced Usage)
+# Example 7: Wildcard in Action Subject (Advanced Usage)
 # Shows dynamic routing based on message content AND subject
-- topic: events.*
+- subject: events.*
   conditions:
     operator: and
     items:
@@ -214,7 +214,7 @@
         operator: eq
         value: "critical"
   action:
-    topic: critical.{@subject.1}.{region}  # Use both subject token AND message field
+    subject: critical.{@subject.1}.{region}  # Use both subject token AND message field
     payload: |
       {
         "critical_event": "Critical event routing",

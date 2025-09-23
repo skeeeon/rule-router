@@ -80,10 +80,10 @@ func (p *Processor) LoadRules(rules []Rule) error {
     return nil
 }
 
-func (p *Processor) GetTopics() []string {
-    topics := p.index.GetSubscriptionTopics()
-    p.logger.Debug("retrieved subscription topics from index", "topicCount", len(topics))
-    return topics
+func (p *Processor) GetSubjects() []string {
+    subjects := p.index.GetSubscriptionSubjects()
+    p.logger.Debug("retrieved subscription subjects from index", "subjectCount", len(subjects))
+    return subjects
 }
 
 // Process processes a message against rules using the actual NATS subject
@@ -127,7 +127,7 @@ func (p *Processor) ProcessWithSubject(actualSubject string, payload []byte) ([]
     var actions []*Action
     for _, rule := range rules {
         p.logger.Debug("evaluating rule",
-            "rulePattern", rule.Topic,
+            "rulePattern", rule.Subject,
             "actualSubject", actualSubject)
 
         // Evaluate conditions with subject context and KV context support
@@ -140,7 +140,7 @@ func (p *Processor) ProcessWithSubject(actualSubject string, payload []byte) ([]
                 }
                 p.logger.Error("failed to process action template",
                     "error", err,
-                    "rulePattern", rule.Topic,
+                    "rulePattern", rule.Subject,
                     "actualSubject", actualSubject)
                 continue
             }
@@ -150,14 +150,14 @@ func (p *Processor) ProcessWithSubject(actualSubject string, payload []byte) ([]
             }
             
             p.logger.Debug("rule matched and action created",
-                "rulePattern", rule.Topic,
+                "rulePattern", rule.Subject,
                 "actualSubject", actualSubject,
-                "actionTopic", action.Topic)
+                "actionSubject", action.Subject)
                 
             actions = append(actions, action)
         } else {
             p.logger.Debug("rule conditions not met",
-                "rulePattern", rule.Topic,
+                "rulePattern", rule.Subject,
                 "actualSubject", actualSubject)
         }
     }
@@ -177,24 +177,24 @@ func (p *Processor) ProcessWithSubject(actualSubject string, payload []byte) ([]
 }
 
 // Process maintains backward compatibility for existing callers
-func (p *Processor) Process(topic string, payload []byte) ([]*Action, error) {
-    // For backward compatibility, use the topic as both pattern and actual subject
-    return p.ProcessWithSubject(topic, payload)
+func (p *Processor) Process(subject string, payload []byte) ([]*Action, error) {
+    // For backward compatibility, use the subject as both pattern and actual subject
+    return p.ProcessWithSubject(subject, payload)
 }
 
 func (p *Processor) processActionTemplate(action *Action, msg map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext, kvCtx *KVContext) (*Action, error) {
     processedAction := &Action{
-        Topic:   action.Topic,
+        Subject: action.Subject,
         Payload: action.Payload,
     }
 
-    // Process topic template if it contains variables
-    if strings.Contains(action.Topic, "{") {
-        topic, err := p.processTemplate(action.Topic, msg, timeCtx, subjectCtx, kvCtx)
+    // Process subject template if it contains variables
+    if strings.Contains(action.Subject, "{") {
+        subject, err := p.processTemplate(action.Subject, msg, timeCtx, subjectCtx, kvCtx)
         if err != nil {
-            return nil, fmt.Errorf("failed to process topic template: %w", err)
+            return nil, fmt.Errorf("failed to process subject template: %w", err)
         }
-        processedAction.Topic = topic
+        processedAction.Subject = subject
     }
 
     // Process payload template

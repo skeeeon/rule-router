@@ -11,7 +11,7 @@ import (
 )
 
 type RuleIndex struct {
-    exactMatches   map[string][]*Rule     // exact topic → rules
+    exactMatches   map[string][]*Rule     // exact subject → rules
     patternRules   []*PatternRule         // all wildcard pattern rules
     mu             sync.RWMutex
     stats          IndexStats
@@ -54,12 +54,12 @@ func (idx *RuleIndex) Add(rule *Rule) {
     defer idx.mu.Unlock()
 
     // Determine if this is a pattern or exact match
-    if containsWildcards(rule.Topic) {
+    if containsWildcards(rule.Subject) {
         // It's a pattern rule
-        matcher, err := NewPatternMatcher(rule.Topic)
+        matcher, err := NewPatternMatcher(rule.Subject)
         if err != nil {
             idx.logger.Error("failed to create pattern matcher for rule",
-                "topic", rule.Topic,
+                "subject", rule.Subject,
                 "error", err)
             return
         }
@@ -71,36 +71,36 @@ func (idx *RuleIndex) Add(rule *Rule) {
         idx.patternRules = append(idx.patternRules, patternRule)
 
         idx.logger.Debug("added pattern rule to index",
-            "topic", rule.Topic,
+            "subject", rule.Subject,
             "totalPatternRules", len(idx.patternRules))
     } else {
         // It's an exact match rule
-        idx.exactMatches[rule.Topic] = append(idx.exactMatches[rule.Topic], rule)
+        idx.exactMatches[rule.Subject] = append(idx.exactMatches[rule.Subject], rule)
 
         idx.logger.Debug("added exact rule to index",
-            "topic", rule.Topic,
-            "existingRules", len(idx.exactMatches[rule.Topic]))
+            "subject", rule.Subject,
+            "existingRules", len(idx.exactMatches[rule.Subject]))
     }
 
     idx.stats.lastUpdated = time.Now()
 
     idx.logger.Info("rule added to index",
-        "topic", rule.Topic,
-        "isPattern", containsWildcards(rule.Topic),
-        "totalExactTopics", len(idx.exactMatches),
+        "subject", rule.Subject,
+        "isPattern", containsWildcards(rule.Subject),
+        "totalExactSubjects", len(idx.exactMatches),
         "totalPatternRules", len(idx.patternRules))
 }
 
-// Find returns rules matching the exact topic (legacy method for backward compatibility)
-func (idx *RuleIndex) Find(topic string) []*Rule {
+// Find returns rules matching the exact subject (legacy method for backward compatibility)
+func (idx *RuleIndex) Find(subject string) []*Rule {
     idx.mu.RLock()
     defer idx.mu.RUnlock()
 
     atomic.AddUint64(&idx.stats.lookups, 1)
-    rules := idx.exactMatches[topic]
+    rules := idx.exactMatches[subject]
 
-    idx.logger.Debug("exact topic lookup",
-        "topic", topic,
+    idx.logger.Debug("exact subject lookup",
+        "subject", subject,
         "rulesFound", len(rules))
 
     if len(rules) > 0 {
@@ -141,7 +141,7 @@ func (idx *RuleIndex) FindAllMatching(subject string) []*Rule {
             
             idx.logger.Debug("pattern rule matched",
                 "subject", subject,
-                "pattern", patternRule.Rule.Topic)
+                "pattern", patternRule.Rule.Subject)
         }
     }
 
@@ -158,37 +158,37 @@ func (idx *RuleIndex) FindAllMatching(subject string) []*Rule {
     return allMatches
 }
 
-// GetTopics returns all unique topics (both exact and patterns)
-func (idx *RuleIndex) GetTopics() []string {
+// GetSubjects returns all unique subjects (both exact and patterns)
+func (idx *RuleIndex) GetSubjects() []string {
     idx.mu.RLock()
     defer idx.mu.RUnlock()
     
     // Calculate total capacity needed
     totalCapacity := len(idx.exactMatches) + len(idx.patternRules)
-    topics := make([]string, 0, totalCapacity)
+    subjects := make([]string, 0, totalCapacity)
     
-    // Add exact match topics
-    for topic := range idx.exactMatches {
-        topics = append(topics, topic)
+    // Add exact match subjects
+    for subject := range idx.exactMatches {
+        subjects = append(subjects, subject)
     }
     
-    // Add pattern topics
+    // Add pattern subjects
     for _, patternRule := range idx.patternRules {
-        topics = append(topics, patternRule.Rule.Topic)
+        subjects = append(subjects, patternRule.Rule.Subject)
     }
 
-    idx.logger.Debug("retrieved all topics",
-        "exactTopics", len(idx.exactMatches),
-        "patternTopics", len(idx.patternRules),
-        "totalTopics", len(topics))
+    idx.logger.Debug("retrieved all subjects",
+        "exactSubjects", len(idx.exactMatches),
+        "patternSubjects", len(idx.patternRules),
+        "totalSubjects", len(subjects))
 
-    return topics
+    return subjects
 }
 
-// GetSubscriptionTopics returns topics that should be subscribed to in NATS
+// GetSubscriptionSubjects returns subjects that should be subscribed to in NATS
 // This is the simple 1:1 mapping approach (no consolidation)
-func (idx *RuleIndex) GetSubscriptionTopics() []string {
-    return idx.GetTopics() // Simple: subscribe to exactly what's in rules
+func (idx *RuleIndex) GetSubscriptionSubjects() []string {
+    return idx.GetSubjects() // Simple: subscribe to exactly what's in rules
 }
 
 func (idx *RuleIndex) Clear() {

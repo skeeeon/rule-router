@@ -29,15 +29,15 @@ func NewMessageHandler(processor *rule.Processor, logger *logger.Logger, metrics
     }
 }
 
-// CreateHandlerFunc returns a Watermill handler function for the given topic
+// CreateHandlerFunc returns a Watermill handler function for the given subject
 // This now supports wildcard patterns and extracts actual NATS subjects
-func (h *MessageHandler) CreateHandlerFunc(subscriptionTopic string) message.HandlerFunc {
+func (h *MessageHandler) CreateHandlerFunc(subscriptionSubject string) message.HandlerFunc {
     return func(msg *message.Message) ([]*message.Message, error) {
         // Extract the actual NATS subject from the message
-        actualSubject := h.extractActualSubject(msg, subscriptionTopic)
+        actualSubject := h.extractActualSubject(msg, subscriptionSubject)
         
         h.logger.Debug("processing message through rule handler",
-            "subscriptionTopic", subscriptionTopic,
+            "subscriptionSubject", subscriptionSubject,
             "actualSubject", actualSubject,
             "messageUUID", msg.UUID,
             "payloadSize", len(msg.Payload))
@@ -55,7 +55,7 @@ func (h *MessageHandler) CreateHandlerFunc(subscriptionTopic string) message.Han
             }
             h.logger.Error("rule processing failed",
                 "error", err,
-                "subscriptionTopic", subscriptionTopic,
+                "subscriptionSubject", subscriptionSubject,
                 "actualSubject", actualSubject,
                 "messageUUID", msg.UUID)
             return nil, fmt.Errorf("rule processing failed: %w", err)
@@ -69,8 +69,8 @@ func (h *MessageHandler) CreateHandlerFunc(subscriptionTopic string) message.Han
             actionMsg := message.NewMessage(actionID, []byte(action.Payload))
             
             // Set metadata for routing and tracking
-            actionMsg.Metadata.Set("destination_topic", action.Topic)
-            actionMsg.Metadata.Set("source_subscription", subscriptionTopic)
+            actionMsg.Metadata.Set("destination_subject", action.Subject)
+            actionMsg.Metadata.Set("source_subscription", subscriptionSubject)
             actionMsg.Metadata.Set("source_actual_subject", actualSubject)
             actionMsg.Metadata.Set("source_message_id", msg.UUID)
             
@@ -85,8 +85,8 @@ func (h *MessageHandler) CreateHandlerFunc(subscriptionTopic string) message.Han
             results = append(results, actionMsg)
 
             h.logger.Debug("created action message",
-                "actionTopic", action.Topic,
-                "sourceSubscription", subscriptionTopic,
+                "actionSubject", action.Subject,
+                "sourceSubscription", subscriptionSubject,
                 "sourceActualSubject", actualSubject,
                 "actionUUID", actionMsg.UUID,
                 "payloadLength", len(action.Payload))
@@ -101,7 +101,7 @@ func (h *MessageHandler) CreateHandlerFunc(subscriptionTopic string) message.Han
         }
 
         h.logger.Debug("message processing complete",
-            "subscriptionTopic", subscriptionTopic,
+            "subscriptionSubject", subscriptionSubject,
             "actualSubject", actualSubject,
             "actionsGenerated", len(results))
 
@@ -111,11 +111,11 @@ func (h *MessageHandler) CreateHandlerFunc(subscriptionTopic string) message.Han
 
 // extractActualSubject extracts the actual NATS subject from the message
 // This enables wildcard pattern matching by knowing what subject actually triggered
-func (h *MessageHandler) extractActualSubject(msg *message.Message, subscriptionTopic string) string {
+func (h *MessageHandler) extractActualSubject(msg *message.Message, subscriptionSubject string) string {
     // Try to get actual subject from NATS-specific metadata first
     if actualSubject := msg.Metadata.Get("nats_subject"); actualSubject != "" {
         h.logger.Debug("extracted actual subject from nats_subject metadata",
-            "subscription", subscriptionTopic,
+            "subscription", subscriptionSubject,
             "actualSubject", actualSubject)
         return actualSubject
     }
@@ -123,41 +123,41 @@ func (h *MessageHandler) extractActualSubject(msg *message.Message, subscription
     // Try standard Watermill subject metadata
     if actualSubject := msg.Metadata.Get("subject"); actualSubject != "" {
         h.logger.Debug("extracted actual subject from subject metadata",
-            "subscription", subscriptionTopic,
+            "subscription", subscriptionSubject,
             "actualSubject", actualSubject)
         return actualSubject
     }
     
-    // Try topic metadata (some publishers use this)
+    // Try legacy topic metadata (some publishers use this)
     if actualSubject := msg.Metadata.Get("topic"); actualSubject != "" {
         h.logger.Debug("extracted actual subject from topic metadata",
-            "subscription", subscriptionTopic,
+            "subscription", subscriptionSubject,
             "actualSubject", actualSubject)
         return actualSubject
     }
     
-    // If no metadata available, check if subscription topic contains wildcards
-    if h.isWildcardPattern(subscriptionTopic) {
+    // If no metadata available, check if subscription subject contains wildcards
+    if h.isWildcardPattern(subscriptionSubject) {
         // For wildcard subscriptions, we need the actual subject but don't have it
-        // This is a limitation - log it but continue with subscription topic
-        h.logger.Info("wildcard subscription but no actual subject in metadata - using subscription topic",
-            "subscriptionTopic", subscriptionTopic,
+        // This is a limitation - log it but continue with subscription subject
+        h.logger.Info("wildcard subscription but no actual subject in metadata - using subscription subject",
+            "subscriptionSubject", subscriptionSubject,
             "messageUUID", msg.UUID,
             "availableMetadata", h.getMetadataKeys(msg))
         
-        // Return subscription topic as fallback, but this limits wildcard functionality
-        return subscriptionTopic
+        // Return subscription subject as fallback, but this limits wildcard functionality
+        return subscriptionSubject
     }
     
-    // For exact match subscriptions, the subscription topic IS the actual subject
-    h.logger.Debug("using subscription topic as actual subject (exact match)",
-        "subscriptionTopic", subscriptionTopic)
-    return subscriptionTopic
+    // For exact match subscriptions, the subscription subject IS the actual subject
+    h.logger.Debug("using subscription subject as actual subject (exact match)",
+        "subscriptionSubject", subscriptionSubject)
+    return subscriptionSubject
 }
 
-// isWildcardPattern checks if a topic contains NATS wildcard characters
-func (h *MessageHandler) isWildcardPattern(topic string) bool {
-    return strings.Contains(topic, "*") || strings.Contains(topic, ">")
+// isWildcardPattern checks if a subject contains NATS wildcard characters
+func (h *MessageHandler) isWildcardPattern(subject string) bool {
+    return strings.Contains(subject, "*") || strings.Contains(subject, ">")
 }
 
 // getMetadataKeys returns all metadata keys for debugging

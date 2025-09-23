@@ -52,29 +52,29 @@ func (a *App) conditionalMetricsMiddleware() message.HandlerMiddleware {
 	}
 }
 
-// setupHandlers configures message handlers for each rule topic using NATS subjects
+// setupHandlers configures message handlers for each rule subject using NATS subjects
 // NOW handlers do the actual processing work
 func (a *App) setupHandlers() {
 	publisher := a.broker.GetPublisher()
 	subscriber := a.broker.GetSubscriber()
 	messageHandler := handler.NewMessageHandler(a.processor, a.logger, a.metrics)
 
-	// Extract unique topics from rules and add handlers
-	topics := a.processor.GetTopics()
-	a.logger.Info("setting up Watermill handlers for rule topics", "topicCount", len(topics))
+	// Extract unique subjects from rules and add handlers
+	subjects := a.processor.GetSubjects()
+	a.logger.Info("setting up Watermill handlers for rule subjects", "subjectCount", len(subjects))
 
-	for _, topic := range topics {
-		handlerName := fmt.Sprintf("processor-%s", a.sanitizeHandlerName(topic))
+	for _, subject := range subjects {
+		handlerName := fmt.Sprintf("processor-%s", a.sanitizeHandlerName(subject))
 
-		// Use topic directly - it's already in NATS subject format
-		subscribeTopic := topic
+		// Use subject directly - it's already in NATS subject format
+		subscribeSubject := subject
 
 		a.logger.Debug("adding handler",
 			"handlerName", handlerName,
-			"subscribeTopic", subscribeTopic)
+			"subscribeSubject", subscribeSubject)
 
-		// Create a custom publisher that routes to action topics
-		customPublisher := &ActionTopicPublisher{
+		// Create a custom publisher that routes to action subjects
+		customPublisher := &ActionSubjectPublisher{
 			publisher: publisher,
 			logger:    a.logger,
 		}
@@ -82,55 +82,55 @@ func (a *App) setupHandlers() {
 		// Handler now does the real work via CreateHandlerFunc
 		a.router.AddHandler(
 			handlerName,
-			subscribeTopic,
+			subscribeSubject,
 			subscriber,
-			"", // No fixed publish topic - determined by action
+			"", // No fixed publish subject - determined by action
 			customPublisher,
-			messageHandler.CreateHandlerFunc(subscribeTopic),
+			messageHandler.CreateHandlerFunc(subscribeSubject),
 		)
 	}
 }
 
-// ActionTopicPublisher is a custom publisher that routes messages based on their metadata
-type ActionTopicPublisher struct {
+// ActionSubjectPublisher is a custom publisher that routes messages based on their metadata
+type ActionSubjectPublisher struct {
 	publisher message.Publisher
 	logger    *logger.Logger
 }
 
-// Publish publishes a message to the topic specified in its metadata
-func (p *ActionTopicPublisher) Publish(topic string, messages ...*message.Message) error {
+// Publish publishes a message to the subject specified in its metadata
+func (p *ActionSubjectPublisher) Publish(subject string, messages ...*message.Message) error {
 	for _, msg := range messages {
-		// Get the actual destination topic from metadata
-		destinationTopic := msg.Metadata.Get("destination_topic")
-		if destinationTopic == "" {
-			p.logger.Error("no destination_topic in message metadata",
+		// Get the actual destination subject from metadata
+		destinationSubject := msg.Metadata.Get("destination_subject")
+		if destinationSubject == "" {
+			p.logger.Error("no destination_subject in message metadata",
 				"messageUUID", msg.UUID,
-				"fallbackTopic", topic)
-			destinationTopic = topic // Fallback
+				"fallbackSubject", subject)
+			destinationSubject = subject // Fallback
 		}
 
-		// Publish to the action-specified topic
-		err := p.publisher.Publish(destinationTopic, msg)
+		// Publish to the action-specified subject
+		err := p.publisher.Publish(destinationSubject, msg)
 		if err != nil {
-			return fmt.Errorf("failed to publish to topic %s: %w", destinationTopic, err)
+			return fmt.Errorf("failed to publish to subject %s: %w", destinationSubject, err)
 		}
 
 		p.logger.Debug("published action message",
-			"destinationTopic", destinationTopic,
+			"destinationSubject", destinationSubject,
 			"messageUUID", msg.UUID)
 	}
 	return nil
 }
 
 // Close implements message.Publisher interface
-func (p *ActionTopicPublisher) Close() error {
+func (p *ActionSubjectPublisher) Close() error {
 	return p.publisher.Close()
 }
 
 // sanitizeHandlerName ensures handler names are valid for Watermill with NATS subjects
-func (a *App) sanitizeHandlerName(topic string) string {
+func (a *App) sanitizeHandlerName(subject string) string {
 	// Replace NATS-specific characters in subject names for handler names
-	sanitized := topic
+	sanitized := subject
 	sanitized = strings.ReplaceAll(sanitized, ".", "-")
 	sanitized = strings.ReplaceAll(sanitized, "*", "wildcard")
 	sanitized = strings.ReplaceAll(sanitized, ">", "multi-wildcard")

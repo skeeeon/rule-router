@@ -74,7 +74,7 @@ func (a *App) Run(ctx context.Context) error {
 	// Start the router
 	a.logger.Info("starting Watermill router with NATS JetStream connection",
 		"natsUrls", a.config.NATS.URLs,
-		"topicsCount", len(a.processor.GetTopics()),
+		"subjectsCount", len(a.processor.GetSubjects()),
 		"metricsEnabled", a.config.Metrics.Enabled,
 		"kvEnabled", a.config.KV.Enabled,
 		"kvBuckets", a.config.KV.Buckets)
@@ -91,8 +91,8 @@ func (a *App) Run(ctx context.Context) error {
 
 	// Update metrics
 	if a.metrics != nil {
-		topics := a.processor.GetTopics()
-		a.metrics.SetRulesActive(float64(len(topics)))
+		subjects := a.processor.GetSubjects()
+		a.metrics.SetRulesActive(float64(len(subjects)))
 		// Note: Removed worker pool metrics since we don't use pools anymore
 	}
 

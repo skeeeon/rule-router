@@ -7,7 +7,7 @@ import (
 )
 
 type Rule struct {
-    Topic      string       `json:"topic" yaml:"topic"`
+    Subject    string       `json:"subject" yaml:"subject"`
     Conditions *Conditions  `json:"conditions" yaml:"conditions"`
     Action     *Action      `json:"action" yaml:"action"`
 }
@@ -26,7 +26,7 @@ type Condition struct {
 }
 
 type Action struct {
-    Topic   string `json:"topic" yaml:"topic"`
+    Subject string `json:"subject" yaml:"subject"`
     Payload string `json:"payload" yaml:"payload"`
 }
 

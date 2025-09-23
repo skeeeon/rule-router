@@ -172,10 +172,10 @@ func (b *NATSBroker) initializePublisher() error {
 func (b *NATSBroker) initializeSubscriber() error {
 	b.logger.Info("initializing NATS subscriber", "subscriberCount", b.config.Watermill.NATS.SubscriberCount)
 
-	// Configure JetStream consumer
+	// Configure JetStream consumer with improved naming
 	jsConfig := nats.JetStreamConfig{
 		AutoProvision: true,
-		DurablePrefix: "watermill-consumer",
+		DurablePrefix: "rule-router-consumer",  // More descriptive naming
 		SubscribeOptions: []watermillNats.SubOpt{
 			watermillNats.AckWait(b.config.Watermill.NATS.AckWaitTimeout),
 			watermillNats.MaxDeliver(b.config.Watermill.NATS.MaxDeliver),
@@ -186,7 +186,7 @@ func (b *NATSBroker) initializeSubscriber() error {
 
 	subscriberConfig := nats.SubscriberConfig{
 		URL:              b.getFirstNATSURL(),
-		QueueGroupPrefix: "rule-engine-workers",
+		QueueGroupPrefix: "rule-router-workers",  // Consistent naming
 		SubscribersCount: b.config.Watermill.NATS.SubscriberCount,
 		AckWaitTimeout:   b.config.Watermill.NATS.AckWaitTimeout,
 		NatsOptions:      []watermillNats.Option{}, // Options already applied to connection

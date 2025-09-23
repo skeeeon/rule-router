@@ -26,7 +26,7 @@ type CompiledPattern struct {
 	maxTokens           int           // Maximum tokens that can match (-1 for unlimited)
 }
 
-// PatternMatcher handles NATS-style topic pattern matching
+// PatternMatcher handles NATS-style subject pattern matching
 type PatternMatcher struct {
 	pattern  string
 	tokens   []string
@@ -34,7 +34,7 @@ type PatternMatcher struct {
 	isPattern bool
 }
 
-// PatternCache provides optional caching for frequently matched topics
+// PatternCache provides optional caching for frequently matched subjects
 type PatternCache struct {
 	cache   map[string]bool
 	mu      sync.RWMutex
@@ -74,20 +74,20 @@ func (pm *PatternMatcher) GetPattern() string {
 	return pm.pattern
 }
 
-// Match checks if the given topic matches this pattern
-func (pm *PatternMatcher) Match(topic string) bool {
+// Match checks if the given subject matches this pattern
+func (pm *PatternMatcher) Match(subject string) bool {
 	// Fast path for exact matches
 	if !pm.isPattern {
-		return pm.pattern == topic
+		return pm.pattern == subject
 	}
 
 	// Fast path for obvious mismatches
-	if topic == "" {
+	if subject == "" {
 		return pm.pattern == "" || pm.pattern == ">"
 	}
 
-	topicTokens := strings.Split(topic, ".")
-	return pm.matchTokens(topicTokens, pm.compiled)
+	subjectTokens := strings.Split(subject, ".")
+	return pm.matchTokens(subjectTokens, pm.compiled)
 }
 
 // compile pre-compiles the pattern for efficient matching
@@ -124,40 +124,40 @@ func (pm *PatternMatcher) compile() *CompiledPattern {
 	return compiled
 }
 
-// matchTokens performs the actual pattern matching against topic tokens
-func (pm *PatternMatcher) matchTokens(topicTokens []string, compiled *CompiledPattern) bool {
+// matchTokens performs the actual pattern matching against subject tokens
+func (pm *PatternMatcher) matchTokens(subjectTokens []string, compiled *CompiledPattern) bool {
 	patternLen := len(compiled.wildcardMap)
-	topicLen := len(topicTokens)
+	subjectLen := len(subjectTokens)
 
 	// Quick length checks
 	if compiled.hasTerminalWildcard {
 		// Must have at least minTokens
-		if topicLen < compiled.minTokens {
+		if subjectLen < compiled.minTokens {
 			return false
 		}
 	} else {
 		// Must match exactly
-		if topicLen != patternLen {
+		if subjectLen != patternLen {
 			return false
 		}
 	}
 
 	// Recursive matching with early termination
-	return pm.matchRecursive(topicTokens, 0, compiled, 0)
+	return pm.matchRecursive(subjectTokens, 0, compiled, 0)
 }
 
 // matchRecursive performs recursive token matching with optimization
-func (pm *PatternMatcher) matchRecursive(topicTokens []string, topicIdx int, compiled *CompiledPattern, patternIdx int) bool {
+func (pm *PatternMatcher) matchRecursive(subjectTokens []string, subjectIdx int, compiled *CompiledPattern, patternIdx int) bool {
 	patternLen := len(compiled.wildcardMap)
-	topicLen := len(topicTokens)
+	subjectLen := len(subjectTokens)
 
 	// End of pattern reached
 	if patternIdx >= patternLen {
-		return topicIdx >= topicLen // Both should be exhausted
+		return subjectIdx >= subjectLen // Both should be exhausted
 	}
 
-	// End of topic but more pattern remains
-	if topicIdx >= topicLen {
+	// End of subject but more pattern remains
+	if subjectIdx >= subjectLen {
 		// Only valid if remaining pattern is just a terminal >
 		return patternIdx == patternLen-1 && compiled.wildcardMap[patternIdx] == GreedyWildcard
 	}
@@ -167,14 +167,14 @@ func (pm *PatternMatcher) matchRecursive(topicTokens []string, topicIdx int, com
 	switch currentWildcard {
 	case ExactToken:
 		// Must match exactly
-		if topicTokens[topicIdx] != compiled.exactTokens[patternIdx] {
+		if subjectTokens[subjectIdx] != compiled.exactTokens[patternIdx] {
 			return false
 		}
-		return pm.matchRecursive(topicTokens, topicIdx+1, compiled, patternIdx+1)
+		return pm.matchRecursive(subjectTokens, subjectIdx+1, compiled, patternIdx+1)
 
 	case SingleWildcard:
 		// * matches exactly one token
-		return pm.matchRecursive(topicTokens, topicIdx+1, compiled, patternIdx+1)
+		return pm.matchRecursive(subjectTokens, subjectIdx+1, compiled, patternIdx+1)
 
 	case GreedyWildcard:
 		// > matches zero or more tokens
@@ -232,19 +232,19 @@ func NewPatternCache(maxSize int) *PatternCache {
 }
 
 // Get retrieves a cached result
-func (pc *PatternCache) Get(topic string) (bool, bool) {
+func (pc *PatternCache) Get(subject string) (bool, bool) {
 	if !pc.enabled {
 		return false, false
 	}
 
 	pc.mu.RLock()
 	defer pc.mu.RUnlock()
-	result, exists := pc.cache[topic]
+	result, exists := pc.cache[subject]
 	return result, exists
 }
 
 // Set stores a result in the cache
-func (pc *PatternCache) Set(topic string, matches bool) {
+func (pc *PatternCache) Set(subject string, matches bool) {
 	if !pc.enabled {
 		return
 	}
@@ -257,7 +257,7 @@ func (pc *PatternCache) Set(topic string, matches bool) {
 		pc.cache = make(map[string]bool)
 	}
 
-	pc.cache[topic] = matches
+	pc.cache[subject] = matches
 }
 
 // Clear empties the cache

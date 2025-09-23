@@ -19,11 +19,11 @@ func LoggingMiddleware(logger *logger.Logger) message.HandlerMiddleware {
     return func(h message.HandlerFunc) message.HandlerFunc {
         return func(msg *message.Message) ([]*message.Message, error) {
             start := time.Now()
-            topic := msg.Metadata.Get("topic")
+            subject := msg.Metadata.Get("subject")
             
             logger.Debug("processing message",
                 "uuid", msg.UUID,
-                "topic", topic,
+                "subject", subject,
                 "payloadSize", len(msg.Payload))
 
             results, err := h(msg)
@@ -33,12 +33,12 @@ func LoggingMiddleware(logger *logger.Logger) message.HandlerMiddleware {
                 logger.Error("message processing failed",
                     "error", err,
                     "uuid", msg.UUID,
-                    "topic", topic,
+                    "subject", subject,
                     "duration", duration)
             } else {
                 logger.Debug("message processing complete",
                     "uuid", msg.UUID,
-                    "topic", topic,
+                    "subject", subject,
                     "duration", duration,
                     "actionsGenerated", len(results))
             }
@@ -76,7 +76,7 @@ func RecoveryMiddleware(logger *logger.Logger) message.HandlerMiddleware {
                     logger.Error("panic recovered in message handler",
                         "panic", r,
                         "uuid", msg.UUID,
-                        "topic", msg.Metadata.Get("topic"))
+                        "subject", msg.Metadata.Get("subject"))
                     err = fmt.Errorf("panic in message handler: %v", r)
                 }
             }()
@@ -181,7 +181,7 @@ func PoisonQueueMiddleware(logger *logger.Logger, metrics *metrics.Metrics) mess
                 if isPoisonMessage(err) {
                     logger.Error("poison message detected",
                         "uuid", msg.UUID,
-                        "topic", msg.Metadata.Get("topic"),
+                        "subject", msg.Metadata.Get("subject"),
                         "error", err)
                     
                     if metrics != nil {

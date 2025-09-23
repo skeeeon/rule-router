@@ -1,5 +1,5 @@
 # Basic rule with top-level field access
-- topic: sensors.temperature                    # NATS subject format (dots)
+- subject: sensors.temperature                    # NATS subject format (dots)
   conditions:
     operator: and
     items:
@@ -7,7 +7,7 @@
         operator: gt
         value: 30
   action:
-    topic: alerts.temperature                   # NATS output subject
+    subject: alerts.temperature                   # NATS output subject
     payload: |
       {
         "alert": "High temperature detected!",
@@ -20,7 +20,7 @@
 
 # Basic rule with nested field access
 # Sample message: {"sensor": {"id": "temp001", "reading": 32.5, "location": "bedroom"}}
-- topic: sensors.data
+- subject: sensors.data
   conditions:
     operator: and
     items:
@@ -31,7 +31,7 @@
         operator: eq
         value: "bedroom"
   action:
-    topic: alerts.bedroom-temperature
+    subject: alerts.bedroom-temperature
     payload: |
       {
         "alert": "High bedroom temperature!",

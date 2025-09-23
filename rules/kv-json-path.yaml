@@ -20,7 +20,7 @@
 
 # Example 1: Basic JSON Path Traversal
 # Message: {"customer_id": "cust123", "order_value": 2500}
-- topic: orders.premium
+- subject: orders.premium
   conditions:
     operator: and
     items:
@@ -31,7 +31,7 @@
         operator: gt
         value: 1000
   action:
-    topic: fulfillment.premium-customer
+    subject: fulfillment.premium-customer
     payload: |
       {
         "customer": {
@@ -54,7 +54,7 @@
 
 # Example 2: Array Access in JSON Path  
 # Access array elements: shipping.addresses.0.city
-- topic: shipping.address-lookup
+- subject: shipping.address-lookup
   conditions:
     operator: and
     items:
@@ -64,7 +64,7 @@
         operator: eq
         value: "primary"
   action:
-    topic: shipping.primary-address
+    subject: shipping.primary-address
     payload: |
       {
         "customer_id": {customer_id},
@@ -89,7 +89,7 @@
 #     "alert": {"subject": "Alert: {title}", "priority": "high"}
 #   }
 # }
-- topic: notifications.send-email
+- subject: notifications.send-email
   conditions:
     operator: and
     items:
@@ -100,7 +100,7 @@
         operator: eq
         value: true
   action:
-    topic: email.send-secure
+    subject: email.send-secure
     payload: |
       {
         "email_config": {
@@ -129,7 +129,7 @@
 #   },
 #   "location": {"building": "A", "floor": 3, "room": "server-room"}
 # }
-- topic: sensors.temperature
+- subject: sensors.temperature
   conditions:
     operator: and
     items:
@@ -139,7 +139,7 @@
         operator: gt
         value: "@kv.device_config.{sensor_id}.thresholds.max"      # ✅ Compare against JSON config
   action:
-    topic: alerts.temperature-exceeded
+    subject: alerts.temperature-exceeded
     payload: |
       {
         "alert": "Temperature threshold exceeded",
@@ -172,7 +172,7 @@
 #   "limits": {"api_calls_per_hour": 10000, "storage_gb": 100},
 #   "preferences": {"theme": "dark", "notifications": {"email": true, "sms": false}}
 # }
-- topic: api.admin-request
+- subject: api.admin-request
   conditions:
     operator: and
     items:
@@ -185,7 +185,7 @@
         operator: eq
         value: true
   action:
-    topic: api.admin-authorized
+    subject: api.admin-authorized
     payload: |
       {
         "authorization": "Admin API access granted",
@@ -222,7 +222,7 @@
 #   },
 #   "targeting": {"user_types": ["premium", "trial"], "regions": ["us", "ca"]}
 # }
-- topic: web.page-view
+- subject: web.page-view
   conditions:
     operator: and
     items:
@@ -236,7 +236,7 @@
         operator: in  # This would need to be implemented as contains or separate conditions
         value: "premium"
   action:
-    topic: analytics.experiment-view
+    subject: analytics.experiment-view
     payload: |
       {
         "experiment": {
@@ -276,7 +276,7 @@
 #   },
 #   "history": [{"date": "2024-01-15", "type": "routine", "tech": "tech-42"}]
 # }
-- topic: equipment.*.maintenance.*.schedule
+- subject: equipment.*.maintenance.*.schedule
   conditions:
     operator: and
     items:
@@ -286,7 +286,7 @@
         operator: eq
         value: "routine"
   action:
-    topic: maintenance.scheduled
+    subject: maintenance.scheduled
     payload: |
       {
         "equipment": {
