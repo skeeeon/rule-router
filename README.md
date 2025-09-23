@@ -559,8 +559,8 @@ Options:
 ## Performance Characteristics
 
 ### Throughput
-- **Expected**: 2,000-4,000 messages/second per instance
-- **Bottlenecks**: JSON processing (50-60%), KV lookups (10-15%), template processing (15-20%), I/O (10-15%)
+- **Expected**: 3,000-6,000 messages/second per instance
+- **Bottlenecks**: Field access and nested lookups (25-30%), KV operations (20-25%), template processing (12-15%), optimized JSON processing (8-12%), I/O (15-20%)
 - **Scaling**: Linear with NATS cluster size
 
 ### KV Performance
