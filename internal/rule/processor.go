@@ -3,7 +3,7 @@
 package rule
 
 import (
-    json "github.com/goccy/go-json"
+    "encoding/json"
     "fmt"
     "regexp"
     "strconv"
@@ -16,13 +16,13 @@ import (
     "rule-router/internal/metrics"
 )
 
-// Pre-compiled regex patterns for template processing (clean and efficient)
+// OPTIMIZED: Single regex pattern to capture all variables in one pass
+// Matches both {@system.field} and {message.field} patterns
 var (
-    // System fields and functions: {@time.hour}, {@uuid7()}, {@timestamp()}, {@subject.1}, {@kv.bucket.key}
-    systemFieldPattern = regexp.MustCompile(`\{@([^}]+)\}`)
-    
-    // Regular message variables: {temperature}, {sensor.location}
-    messageVarPattern = regexp.MustCompile(`\{([^}@]+)\}`)
+    // Combined pattern: captures optional @ prefix and variable content
+    // {@time.hour} -> groups: ["@", "time.hour"]  
+    // {temperature} -> groups: ["", "temperature"]
+    combinedVariablePattern = regexp.MustCompile(`\{(@?)([^}]+)\}`)
 )
 
 type Processor struct {
@@ -207,28 +207,47 @@ func (p *Processor) processActionTemplate(action *Action, msg map[string]interfa
     return processedAction, nil
 }
 
-// processTemplate handles the enhanced {@} syntax with subject and KV support
+// OPTIMIZED: Single-pass template processing with combined regex
 func (p *Processor) processTemplate(template string, data map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext, kvCtx *KVContext) (string, error) {
-    result := template
+    if !strings.Contains(template, "{") {
+        // No variables - return as-is
+        return template, nil
+    }
 
-    // Process system fields and functions: {@time.hour}, {@uuid7()}, {@timestamp()}, {@subject.1}, {@kv.bucket.key}
-    result = systemFieldPattern.ReplaceAllStringFunc(result, func(match string) string {
-        systemRef := match[2 : len(match)-1] // remove {@ and }, get "time.hour" or "uuid7()" or "subject.1" or "kv.bucket.key"
+    // SINGLE PASS: Process all variables (system and message) in one regex operation
+    result := combinedVariablePattern.ReplaceAllStringFunc(template, func(match string) string {
+        // Parse the match: {@time.hour} or {temperature}
+        // match[0] = full match: "{@time.hour}" or "{temperature}"
+        // We need to extract the groups from the regex match
         
-        if strings.HasSuffix(systemRef, "()") {
-            // It's a function: uuid7(), timestamp()
-            return p.processSystemFunction(systemRef)
-        } else {
-            // It's a system field: time.hour, day.name, subject.1, kv.bucket.key
-            // NOW PASSING msgData for KV variable resolution
-            return p.processSystemField("@"+systemRef, data, timeCtx, subjectCtx, kvCtx) // Add @ back for lookup
+        // Extract groups manually since ReplaceAllStringFunc doesn't provide them directly
+        submatches := combinedVariablePattern.FindStringSubmatch(match)
+        if len(submatches) != 3 {
+            p.logger.Debug("unexpected regex match format", "match", match)
+            return match // Return original if parsing fails
         }
-    })
+        
+        isSystemVar := submatches[1] == "@"  // Group 1: optional @ prefix
+        varContent := submatches[2]          // Group 2: variable content
+        
+        p.logger.Debug("processing template variable",
+            "match", match,
+            "isSystem", isSystemVar,
+            "content", varContent)
 
-    // Process message variables: {temperature}, {sensor.location}
-    result = messageVarPattern.ReplaceAllStringFunc(result, func(match string) string {
-        fieldPath := match[1 : len(match)-1] // remove { and }
-        return p.processMessageVariable(fieldPath, data)
+        if isSystemVar {
+            // System variable: @time.hour, @subject.1, @kv.bucket.key, @uuid7()
+            if strings.HasSuffix(varContent, "()") {
+                // System function: timestamp(), uuid7()
+                return p.processSystemFunction(varContent)
+            } else {
+                // System field: time.hour, subject.1, kv.bucket.key
+                return p.processSystemField("@"+varContent, data, timeCtx, subjectCtx, kvCtx)
+            }
+        } else {
+            // Message variable: temperature, sensor.location
+            return p.processMessageVariable(varContent, data)
+        }
     })
 
     return result, nil
