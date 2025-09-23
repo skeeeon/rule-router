@@ -1,0 +1,307 @@
+# NATS Key-Value JSON Path Examples
+# Shows JSON traversal within KV values: @kv.bucket.key.json.path.to.field
+
+# Example KV Data Setup:
+# customer_data["cust123"] = {
+#   "tier": "premium",
+#   "profile": {
+#     "name": "Acme Corp",
+#     "contact": {"email": "admin@acme.com", "phone": "+1-555-0123"}
+#   },
+#   "shipping": {
+#     "preferences": {"method": "next_day", "carrier": "FedEx"},
+#     "addresses": [
+#       {"type": "primary", "city": "Seattle", "zip": "98101"},
+#       {"type": "secondary", "city": "Portland", "zip": "97201"}
+#     ]
+#   },
+#   "billing": {"plan": "enterprise", "credits": 1500}
+# }
+
+# Example 1: Basic JSON Path Traversal
+# Message: {"customer_id": "cust123", "order_value": 2500}
+- topic: orders.premium
+  conditions:
+    operator: and
+    items:
+      - field: "@kv.customer_data.{customer_id}.tier"              # ✅ Simple JSON path
+        operator: eq
+        value: "premium"
+      - field: "@kv.customer_data.{customer_id}.billing.credits"   # ✅ Nested JSON path
+        operator: gt
+        value: 1000
+  action:
+    topic: fulfillment.premium-customer
+    payload: |
+      {
+        "customer": {
+          "id": {customer_id},
+          "tier": "{@kv.customer_data.{customer_id}.tier}",
+          "name": "{@kv.customer_data.{customer_id}.profile.name}",
+          "email": "{@kv.customer_data.{customer_id}.profile.contact.email}"
+        },
+        "shipping": {
+          "method": "{@kv.customer_data.{customer_id}.shipping.preferences.method}",
+          "carrier": "{@kv.customer_data.{customer_id}.shipping.preferences.carrier}"
+        },
+        "billing": {
+          "plan": "{@kv.customer_data.{customer_id}.billing.plan}",
+          "available_credits": "{@kv.customer_data.{customer_id}.billing.credits}"
+        },
+        "order_value": {order_value},
+        "processed_at": "{@timestamp()}"
+      }
+
+# Example 2: Array Access in JSON Path  
+# Access array elements: shipping.addresses.0.city
+- topic: shipping.address-lookup
+  conditions:
+    operator: and
+    items:
+      - field: customer_id
+        operator: exists
+      - field: "@kv.customer_data.{customer_id}.shipping.addresses.0.type"  # ✅ Array index access
+        operator: eq
+        value: "primary"
+  action:
+    topic: shipping.primary-address
+    payload: |
+      {
+        "customer_id": {customer_id},
+        "primary_address": {
+          "city": "{@kv.customer_data.{customer_id}.shipping.addresses.0.city}",
+          "zip": "{@kv.customer_data.{customer_id}.shipping.addresses.0.zip}",
+          "type": "{@kv.customer_data.{customer_id}.shipping.addresses.0.type}"
+        },
+        "secondary_address": {
+          "city": "{@kv.customer_data.{customer_id}.shipping.addresses.1.city}",
+          "zip": "{@kv.customer_data.{customer_id}.shipping.addresses.1.zip}",
+          "type": "{@kv.customer_data.{customer_id}.shipping.addresses.1.type}"
+        },
+        "looked_up_at": "{@timestamp()}"
+      }
+
+# Example 3: System Configuration with JSON Paths
+# system_config["email_settings"] = {
+#   "smtp": {"host": "smtp.company.com", "port": 587, "tls": true},
+#   "templates": {
+#     "welcome": {"subject": "Welcome!", "body": "Welcome to our service"},
+#     "alert": {"subject": "Alert: {title}", "priority": "high"}
+#   }
+# }
+- topic: notifications.send-email
+  conditions:
+    operator: and
+    items:
+      - field: email_type
+        operator: eq
+        value: "alert"
+      - field: "@kv.system_config.email_settings.smtp.tls"         # ✅ Deep config access
+        operator: eq
+        value: true
+  action:
+    topic: email.send-secure
+    payload: |
+      {
+        "email_config": {
+          "smtp_host": "{@kv.system_config.email_settings.smtp.host}",
+          "smtp_port": "{@kv.system_config.email_settings.smtp.port}",
+          "tls_enabled": "{@kv.system_config.email_settings.smtp.tls}"
+        },
+        "template": {
+          "subject": "{@kv.system_config.email_settings.templates.alert.subject}",
+          "priority": "{@kv.system_config.email_settings.templates.alert.priority}"
+        },
+        "message_data": {
+          "recipient": {recipient},
+          "alert_title": {alert_title}
+        },
+        "queued_at": "{@timestamp()}"
+      }
+
+# Example 4: Device Configuration with Complex JSON
+# device_config["sensor-001"] = {
+#   "hardware": {"model": "TempSensor-Pro", "firmware": "2.1.4"},
+#   "thresholds": {"min": 10, "max": 35, "critical": 40},
+#   "reporting": {
+#     "interval_seconds": 30,
+#     "destinations": ["alerts.temperature", "logging.sensor-data"]
+#   },
+#   "location": {"building": "A", "floor": 3, "room": "server-room"}
+# }
+- topic: sensors.temperature
+  conditions:
+    operator: and
+    items:
+      - field: sensor_id
+        operator: exists
+      - field: temperature
+        operator: gt
+        value: "@kv.device_config.{sensor_id}.thresholds.max"      # ✅ Compare against JSON config
+  action:
+    topic: alerts.temperature-exceeded
+    payload: |
+      {
+        "alert": "Temperature threshold exceeded",
+        "sensor": {
+          "id": {sensor_id},
+          "model": "{@kv.device_config.{sensor_id}.hardware.model}",
+          "firmware": "{@kv.device_config.{sensor_id}.hardware.firmware}",
+          "location": {
+            "building": "{@kv.device_config.{sensor_id}.location.building}",
+            "floor": "{@kv.device_config.{sensor_id}.location.floor}",
+            "room": "{@kv.device_config.{sensor_id}.location.room}"
+          }
+        },
+        "readings": {
+          "current": {temperature},
+          "threshold_max": "{@kv.device_config.{sensor_id}.thresholds.max}",
+          "threshold_critical": "{@kv.device_config.{sensor_id}.thresholds.critical}"
+        },
+        "configuration": {
+          "reporting_interval": "{@kv.device_config.{sensor_id}.reporting.interval_seconds}"
+        },
+        "alert_id": "{@uuid7()}",
+        "triggered_at": "{@timestamp()}"
+      }
+
+# Example 5: User Permissions and Feature Flags
+# user_permissions["user456"] = {
+#   "role": "admin",
+#   "features": {"dashboard": true, "reports": true, "admin_panel": true},
+#   "limits": {"api_calls_per_hour": 10000, "storage_gb": 100},
+#   "preferences": {"theme": "dark", "notifications": {"email": true, "sms": false}}
+# }
+- topic: api.admin-request
+  conditions:
+    operator: and
+    items:
+      - field: user_id
+        operator: exists
+      - field: "@kv.user_permissions.{user_id}.role"               # ✅ Check role
+        operator: eq
+        value: "admin"
+      - field: "@kv.user_permissions.{user_id}.features.admin_panel"  # ✅ Check feature flag
+        operator: eq
+        value: true
+  action:
+    topic: api.admin-authorized
+    payload: |
+      {
+        "authorization": "Admin API access granted",
+        "user": {
+          "id": {user_id},
+          "role": "{@kv.user_permissions.{user_id}.role}",
+          "features": {
+            "dashboard": "{@kv.user_permissions.{user_id}.features.dashboard}",
+            "reports": "{@kv.user_permissions.{user_id}.features.reports}",
+            "admin_panel": "{@kv.user_permissions.{user_id}.features.admin_panel}"
+          },
+          "limits": {
+            "api_calls_per_hour": "{@kv.user_permissions.{user_id}.limits.api_calls_per_hour}",
+            "storage_gb": "{@kv.user_permissions.{user_id}.limits.storage_gb}"
+          },
+          "preferences": {
+            "theme": "{@kv.user_permissions.{user_id}.preferences.theme}",
+            "email_notifications": "{@kv.user_permissions.{user_id}.preferences.notifications.email}"
+          }
+        },
+        "request_data": {
+          "endpoint": {requested_endpoint},
+          "method": {http_method}
+        },
+        "authorized_at": "{@timestamp()}"
+      }
+
+# Example 6: Feature Toggles and A/B Testing
+# feature_flags["experiment_123"] = {
+#   "enabled": true,
+#   "variants": {
+#     "control": {"weight": 50, "config": {"color": "blue", "cta_text": "Sign Up"}},
+#     "test": {"weight": 50, "config": {"color": "green", "cta_text": "Get Started"}}
+#   },
+#   "targeting": {"user_types": ["premium", "trial"], "regions": ["us", "ca"]}
+# }
+- topic: web.page-view
+  conditions:
+    operator: and
+    items:
+      - field: experiment_id
+        operator: eq
+        value: "experiment_123"
+      - field: "@kv.feature_flags.{experiment_id}.enabled"         # ✅ Check if experiment enabled
+        operator: eq
+        value: true
+      - field: user_type
+        operator: in  # This would need to be implemented as contains or separate conditions
+        value: "premium"
+  action:
+    topic: analytics.experiment-view
+    payload: |
+      {
+        "experiment": {
+          "id": {experiment_id},
+          "enabled": "{@kv.feature_flags.{experiment_id}.enabled}",
+          "control_weight": "{@kv.feature_flags.{experiment_id}.variants.control.weight}",
+          "test_weight": "{@kv.feature_flags.{experiment_id}.variants.test.weight}",
+          "targeting": {
+            "user_types": "premium,trial",  # Would need array handling
+            "regions": "us,ca"
+          }
+        },
+        "variant_configs": {
+          "control": {
+            "color": "{@kv.feature_flags.{experiment_id}.variants.control.config.color}",
+            "cta_text": "{@kv.feature_flags.{experiment_id}.variants.control.config.cta_text}"
+          },
+          "test": {
+            "color": "{@kv.feature_flags.{experiment_id}.variants.test.config.color}",
+            "cta_text": "{@kv.feature_flags.{experiment_id}.variants.test.config.cta_text}"
+          }
+        },
+        "user": {
+          "type": {user_type},
+          "region": {user_region}
+        },
+        "tracked_at": "{@timestamp()}"
+      }
+
+# Example 7: Nested Subject and Message Variables in JSON Paths
+# Subject: equipment.pump.maintenance.pump-007.schedule
+# Message: {"maintenance_type": "routine", "scheduled_by": "tech-42"}
+# equipment_maintenance["pump-007"] = {
+#   "schedules": {
+#     "routine": {"frequency_days": 30, "duration_hours": 2, "technician_level": "L2"},
+#     "emergency": {"response_time_hours": 4, "technician_level": "L3"}
+#   },
+#   "history": [{"date": "2024-01-15", "type": "routine", "tech": "tech-42"}]
+# }
+- topic: equipment.*.maintenance.*.schedule
+  conditions:
+    operator: and
+    items:
+      - field: "@kv.equipment_maintenance.{@subject.3}.schedules.{maintenance_type}.frequency_days"  # ✅ Complex path
+        operator: exists
+      - field: maintenance_type
+        operator: eq
+        value: "routine"
+  action:
+    topic: maintenance.scheduled
+    payload: |
+      {
+        "equipment": {
+          "type": "{@subject.1}",
+          "id": "{@subject.3}",
+          "maintenance_schedule": {
+            "type": {maintenance_type},
+            "frequency_days": "{@kv.equipment_maintenance.{@subject.3}.schedules.{maintenance_type}.frequency_days}",
+            "duration_hours": "{@kv.equipment_maintenance.{@subject.3}.schedules.{maintenance_type}.duration_hours}",
+            "required_technician_level": "{@kv.equipment_maintenance.{@subject.3}.schedules.{maintenance_type}.technician_level}"
+          }
+        },
+        "scheduling": {
+          "scheduled_by": {scheduled_by},
+          "scheduled_at": "{@timestamp()}",
+          "maintenance_id": "{@uuid7()}"
+        }
+      }

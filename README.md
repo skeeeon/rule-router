@@ -1,11 +1,12 @@
 # Rule Router
 
-A high-performance NATS message router built on [Watermill.io](https://watermill.io) that processes messages through sophisticated rule conditions with time-based evaluation and publishes templated actions back to NATS.
+A high-performance NATS message router built on [Watermill.io](https://watermill.io) that processes messages through sophisticated rule conditions with time-based evaluation, NATS Key-Value integration, and publishes templated actions back to NATS.
 
 ## Features
 
 - 🚀 **High-Performance Processing**: Built on Watermill for 2,000-4,000 messages/second capability
 - 🔗 **NATS JetStream Integration**: Connect to existing NATS JetStream infrastructure
+- 🗄️ **NATS Key-Value Support**: Dynamic lookups with JSON path traversal for stateful rules
 - 🔐 **Comprehensive Authentication**: Support for various NATS authentication methods and TLS
 - ⏰ **Time-Based Rule Evaluation**: Rules can evaluate based on current time, day of week, date
 - 📝 **Sophisticated Rule Engine**: Complex condition evaluation with AND/OR logic and nested groups
@@ -20,7 +21,7 @@ A high-performance NATS message router built on [Watermill.io](https://watermill
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
 │   NATS          │◄──►│  Watermill       │───▶│  Rule Engine    │
 │   JetStream     │    │  Handlers        │    │  + Time-Based   │
-│                 │    │  + Middleware    │    │  Evaluation     │
+│   + Key-Value   │    │  + Middleware    │    │  + KV Lookups   │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
                                 │
                                 ▼
@@ -48,7 +49,7 @@ go build -o rule-router ./cmd/rule-router
 
 2. **Start NATS JetStream**:
 ```bash
-# NATS JetStream
+# NATS JetStream with Key-Value support
 docker run -d --name nats-js -p 4222:4222 nats:latest -js
 ```
 
@@ -56,7 +57,7 @@ docker run -d --name nats-js -p 4222:4222 nats:latest -js
 ```bash
 # Copy sample configuration
 cp config/config.yaml config/my-config.yaml
-# Edit with your NATS server details
+# Edit with your NATS server details and KV buckets
 ```
 
 4. **Run**:
@@ -89,6 +90,19 @@ nats:
     keyFile: "/path/to/client-key.pem"     # Client private key
     caFile: "/path/to/ca.pem"              # CA certificate
     insecure: false                        # Skip certificate verification
+```
+
+### NATS Key-Value Configuration
+
+```yaml
+# NATS Key-Value Store Configuration
+kv:
+  enabled: true                            # Enable KV support
+  buckets:                                 # Pre-configured KV buckets
+    - "device_status"                      # Device operational status
+    - "device_config"                      # Device configuration data
+    - "user_preferences"                   # User settings and preferences
+    - "system_config"                      # System configuration values
 ```
 
 ### Watermill Configuration
@@ -210,6 +224,73 @@ Access current time information in rule conditions using `@` system fields:
 | `@timestamp.unix` | Unix timestamp | integer | 1705344000 |
 | `@timestamp.iso` | ISO timestamp | string | "2024-01-15T14:30:00Z" |
 
+### Subject Token Access
+
+Access NATS subject components using subject fields:
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `@subject` | Full subject | "sensors.temperature.room1" |
+| `@subject.count` | Token count | 3 |
+| `@subject.0` | First token | "sensors" |
+| `@subject.1` | Second token | "temperature" |
+| `@subject.first` | First token | "sensors" |
+| `@subject.last` | Last token | "room1" |
+
+### NATS Key-Value Lookups
+
+Access NATS Key-Value stores with optional JSON path traversal:
+
+#### Basic KV Syntax
+```yaml
+# Simple key lookup
+- field: "@kv.device_status.sensor-001"
+  operator: eq
+  value: "active"
+
+# Dynamic key from message field
+- field: "@kv.device_status.{device_id}"
+  operator: eq  
+  value: "active"
+
+# Dynamic key from subject
+- field: "@kv.device_status.{@subject.1}"
+  operator: eq
+  value: "active"
+```
+
+#### JSON Path Traversal
+```yaml
+# KV Value: {"tier": "premium", "shipping": {"method": "next_day"}}
+# Access nested JSON fields with dot notation
+
+- field: "@kv.customer_data.{customer_id}.tier"
+  operator: eq
+  value: "premium"
+
+- field: "@kv.customer_data.{customer_id}.shipping.method"  
+  operator: eq
+  value: "next_day"
+
+# Array access
+# KV Value: {"addresses": [{"city": "Seattle"}, {"city": "Portland"}]}
+- field: "@kv.customer_data.{customer_id}.addresses.0.city"
+  operator: eq
+  value: "Seattle"
+```
+
+#### KV Template Usage
+```yaml
+payload: |
+  {
+    "device_status": "{@kv.device_status.{device_id}}",
+    "customer_tier": "{@kv.customer_data.{customer_id}.tier}",
+    "shipping_method": "{@kv.customer_data.{customer_id}.shipping.method}",
+    "primary_address": "{@kv.customer_data.{customer_id}.addresses.0.city}",
+    "config_value": "{@kv.system_config.max_temperature}"
+  }
+```
+
 ### Template Functions
 
 Use these functions in action templates:
@@ -222,27 +303,33 @@ Use these functions in action templates:
 
 ### Template Variables
 
-Access message fields and time data in templates:
+Access message fields, time data, subject data, and KV data in templates:
 
 ```yaml
 payload: |
   {
-    "messageField": {fieldName},           # Message data
-    "nestedField": {user.profile.name},    # Nested message data
-    "currentHour": "{@time.hour}",         # Time field
-    "generatedId": "{@uuid7()}",           # Function
-    "timestamp": "{@timestamp()}"          # Function
+    "messageField": {fieldName},                    # Message data
+    "nestedField": {user.profile.name},             # Nested message data
+    "currentHour": "{@time.hour}",                  # Time field
+    "subjectToken": "{@subject.1}",                 # Subject token
+    "deviceStatus": "{@kv.device_status.{device_id}}", # KV lookup
+    "configPath": "{@kv.system_config.email.smtp.host}", # KV JSON path
+    "generatedId": "{@uuid7()}",                    # Function
+    "timestamp": "{@timestamp()}"                   # Function
   }
 ```
 
 ## Complete Rule Examples
 
-### Basic Temperature Alert
+### Basic Temperature Alert with KV Status Check
 ```yaml
 - topic: sensors.temperature
   conditions:
     operator: and
     items:
+      - field: "@kv.device_status.{sensor_id}"      # Check device is active
+        operator: eq
+        value: "active"
       - field: temperature
         operator: gt
         value: 30
@@ -250,76 +337,183 @@ payload: |
     topic: alerts.temperature
     payload: |
       {
-        "alert": "High temperature detected!",
-        "temperature": {temperature},
-        "location": {location},
-        "detectedAt": "{@timestamp()}",
+        "alert": "High temperature from active device",
+        "device": {
+          "id": {sensor_id},
+          "status": "{@kv.device_status.{sensor_id}}",
+          "location": "{@kv.device_config.{sensor_id}.location.building}"
+        },
+        "reading": {
+          "temperature": {temperature},
+          "threshold": "{@kv.device_config.{sensor_id}.thresholds.max}"
+        },
+        "timestamp": "{@timestamp()}",
         "alertId": "{@uuid7()}"
       }
 ```
 
-### Business Hours Alert with Time Conditions
+### Business Hours Processing with Customer Data
 ```yaml
-- topic: sensors.temperature
+- topic: orders.new
   conditions:
     operator: and
     items:
-      - field: temperature
-        operator: gt
-        value: 30
-      - field: "@time.hour"                # Only during business hours
+      - field: "@kv.customer_data.{customer_id}.tier"    # Premium customers only
+        operator: eq
+        value: "premium"
+      - field: "@time.hour"                              # Business hours only
         operator: gte
         value: 9
       - field: "@time.hour"
         operator: lt
         value: 17
-      - field: "@day.number"               # Monday through Friday
-        operator: lte
-        value: 5
+      - field: order_value
+        operator: gt
+        value: 1000
   action:
-    topic: alerts.business-hours
+    topic: fulfillment.priority
     payload: |
       {
-        "alert": "High temperature during business hours",
-        "temperature": {temperature},
-        "location": {location},
-        "detectedAt": "{@timestamp.iso}",
-        "businessDay": "{@day.name}",
-        "currentTime": "{@time.hour}:{@time.minute}",
-        "alertId": "{@uuid7()}"
+        "priority_order": "Premium customer large order during business hours",
+        "customer": {
+          "id": {customer_id},
+          "tier": "{@kv.customer_data.{customer_id}.tier}",
+          "name": "{@kv.customer_data.{customer_id}.profile.name}",
+          "shipping_method": "{@kv.customer_data.{customer_id}.shipping.preferences.method}"
+        },
+        "order": {
+          "value": {order_value},
+          "priority": "high"
+        },
+        "timing": {
+          "business_hours": true,
+          "current_time": "{@time.hour}:{@time.minute}",
+          "day": "{@day.name}"
+        },
+        "processing": {
+          "assigned_at": "{@timestamp()}",
+          "order_id": "{@uuid7()}"
+        }
       }
 ```
 
-### Complex Nested Conditions with Deep Field Access
+### Equipment Maintenance with Complex JSON Configuration
 ```yaml
-# Message: {"user": {"profile": {"tier": "premium"}}, "order": {"value": 1250, "items": {"count": 3}}}
-- topic: events.orders
+# Subject: equipment.pump.maintenance.pump-007.schedule
+# KV: equipment_config["pump-007"] = {
+#   "maintenance": {
+#     "schedules": {
+#       "routine": {"frequency_days": 30, "duration_hours": 2},
+#       "emergency": {"response_time_hours": 4}
+#     }
+#   },
+#   "location": {"building": "A", "floor": 2}
+# }
+- topic: equipment.*.maintenance.*.schedule
   conditions:
     operator: and
     items:
-      - field: user.profile.tier             # ✅ Nested condition
+      - field: "@kv.equipment_config.{@subject.3}.maintenance.schedules.{maintenance_type}.frequency_days"
+        operator: exists
+      - field: maintenance_type
         operator: eq
-        value: "premium"
-      - field: order.value                   # ✅ Nested numeric condition
-        operator: gte
-        value: 1000
-      - field: order.items.count             # ✅ Deep nested condition
-        operator: gt
-        value: 2
+        value: "routine"
   action:
-    topic: processing.premium-orders
+    topic: maintenance.scheduled
     payload: |
       {
-        "message": "Premium customer large order",
-        "customer_tier": {user.profile.tier},    # ✅ Nested template
-        "order_value": {order.value},            # ✅ Nested template
-        "item_count": {order.items.count},       # ✅ Deep nested template
-        "processing": {
-          "priority": "high",
-          "assigned_at": "{@timestamp()}",
-          "processor_id": "{@uuid7()}"
+        "maintenance": "Equipment maintenance scheduled",
+        "equipment": {
+          "type": "{@subject.1}",
+          "id": "{@subject.3}",
+          "location": {
+            "building": "{@kv.equipment_config.{@subject.3}.location.building}",
+            "floor": "{@kv.equipment_config.{@subject.3}.location.floor}"
+          }
+        },
+        "schedule": {
+          "type": {maintenance_type},
+          "frequency_days": "{@kv.equipment_config.{@subject.3}.maintenance.schedules.{maintenance_type}.frequency_days}",
+          "duration_hours": "{@kv.equipment_config.{@subject.3}.maintenance.schedules.{maintenance_type}.duration_hours}"
+        },
+        "scheduling": {
+          "scheduled_by": {scheduled_by},
+          "scheduled_at": "{@timestamp()}",
+          "maintenance_id": "{@uuid7()}"
         }
       }
+```
+
+### Multi-Bucket KV Lookup with Fallback Logic
+```yaml
+- topic: user.activity
+  conditions:
+    operator: or                                    # Fallback logic
+    items:
+      - field: "@kv.user_permissions.{user_id}.features.dashboard"  # Primary permissions
+        operator: eq
+        value: true
+      - field: "@kv.user_roles.{user_id}.role"     # Fallback to role-based
+        operator: eq
+        value: "admin"
+  action:
+    topic: dashboard.access-granted
+    payload: |
+      {
+        "access": "Dashboard access granted",
+        "user": {
+          "id": {user_id},
+          "permissions": "{@kv.user_permissions.{user_id}.features.dashboard}",
+          "role": "{@kv.user_roles.{user_id}.role}",
+          "preferences": {
+            "theme": "{@kv.user_settings.{user_id}.ui.theme}",
+            "timezone": "{@kv.user_settings.{user_id}.locale.timezone}"
+          }
+        },
+        "access_granted_at": "{@timestamp()}"
+      }
+```
+
+## NATS Key-Value Setup
+
+### Create and Populate KV Buckets
+
+```bash
+# Create KV buckets
+nats kv add device_status
+nats kv add device_config  
+nats kv add customer_data
+nats kv add system_config
+
+# Populate simple values
+nats kv put device_status sensor-001 "active"
+nats kv put device_status pump-002 "maintenance"
+
+# Populate JSON configuration
+nats kv put device_config sensor-001 '{
+  "location": {"building": "A", "floor": 3, "room": "server-room"},
+  "thresholds": {"min": 10, "max": 35, "critical": 40},
+  "hardware": {"model": "TempSensor-Pro", "firmware": "2.1.4"}
+}'
+
+nats kv put customer_data cust123 '{
+  "tier": "premium",
+  "profile": {"name": "Acme Corp", "contact": {"email": "admin@acme.com"}},
+  "shipping": {
+    "preferences": {"method": "next_day", "carrier": "FedEx"},
+    "addresses": [
+      {"type": "primary", "city": "Seattle", "zip": "98101"},
+      {"type": "secondary", "city": "Portland", "zip": "97201"}
+    ]
+  }
+}'
+
+# System configuration
+nats kv put system_config max_temperature "35"
+nats kv put system_config email_settings '{
+  "smtp": {"host": "smtp.company.com", "port": 587, "tls": true},
+  "templates": {"alert": {"subject": "Alert: {title}", "priority": "high"}}
+}'
 ```
 
 ## Monitoring
@@ -339,6 +533,9 @@ curl http://localhost:2112/metrics
 
 # Key indicators
 curl -s http://localhost:2112/metrics | grep messages_total
+
+# KV-specific logs
+./rule-router -config config/config.yaml -rules rules/ | grep -i "kv"
 ```
 
 ## Command Line Options
@@ -363,13 +560,19 @@ Options:
 
 ### Throughput
 - **Expected**: 2,000-4,000 messages/second per instance
-- **Bottlenecks**: JSON processing (60-70%), template processing (15-20%), I/O (10-15%)
+- **Bottlenecks**: JSON processing (50-60%), KV lookups (10-15%), template processing (15-20%), I/O (10-15%)
 - **Scaling**: Linear with NATS cluster size
+
+### KV Performance
+- **Co-located Deployment**: Sub-millisecond KV lookups
+- **Network Deployment**: 1-5ms KV lookups depending on network latency
+- **JSON Path Overhead**: Minimal (~0.1ms for typical JSON structures)
+- **Caching**: Rule-router relies on NATS JetStream's built-in caching
 
 ### Resource Requirements
 - **CPU**: 2+ cores for high throughput
-- **Memory**: 50-200MB depending on rule complexity
-- **Storage**: Minimal (stateless design)
+- **Memory**: 50-200MB depending on rule complexity and KV usage
+- **Storage**: Minimal (stateless design, data in NATS KV)
 
 ## Production Deployment
 
@@ -381,6 +584,14 @@ nats:
     - nats://nats-1:4222
     - nats://nats-2:4222
     - nats://nats-3:4222
+
+# KV Configuration  
+kv:
+  enabled: true
+  buckets:
+    - "device_status"
+    - "customer_data" 
+    - "system_config"
   
 watermill:
   nats:
@@ -405,10 +616,127 @@ COPY rules/ ./rules/
 CMD ["./rule-router", "-config", "config/config.yaml", "-rules", "rules/"]
 ```
 
+### KV Data Management
+
+```bash
+# Backup KV data
+nats kv ls device_status | while read key; do
+  echo "Backing up $key"
+  nats kv get device_status "$key" > "backup/${key}.json"
+done
+
+# Restore KV data  
+for file in backup/*.json; do
+  key=$(basename "$file" .json)
+  nats kv put device_status "$key" "$(cat "$file")"
+done
+
+# Monitor KV usage
+nats kv status device_status
+nats kv watch device_status  # Watch for changes
+```
+
+## Advanced Features
+
+### Wildcard Pattern Matching
+
+```yaml
+# Single-level wildcard
+- topic: sensors.*                         # matches sensors.temperature, sensors.pressure
+  
+# Multi-level wildcard  
+- topic: building.>                        # matches building.floor1.room1.temperature
+  
+# Mixed patterns
+- topic: devices.*.data                    # matches devices.sensor001.data
+```
+
+### Complex Condition Groups
+
+```yaml
+conditions:
+  operator: and
+  items:
+    - field: priority
+      operator: eq
+      value: "high"
+  groups:
+    - operator: or                         # Nested OR group within AND
+      items:
+        - field: "@time.hour"
+          operator: lt
+          value: 9                         # Before 9 AM
+        - field: "@time.hour" 
+          operator: gt
+          value: 17                        # After 5 PM
+```
+
+### Dynamic Routing
+
+```yaml
+action:
+  topic: "alerts.{@subject.1}.{severity}"  # Dynamic topic from subject and message
+  payload: |
+    {
+      "routed_to": "alerts.{@subject.1}.{severity}",
+      "original_subject": "{@subject}",
+      "routing_logic": "dynamic based on subject and severity"
+    }
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **KV Bucket Not Found**
+   ```
+   Error: KV bucket 'device_status' not configured
+   ```
+   **Solution**: Add bucket to `config.yaml` kv.buckets list
+
+2. **JSON Path Invalid**
+   ```
+   DEBUG: JSON path traversal failed: JSON path segment not found: nonexistent_field
+   ```
+   **Solution**: Verify JSON structure and path in KV data
+
+3. **Variable Resolution Failed**
+   ```
+   DEBUG: KV variable not found: device_id
+   ```
+   **Solution**: Ensure message contains the referenced field
+
+4. **Connection Issues**
+   ```
+   Error: failed to initialize KV stores
+   ```
+   **Solution**: Verify NATS server has JetStream enabled
+
+### Debug Commands
+
+```bash
+# Check NATS JetStream status
+nats server check jetstream
+
+# List KV buckets
+nats kv ls
+
+# Check specific KV data
+nats kv get device_status sensor-001
+
+# Monitor rule processing
+./rule-router -config config/config.yaml -rules rules/ | grep -E "(kv|KV|json)"
+
+# Test rule validation
+./rule-router -config config/config.yaml -rules rules/ --dry-run
+```
+
 ## Known Limitations
 
 - **JSON Only**: Message payloads must be valid JSON
 - **Startup Rule Loading**: Rules only loaded at application start (hot reloading planned)
+- **KV Bucket Limit**: Maximum recommended 100 buckets per rule-router instance
+- **JSON Path Complexity**: No advanced JSONPath queries (filtering, expressions)
 
 ## License
 

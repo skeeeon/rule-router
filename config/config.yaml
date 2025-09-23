@@ -1,5 +1,5 @@
 # NATS Rule Router Configuration
-# High-Performance Message Routing with NATS JetStream
+# High-Performance Message Routing with NATS JetStream and Key-Value Store Support
 
 # NATS Server Connection Configuration
 nats:
@@ -29,6 +29,15 @@ nats:
     keyFile: "/etc/ssl/nats/client-key.pem"
     caFile: "/etc/ssl/nats/ca.pem"
     insecure: false                    # Skip certificate verification
+
+# NATS Key-Value Store Configuration
+kv:
+  enabled: true
+  buckets:
+    - "device_status"                  # Device operational status
+    - "device_last_seen"               # Last seen timestamps
+    - "user_preferences"               # User configuration data
+    - "system_config"                  # System configuration values
 
 # Watermill NATS JetStream Configuration
 watermill:

@@ -92,15 +92,30 @@ func (a *App) setupMetricsServer(reg *prometheus.Registry) error {
 
 // setupRules loads rules from directory and creates the processor
 func (a *App) setupRules() error {
-	// Load rules from directory
-	rulesLoader := rule.NewRulesLoader(a.logger)
+	// Load rules from directory with KV bucket validation
+	kvBuckets := []string{}
+	if a.config.KV.Enabled {
+		kvBuckets = a.config.KV.Buckets
+	}
+	
+	rulesLoader := rule.NewRulesLoader(a.logger, kvBuckets)
 	rules, err := rulesLoader.LoadFromDirectory(a.rulesPath)
 	if err != nil {
 		return fmt.Errorf("failed to load rules: %w", err)
 	}
 
-	// Create rule processor - no configuration struct needed
-	a.processor = rule.NewProcessor(a.logger, a.metrics)
+	// Create KV context if enabled
+	var kvContext *rule.KVContext
+	if a.config.KV.Enabled && a.broker != nil {
+		kvStores := a.broker.GetKVStores()
+		kvContext = rule.NewKVContext(kvStores, a.logger)
+		a.logger.Info("KV context created", "bucketCount", len(kvStores))
+	} else {
+		a.logger.Info("KV support disabled or NATS broker not ready")
+	}
+
+	// Create rule processor with KV context
+	a.processor = rule.NewProcessor(a.logger, a.metrics, kvContext)
 
 	// Load rules into processor
 	if err := a.processor.LoadRules(rules); err != nil {
@@ -108,7 +123,8 @@ func (a *App) setupRules() error {
 	}
 
 	a.logger.Info("rules loaded successfully",
-		"ruleCount", len(rules))
+		"ruleCount", len(rules),
+		"kvEnabled", a.config.KV.Enabled)
 
 	return nil
 }
@@ -122,7 +138,16 @@ func (a *App) setupNATSBroker() error {
 		return fmt.Errorf("failed to connect to NATS JetStream server: %w", err)
 	}
 	a.broker = natsBroker
-	a.logger.Info("successfully connected to NATS JetStream")
+	
+	// Log KV initialization results
+	if a.config.KV.Enabled {
+		kvStores := a.broker.GetKVStores()
+		a.logger.Info("NATS JetStream connected with KV support", 
+			"kvBuckets", len(kvStores),
+			"configuredBuckets", a.config.KV.Buckets)
+	} else {
+		a.logger.Info("NATS JetStream connected without KV support")
+	}
 	
 	return nil
 }

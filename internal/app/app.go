@@ -19,7 +19,7 @@ import (
 	"rule-router/internal/rule"
 )
 
-// App represents the main application with all its components
+// App represents the main application with all its components including KV support
 type App struct {
 	config           *config.Config
 	rulesPath        string
@@ -48,12 +48,14 @@ func NewApp(cfg *config.Config, rulesPath string) (*App, error) {
 		return nil, fmt.Errorf("failed to setup metrics: %w", err)
 	}
 
-	if err := app.setupRules(); err != nil {
-		return nil, fmt.Errorf("failed to setup rules: %w", err)
-	}
-
+	// Setup NATS broker first (needed for KV stores)
 	if err := app.setupNATSBroker(); err != nil {
 		return nil, fmt.Errorf("failed to setup NATS broker: %w", err)
+	}
+
+	// Setup rules after broker (so KV stores are available for validation and processor)
+	if err := app.setupRules(); err != nil {
+		return nil, fmt.Errorf("failed to setup rules: %w", err)
 	}
 
 	if err := app.setupRouter(); err != nil {
@@ -73,7 +75,9 @@ func (a *App) Run(ctx context.Context) error {
 	a.logger.Info("starting Watermill router with NATS JetStream connection",
 		"natsUrls", a.config.NATS.URLs,
 		"topicsCount", len(a.processor.GetTopics()),
-		"metricsEnabled", a.config.Metrics.Enabled)
+		"metricsEnabled", a.config.Metrics.Enabled,
+		"kvEnabled", a.config.KV.Enabled,
+		"kvBuckets", a.config.KV.Buckets)
 
 	go func() {
 		if err := a.router.Run(ctx); err != nil {
@@ -133,7 +137,7 @@ func (a *App) Close() error {
 		}
 	}
 
-	// Close NATS broker
+	// Close NATS broker (this will also clean up KV stores)
 	if a.broker != nil {
 		if err := a.broker.Close(); err != nil {
 			errors = append(errors, fmt.Errorf("failed to close NATS broker: %w", err))

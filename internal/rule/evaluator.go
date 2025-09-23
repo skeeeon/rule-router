@@ -8,7 +8,7 @@ import (
     "strings"
 )
 
-func (p *Processor) evaluateConditions(conditions *Conditions, msg map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext) bool {
+func (p *Processor) evaluateConditions(conditions *Conditions, msg map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext, kvCtx *KVContext) bool {
     if conditions == nil || (len(conditions.Items) == 0 && len(conditions.Groups) == 0) {
         p.logger.Debug("no conditions to evaluate")
         return true
@@ -22,7 +22,7 @@ func (p *Processor) evaluateConditions(conditions *Conditions, msg map[string]in
     results := make([]bool, 0, len(conditions.Items)+len(conditions.Groups))
 
     for i, condition := range conditions.Items {
-        result := p.evaluateCondition(&condition, msg, timeCtx, subjectCtx)
+        result := p.evaluateCondition(&condition, msg, timeCtx, subjectCtx, kvCtx)
         results = append(results, result)
         
         p.logger.Debug("evaluated individual condition",
@@ -34,7 +34,7 @@ func (p *Processor) evaluateConditions(conditions *Conditions, msg map[string]in
     }
 
     for i, group := range conditions.Groups {
-        result := p.evaluateConditions(&group, msg, timeCtx, subjectCtx)
+        result := p.evaluateConditions(&group, msg, timeCtx, subjectCtx, kvCtx)
         results = append(results, result)
         
         p.logger.Debug("evaluated nested group",
@@ -73,14 +73,34 @@ func (p *Processor) evaluateConditions(conditions *Conditions, msg map[string]in
     return finalResult
 }
 
-func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext) bool {
+func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext, kvCtx *KVContext) bool {
     var value interface{}
     var ok bool
     
-    // Check if this is a system field (time or subject)
+    // Check if this is a system field (time, subject, or KV)
     if strings.HasPrefix(cond.Field, "@") {
-        // Try subject context first (for @subject.X fields)
-        if strings.HasPrefix(cond.Field, "@subject") {
+        // Try KV context first (for @kv.bucket.key fields) - NOW WITH VARIABLE RESOLUTION!
+        if strings.HasPrefix(cond.Field, "@kv") && kvCtx != nil {
+            value, ok = kvCtx.GetFieldWithContext(cond.Field, msg, timeCtx, subjectCtx)
+            if ok {
+                p.logger.Debug("evaluating KV field condition",
+                    "field", cond.Field,
+                    "operator", cond.Operator,
+                    "expectedValue", cond.Value,
+                    "actualKVValue", value)
+            } else {
+                p.logger.Debug("KV field not found in condition",
+                    "field", cond.Field,
+                    "availableBuckets", func() []string {
+                        if kvCtx != nil {
+                            return kvCtx.GetAllBuckets()
+                        }
+                        return []string{}
+                    }())
+                return false
+            }
+        } else if strings.HasPrefix(cond.Field, "@subject") {
+            // Try subject context
             value, ok = subjectCtx.GetField(cond.Field)
             if ok {
                 p.logger.Debug("evaluating subject field condition",
@@ -91,7 +111,7 @@ func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{
             }
         }
         
-        // If not found in subject context, try time context
+        // If not found in KV or subject context, try time context
         if !ok {
             value, ok = timeCtx.GetField(cond.Field)
             if ok {
@@ -108,7 +128,8 @@ func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{
             p.logger.Debug("unknown system field in condition",
                 "field", cond.Field,
                 "availableTimeFields", timeCtx.GetAllFieldNames(),
-                "availableSubjectFields", subjectCtx.GetAllFieldNames())
+                "availableSubjectFields", subjectCtx.GetAllFieldNames(),
+                "kvEnabled", kvCtx != nil)
             return false
         }
     } else {
@@ -232,33 +253,6 @@ func (p *Processor) compareNumeric(a, b interface{}, op string) bool {
     default:
         return false
     }
-}
-
-// getValueFromPath traverses a nested map using a path array
-// This is the same logic used in template processing for consistency
-func (p *Processor) getValueFromPath(data map[string]interface{}, path []string) (interface{}, error) {
-    var current interface{} = data
-
-    for _, key := range path {
-        switch v := current.(type) {
-        case map[string]interface{}:
-            var ok bool
-            current, ok = v[key]
-            if !ok {
-                return nil, fmt.Errorf("key not found: %s", key)
-            }
-        case map[interface{}]interface{}:
-            var ok bool
-            current, ok = v[key]
-            if !ok {
-                return nil, fmt.Errorf("key not found: %s", key)
-            }
-        default:
-            return nil, fmt.Errorf("invalid path: %s is not a map", key)
-        }
-    }
-
-    return current, nil
 }
 
 func getMapKeys(m map[string]interface{}) []string {

@@ -18,7 +18,7 @@ import (
 
 // Pre-compiled regex patterns for template processing (clean and efficient)
 var (
-    // System fields and functions: {@time.hour}, {@uuid7()}, {@timestamp()}, {@subject.1}
+    // System fields and functions: {@time.hour}, {@uuid7()}, {@timestamp()}, {@subject.1}, {@kv.bucket.key}
     systemFieldPattern = regexp.MustCompile(`\{@([^}]+)\}`)
     
     // Regular message variables: {temperature}, {sensor.location}
@@ -28,6 +28,7 @@ var (
 type Processor struct {
     index        *RuleIndex
     timeProvider TimeProvider
+    kvContext    *KVContext  // Add KV context
     logger       *logger.Logger
     metrics      *metrics.Metrics
     stats        ProcessorStats
@@ -39,15 +40,20 @@ type ProcessorStats struct {
     Errors    uint64
 }
 
-func NewProcessor(log *logger.Logger, metrics *metrics.Metrics) *Processor {
+func NewProcessor(log *logger.Logger, metrics *metrics.Metrics, kvCtx *KVContext) *Processor {
     p := &Processor{
         index:        NewRuleIndex(log),
         timeProvider: NewSystemTimeProvider(),
+        kvContext:    kvCtx,  // Store KV context (can be nil if KV is disabled)
         logger:       log,
         metrics:      metrics,
     }
 
-    p.logger.Info("initializing processor with wildcard support")
+    if kvCtx != nil {
+        p.logger.Info("initializing processor with KV support", "buckets", kvCtx.GetAllBuckets())
+    } else {
+        p.logger.Info("initializing processor without KV support")
+    }
     return p
 }
 
@@ -124,10 +130,10 @@ func (p *Processor) ProcessWithSubject(actualSubject string, payload []byte) ([]
             "rulePattern", rule.Topic,
             "actualSubject", actualSubject)
 
-        // Evaluate conditions with subject context support
-        if rule.Conditions == nil || p.evaluateConditions(rule.Conditions, msgValues, timeCtx, subjectCtx) {
-            // Process action template with subject context
-            action, err := p.processActionTemplate(rule.Action, msgValues, timeCtx, subjectCtx)
+        // Evaluate conditions with subject context and KV context support
+        if rule.Conditions == nil || p.evaluateConditions(rule.Conditions, msgValues, timeCtx, subjectCtx, p.kvContext) {
+            // Process action template with subject context and KV context
+            action, err := p.processActionTemplate(rule.Action, msgValues, timeCtx, subjectCtx, p.kvContext)
             if err != nil {
                 if p.metrics != nil {
                     p.metrics.IncTemplateOpsTotal("error")
@@ -176,7 +182,7 @@ func (p *Processor) Process(topic string, payload []byte) ([]*Action, error) {
     return p.ProcessWithSubject(topic, payload)
 }
 
-func (p *Processor) processActionTemplate(action *Action, msg map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext) (*Action, error) {
+func (p *Processor) processActionTemplate(action *Action, msg map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext, kvCtx *KVContext) (*Action, error) {
     processedAction := &Action{
         Topic:   action.Topic,
         Payload: action.Payload,
@@ -184,7 +190,7 @@ func (p *Processor) processActionTemplate(action *Action, msg map[string]interfa
 
     // Process topic template if it contains variables
     if strings.Contains(action.Topic, "{") {
-        topic, err := p.processTemplate(action.Topic, msg, timeCtx, subjectCtx)
+        topic, err := p.processTemplate(action.Topic, msg, timeCtx, subjectCtx, kvCtx)
         if err != nil {
             return nil, fmt.Errorf("failed to process topic template: %w", err)
         }
@@ -192,7 +198,7 @@ func (p *Processor) processActionTemplate(action *Action, msg map[string]interfa
     }
 
     // Process payload template
-    payload, err := p.processTemplate(action.Payload, msg, timeCtx, subjectCtx)
+    payload, err := p.processTemplate(action.Payload, msg, timeCtx, subjectCtx, kvCtx)
     if err != nil {
         return nil, fmt.Errorf("failed to process payload template: %w", err)
     }
@@ -201,20 +207,21 @@ func (p *Processor) processActionTemplate(action *Action, msg map[string]interfa
     return processedAction, nil
 }
 
-// processTemplate handles the enhanced {@} syntax with subject support
-func (p *Processor) processTemplate(template string, data map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext) (string, error) {
+// processTemplate handles the enhanced {@} syntax with subject and KV support
+func (p *Processor) processTemplate(template string, data map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext, kvCtx *KVContext) (string, error) {
     result := template
 
-    // Process system fields and functions: {@time.hour}, {@uuid7()}, {@timestamp()}, {@subject.1}
+    // Process system fields and functions: {@time.hour}, {@uuid7()}, {@timestamp()}, {@subject.1}, {@kv.bucket.key}
     result = systemFieldPattern.ReplaceAllStringFunc(result, func(match string) string {
-        systemRef := match[2 : len(match)-1] // remove {@ and }, get "time.hour" or "uuid7()" or "subject.1"
+        systemRef := match[2 : len(match)-1] // remove {@ and }, get "time.hour" or "uuid7()" or "subject.1" or "kv.bucket.key"
         
         if strings.HasSuffix(systemRef, "()") {
             // It's a function: uuid7(), timestamp()
             return p.processSystemFunction(systemRef)
         } else {
-            // It's a system field: time.hour, day.name, subject.1
-            return p.processSystemField("@"+systemRef, timeCtx, subjectCtx) // Add @ back for lookup
+            // It's a system field: time.hour, day.name, subject.1, kv.bucket.key
+            // NOW PASSING msgData for KV variable resolution
+            return p.processSystemField("@"+systemRef, data, timeCtx, subjectCtx, kvCtx) // Add @ back for lookup
         }
     })
 
@@ -252,9 +259,21 @@ func (p *Processor) processSystemFunction(function string) string {
     }
 }
 
-// processSystemField handles system time fields and subject fields
-func (p *Processor) processSystemField(systemField string, timeCtx *TimeContext, subjectCtx *SubjectContext) string {
-    // Try subject context first
+// processSystemField handles system time fields, subject fields, and KV fields
+// NOTE: This method now receives msgData to support KV variable resolution
+func (p *Processor) processSystemField(systemField string, msgData map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext, kvCtx *KVContext) string {
+    // Try KV context first (for @kv.bucket.key fields) - NOW WITH VARIABLE RESOLUTION!
+    if strings.HasPrefix(systemField, "@kv") && kvCtx != nil {
+        if value, exists := kvCtx.GetFieldWithContext(systemField, msgData, timeCtx, subjectCtx); exists {
+            strValue := p.convertToString(value)
+            p.logger.Debug("processed KV field", "field", systemField, "value", strValue)
+            return strValue
+        }
+        p.logger.Debug("KV field not found", "field", systemField)
+        return systemField // Return original if not found
+    }
+    
+    // Try subject context (for @subject.X fields)
     if strings.HasPrefix(systemField, "@subject") {
         if value, exists := subjectCtx.GetField(systemField); exists {
             strValue := p.convertToString(value)
@@ -263,7 +282,7 @@ func (p *Processor) processSystemField(systemField string, timeCtx *TimeContext,
         }
     }
     
-    // Try time context
+    // Try time context (for @time.X, @date.X, etc.)
     if value, exists := timeCtx.GetField(systemField); exists {
         strValue := p.convertToString(value)
         p.logger.Debug("processed time field", "field", systemField, "value", strValue)
@@ -311,6 +330,33 @@ func (p *Processor) convertToString(value interface{}) string {
     default:
         return fmt.Sprintf("%v", v)
     }
+}
+
+// getValueFromPath traverses a nested map using a path array
+// This is the same logic used in template processing for consistency
+func (p *Processor) getValueFromPath(data map[string]interface{}, path []string) (interface{}, error) {
+    var current interface{} = data
+
+    for _, key := range path {
+        switch v := current.(type) {
+        case map[string]interface{}:
+            var ok bool
+            current, ok = v[key]
+            if !ok {
+                return nil, fmt.Errorf("key not found: %s", key)
+            }
+        case map[interface{}]interface{}:
+            var ok bool
+            current, ok = v[key]
+            if !ok {
+                return nil, fmt.Errorf("key not found: %s", key)
+            }
+        default:
+            return nil, fmt.Errorf("invalid path: %s is not a map", key)
+        }
+    }
+
+    return current, nil
 }
 
 func (p *Processor) GetStats() ProcessorStats {

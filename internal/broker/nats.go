@@ -15,7 +15,7 @@ import (
 	"rule-router/internal/metrics"
 )
 
-// NATSBroker connects to external NATS JetStream servers
+// NATSBroker connects to external NATS JetStream servers with KV support
 type NATSBroker struct {
 	publisher       message.Publisher
 	subscriber      message.Subscriber
@@ -24,6 +24,11 @@ type NATSBroker struct {
 	metrics         *metrics.Metrics
 	config          *config.Config
 	watermillLogger watermill.LoggerAdapter
+	
+	// NATS connection and JetStream context for KV access
+	natsConn        *watermillNats.Conn
+	jetStreamCtx    watermillNats.JetStreamContext
+	kvStores        map[string]watermillNats.KeyValue  // bucket name -> KV store
 }
 
 // NewNATSBroker creates a new NATS broker that connects to external NATS servers
@@ -36,9 +41,22 @@ func NewNATSBroker(cfg *config.Config, log *logger.Logger, metrics *metrics.Metr
 		metrics:         metrics,
 		config:          cfg,
 		watermillLogger: watermillLogger,
+		kvStores:        make(map[string]watermillNats.KeyValue),
 	}
 
-	// Initialize publisher and subscriber that connect to external NATS
+	// Initialize NATS connection first (needed for both pub/sub and KV)
+	if err := broker.initializeNATSConnection(); err != nil {
+		return nil, fmt.Errorf("failed to initialize NATS connection: %w", err)
+	}
+
+	// Initialize KV stores if enabled
+	if cfg.KV.Enabled {
+		if err := broker.initializeKVStores(); err != nil {
+			return nil, fmt.Errorf("failed to initialize KV stores: %w", err)
+		}
+	}
+
+	// Initialize publisher and subscriber that use the existing connection
 	if err := broker.initializePublisher(); err != nil {
 		return nil, fmt.Errorf("failed to initialize NATS publisher: %w", err)
 	}
@@ -54,10 +72,74 @@ func NewNATSBroker(cfg *config.Config, log *logger.Logger, metrics *metrics.Metr
 	return broker, nil
 }
 
-// initializePublisher creates a publisher that connects to external NATS JetStream
+// initializeNATSConnection establishes the core NATS connection and JetStream context
+func (b *NATSBroker) initializeNATSConnection() error {
+	b.logger.Info("establishing NATS connection", "urls", b.config.NATS.URLs)
+
+	// Configure NATS connection options
+	natsOptions, err := b.buildNATSOptions()
+	if err != nil {
+		return fmt.Errorf("failed to build NATS options: %w", err)
+	}
+
+	// Connect to NATS
+	b.natsConn, err = watermillNats.Connect(b.getFirstNATSURL(), natsOptions...)
+	if err != nil {
+		return fmt.Errorf("failed to connect to NATS: %w", err)
+	}
+
+	// Create JetStream context for KV operations
+	b.jetStreamCtx, err = b.natsConn.JetStream()
+	if err != nil {
+		return fmt.Errorf("failed to create JetStream context: %w", err)
+	}
+
+	b.logger.Info("NATS connection established successfully")
+	return nil
+}
+
+// initializeKVStores connects to configured KV buckets
+func (b *NATSBroker) initializeKVStores() error {
+	b.logger.Info("initializing KV stores", "buckets", b.config.KV.Buckets)
+
+	for _, bucketName := range b.config.KV.Buckets {
+		b.logger.Debug("connecting to KV bucket", "bucket", bucketName)
+		
+		// Try to access existing bucket
+		kv, err := b.jetStreamCtx.KeyValue(bucketName)
+		if err != nil {
+			// If bucket doesn't exist, create it with sensible defaults
+			if err == watermillNats.ErrBucketNotFound {
+				b.logger.Info("KV bucket not found, creating", "bucket", bucketName)
+				
+				kv, err = b.jetStreamCtx.CreateKeyValue(&watermillNats.KeyValueConfig{
+					Bucket:      bucketName,
+					Description: fmt.Sprintf("Rule-router KV bucket: %s", bucketName),
+					MaxBytes:    1024 * 1024,          // 1MB default
+					TTL:         0,                    // No expiration by default
+					MaxValueSize: 1024,               // 1KB per value default
+				})
+				if err != nil {
+					return fmt.Errorf("failed to create KV bucket '%s': %w", bucketName, err)
+				}
+				
+				b.logger.Info("created KV bucket successfully", "bucket", bucketName)
+			} else {
+				return fmt.Errorf("failed to access KV bucket '%s': %w", bucketName, err)
+			}
+		}
+
+		b.kvStores[bucketName] = kv
+		b.logger.Debug("connected to KV bucket", "bucket", bucketName)
+	}
+
+	b.logger.Info("all KV stores initialized successfully", "bucketCount", len(b.kvStores))
+	return nil
+}
+
+// initializePublisher creates a publisher using the existing NATS connection
 func (b *NATSBroker) initializePublisher() error {
-	b.logger.Info("connecting to external NATS JetStream server for publishing",
-		"urls", b.config.NATS.URLs)
+	b.logger.Info("initializing NATS publisher")
 
 	// Configure JetStream for high performance
 	jsConfig := nats.JetStreamConfig{
@@ -69,69 +151,56 @@ func (b *NATSBroker) initializePublisher() error {
 		AckAsync: b.config.Watermill.NATS.PublishAsync,
 	}
 
-	// Configure NATS connection options
-	natsOptions, err := b.buildNATSOptions()
-	if err != nil {
-		return fmt.Errorf("failed to build NATS options: %w", err)
-	}
-
 	publisherConfig := nats.PublisherConfig{
-		URL:         b.getFirstNATSURL(), // Use helper to get first URL
-		NatsOptions: natsOptions,
+		URL:         b.getFirstNATSURL(),
+		NatsOptions: []watermillNats.Option{}, // Options already applied to connection
 		JetStream:   jsConfig,
 		Marshaler:   &nats.NATSMarshaler{},
 	}
 
+	var err error
 	b.publisher, err = nats.NewPublisher(publisherConfig, b.watermillLogger)
 	if err != nil {
-		return fmt.Errorf("failed to connect to NATS server for publishing: %w", err)
+		return fmt.Errorf("failed to create NATS publisher: %w", err)
 	}
 
-	b.logger.Info("successfully connected to NATS JetStream for publishing")
+	b.logger.Info("NATS publisher initialized successfully")
 	return nil
 }
 
-// initializeSubscriber creates a subscriber that connects to external NATS JetStream
+// initializeSubscriber creates a subscriber using the existing NATS connection
 func (b *NATSBroker) initializeSubscriber() error {
-	b.logger.Info("connecting to external NATS JetStream server for subscription",
-		"urls", b.config.NATS.URLs,
-		"subscriberCount", b.config.Watermill.NATS.SubscriberCount)
+	b.logger.Info("initializing NATS subscriber", "subscriberCount", b.config.Watermill.NATS.SubscriberCount)
 
 	// Configure JetStream consumer
 	jsConfig := nats.JetStreamConfig{
 		AutoProvision: true,
-		DurablePrefix: "watermill-consumer", // Durable consumers for reliability
+		DurablePrefix: "watermill-consumer",
 		SubscribeOptions: []watermillNats.SubOpt{
 			watermillNats.AckWait(b.config.Watermill.NATS.AckWaitTimeout),
 			watermillNats.MaxDeliver(b.config.Watermill.NATS.MaxDeliver),
-			watermillNats.DeliverAll(), // Process all available messages
-			watermillNats.MaxAckPending(1000), // This is a SubOpt, not JSOpt
+			watermillNats.DeliverAll(),
+			watermillNats.MaxAckPending(1000),
 		},
-	}
-
-	// Configure NATS connection options
-	natsOptions, err := b.buildNATSOptions()
-	if err != nil {
-		return fmt.Errorf("failed to build NATS options: %w", err)
 	}
 
 	subscriberConfig := nats.SubscriberConfig{
 		URL:              b.getFirstNATSURL(),
-		QueueGroupPrefix: "rule-engine-workers", // Load balancing across instances
-		SubscribersCount: b.config.Watermill.NATS.SubscriberCount, // Parallel consumers
+		QueueGroupPrefix: "rule-engine-workers",
+		SubscribersCount: b.config.Watermill.NATS.SubscriberCount,
 		AckWaitTimeout:   b.config.Watermill.NATS.AckWaitTimeout,
-		NatsOptions:      natsOptions,
+		NatsOptions:      []watermillNats.Option{}, // Options already applied to connection
 		JetStream:        jsConfig,
 		Unmarshaler:      &nats.NATSMarshaler{},
 	}
 
+	var err error
 	b.subscriber, err = nats.NewSubscriber(subscriberConfig, b.watermillLogger)
 	if err != nil {
-		return fmt.Errorf("failed to connect to NATS server for subscription: %w", err)
+		return fmt.Errorf("failed to create NATS subscriber: %w", err)
 	}
 
-	b.logger.Info("successfully connected to NATS JetStream for subscription",
-		"parallelConsumers", b.config.Watermill.NATS.SubscriberCount)
+	b.logger.Info("NATS subscriber initialized successfully")
 	return nil
 }
 
@@ -210,6 +279,21 @@ func (b *NATSBroker) initializeRouter() error {
 	return nil
 }
 
+// GetKVStore safely retrieves a KV store by bucket name
+func (b *NATSBroker) GetKVStore(bucketName string) (watermillNats.KeyValue, bool) {
+	store, exists := b.kvStores[bucketName]
+	return store, exists
+}
+
+// GetKVStores returns a copy of the KV stores map for initialization
+func (b *NATSBroker) GetKVStores() map[string]watermillNats.KeyValue {
+	stores := make(map[string]watermillNats.KeyValue)
+	for name, store := range b.kvStores {
+		stores[name] = store
+	}
+	return stores
+}
+
 // GetPublisher returns the NATS publisher
 func (b *NATSBroker) GetPublisher() message.Publisher {
 	return b.publisher
@@ -227,7 +311,7 @@ func (b *NATSBroker) GetRouter() *message.Router {
 
 // Close shuts down the broker connections
 func (b *NATSBroker) Close() error {
-	b.logger.Info("closing connections to NATS JetStream server")
+	b.logger.Info("closing NATS broker connections")
 
 	var errors []error
 
@@ -249,11 +333,17 @@ func (b *NATSBroker) Close() error {
 		}
 	}
 
+	// Close NATS connection (this will also close KV stores)
+	if b.natsConn != nil {
+		b.natsConn.Close()
+		b.logger.Debug("closed NATS connection")
+	}
+
 	if len(errors) > 0 {
 		return fmt.Errorf("errors during NATS broker shutdown: %v", errors)
 	}
 
-	b.logger.Info("successfully closed all connections to NATS JetStream server")
+	b.logger.Info("successfully closed all NATS broker connections")
 	return nil
 }
 

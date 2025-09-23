@@ -19,6 +19,7 @@ type Config struct {
 	Logging    LogConfig       `json:"logging" yaml:"logging"`
 	Metrics    MetricsConfig   `json:"metrics" yaml:"metrics"`
 	Watermill  WatermillConfig `json:"watermill" yaml:"watermill"`
+	KV         KVConfig        `json:"kv" yaml:"kv"`
 }
 
 type NATSConfig struct {
@@ -66,6 +67,12 @@ type WatermillConfig struct {
 		MetricsEnabled   bool          `json:"metricsEnabled" yaml:"metricsEnabled"`
 		TracingEnabled   bool          `json:"tracingEnabled" yaml:"tracingEnabled"`
 	} `json:"middleware" yaml:"middleware"`
+}
+
+// KVConfig configures NATS Key-Value store access
+type KVConfig struct {
+	Enabled bool     `json:"enabled" yaml:"enabled"`
+	Buckets []string `json:"buckets" yaml:"buckets"`
 }
 
 type LogConfig struct {
@@ -195,6 +202,10 @@ func setDefaults(cfg *Config) {
 		cfg.Watermill.Middleware.RetryInterval = 100 * time.Millisecond
 	}
 	cfg.Watermill.Middleware.MetricsEnabled = true  // Default enabled
+
+	// KV defaults - disabled by default, no buckets
+	// cfg.KV.Enabled defaults to false
+	// cfg.KV.Buckets defaults to empty slice
 }
 
 // validateConfig performs validation of all configuration values
@@ -273,6 +284,52 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("retry max attempts cannot be negative")
 	}
 
+	// Validate KV config
+	if cfg.KV.Enabled {
+		if len(cfg.KV.Buckets) == 0 {
+			return fmt.Errorf("KV enabled but no buckets configured")
+		}
+		
+		// Validate bucket names
+		for _, bucket := range cfg.KV.Buckets {
+			if err := validateBucketName(bucket); err != nil {
+				return fmt.Errorf("invalid KV bucket name '%s': %w", bucket, err)
+			}
+		}
+		
+		// Check for duplicate bucket names
+		bucketMap := make(map[string]bool)
+		for _, bucket := range cfg.KV.Buckets {
+			if bucketMap[bucket] {
+				return fmt.Errorf("duplicate KV bucket name: %s", bucket)
+			}
+			bucketMap[bucket] = true
+		}
+	}
+
+	return nil
+}
+
+// validateBucketName validates NATS KV bucket naming rules
+func validateBucketName(name string) error {
+	if name == "" {
+		return fmt.Errorf("bucket name cannot be empty")
+	}
+	
+	if len(name) > 64 {
+		return fmt.Errorf("bucket name too long (max 64 characters)")
+	}
+	
+	// NATS bucket names: letters, numbers, dash, underscore
+	for _, char := range name {
+		if !((char >= 'a' && char <= 'z') || 
+			 (char >= 'A' && char <= 'Z') || 
+			 (char >= '0' && char <= '9') || 
+			 char == '-' || char == '_') {
+			return fmt.Errorf("bucket name contains invalid character '%c' (allowed: a-z, A-Z, 0-9, -, _)", char)
+		}
+	}
+	
 	return nil
 }
 

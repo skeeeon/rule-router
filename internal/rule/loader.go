@@ -7,6 +7,7 @@ import (
     "fmt"
     "os"
     "path/filepath"
+    "regexp"
     "strings"
 
     "gopkg.in/yaml.v3"
@@ -15,16 +16,27 @@ import (
 
 // RulesLoader handles loading and validation of rules from the filesystem
 type RulesLoader struct {
-    logger *logger.Logger
+    logger            *logger.Logger
+    configuredBuckets map[string]bool  // KV buckets configured in config.yaml
 }
 
 // NewRulesLoader creates a new rules loader instance
-func NewRulesLoader(log *logger.Logger) *RulesLoader {
+func NewRulesLoader(log *logger.Logger, kvBuckets []string) *RulesLoader {
     if log == nil {
         return nil
     }
+    
+    // Build bucket lookup map for validation
+    buckets := make(map[string]bool)
+    for _, bucket := range kvBuckets {
+        buckets[bucket] = true
+    }
+    
+    log.Info("rules loader initialized", "kvBucketsConfigured", len(buckets), "buckets", kvBuckets)
+    
     return &RulesLoader{
-        logger: log,
+        logger:            log,
+        configuredBuckets: buckets,
     }
 }
 
@@ -103,7 +115,7 @@ func (l *RulesLoader) LoadFromDirectory(path string) ([]Rule, error) {
     return validRules, nil
 }
 
-// validateRule performs comprehensive validation of rule configuration including wildcard patterns
+// validateRule performs comprehensive validation of rule configuration including wildcard patterns and KV fields
 func (l *RulesLoader) validateRule(rule *Rule, filePath string, ruleIndex int) error {
     if rule == nil {
         return fmt.Errorf("rule cannot be nil")
@@ -133,6 +145,16 @@ func (l *RulesLoader) validateRule(rule *Rule, filePath string, ruleIndex int) e
     // Validate action topic for wildcard patterns too - using Info instead of Warn
     if containsWildcards(rule.Action.Topic) {
         l.logger.Info("action topic contains wildcards - ensure this is intentional", "actionTopic", rule.Action.Topic, "ruleTopic", rule.Topic, "file", filePath, "index", ruleIndex)
+    }
+
+    // Validate KV field references in action payload
+    if err := l.validateKVFieldsInTemplate(rule.Action.Payload); err != nil {
+        return fmt.Errorf("invalid KV field in action payload: %w", err)
+    }
+
+    // Validate KV field references in action topic template
+    if err := l.validateKVFieldsInTemplate(rule.Action.Topic); err != nil {
+        return fmt.Errorf("invalid KV field in action topic: %w", err)
     }
 
     if rule.Conditions != nil {
@@ -187,6 +209,13 @@ func (l *RulesLoader) validateConditions(conditions *Conditions) error {
         if strings.HasPrefix(condition.Field, "@subject") {
             if err := l.validateSubjectField(condition.Field); err != nil {
                 return fmt.Errorf("invalid subject field '%s' at index %d: %w", condition.Field, i, err)
+            }
+        }
+        
+        // Validate KV field references if present
+        if strings.HasPrefix(condition.Field, "@kv") {
+            if err := l.validateKVField(condition.Field); err != nil {
+                return fmt.Errorf("invalid KV field '%s' at index %d: %w", condition.Field, i, err)
             }
         }
     }
@@ -246,4 +275,102 @@ func (l *RulesLoader) isValidOperator(op string) bool {
         "contains": true,
     }
     return validOperators[op]
+}
+
+// validateKVFieldsInTemplate validates all KV field references in a template string
+func (l *RulesLoader) validateKVFieldsInTemplate(template string) error {
+    // Find all {@kv.bucket.key} patterns in the template
+    kvPattern := `\{@kv\.[^}]+\}`
+    re := regexp.MustCompile(kvPattern)
+    matches := re.FindAllString(template, -1)
+    
+    for _, match := range matches {
+        // Extract the field part (remove { and })
+        field := match[1 : len(match)-1] // Remove { and }
+        if err := l.validateKVField(field); err != nil {
+            return fmt.Errorf("invalid KV field '%s' in template: %w", field, err)
+        }
+    }
+    
+    return nil
+}
+
+// validateKVField validates a single KV field reference like "@kv.bucket.key[.json.path]"
+func (l *RulesLoader) validateKVField(field string) error {
+    // Parse the field with JSON path support
+    if !strings.HasPrefix(field, "@kv.") {
+        return fmt.Errorf("KV field must start with '@kv.', got: %s", field)
+    }
+    
+    remainder := field[4:] // Remove "@kv."
+    parts := strings.Split(remainder, ".")
+    if len(parts) < 2 {
+        return fmt.Errorf("KV field must have at least '@kv.bucket.key' format, got: %s", field)
+    }
+    
+    bucket := parts[0]
+    key := parts[1]
+    jsonPath := parts[2:] // Everything after bucket.key is JSON path
+    
+    // Validate bucket name format
+    if bucket == "" {
+        return fmt.Errorf("KV bucket name cannot be empty in field: %s", field)
+    }
+    if key == "" {
+        return fmt.Errorf("KV key name cannot be empty in field: %s", field)
+    }
+    
+    // Validate bucket name characters (NATS bucket naming rules)
+    if err := l.validateBucketNameFormat(bucket); err != nil {
+        return fmt.Errorf("invalid bucket name '%s' in field '%s': %w", bucket, field, err)
+    }
+    
+    // Check that the bucket is configured
+    if !l.configuredBuckets[bucket] {
+        availableBuckets := make([]string, 0, len(l.configuredBuckets))
+        for b := range l.configuredBuckets {
+            availableBuckets = append(availableBuckets, b)
+        }
+        return fmt.Errorf("KV bucket '%s' not configured (available: %v)", bucket, availableBuckets)
+    }
+    
+    // Validate JSON path segments (basic validation)
+    for i, segment := range jsonPath {
+        if segment == "" {
+            return fmt.Errorf("empty JSON path segment at position %d in field: %s", i, field)
+        }
+        // Allow alphanumeric, underscore, dash, and numbers (for array indices)
+        for _, char := range segment {
+            if !((char >= 'a' && char <= 'z') || 
+                 (char >= 'A' && char <= 'Z') || 
+                 (char >= '0' && char <= '9') || 
+                 char == '_' || char == '-') {
+                return fmt.Errorf("invalid character '%c' in JSON path segment '%s' (field: %s)", char, segment, field)
+            }
+        }
+    }
+    
+    return nil
+}
+
+// validateBucketNameFormat validates NATS KV bucket naming rules
+func (l *RulesLoader) validateBucketNameFormat(name string) error {
+    if len(name) == 0 {
+        return fmt.Errorf("bucket name cannot be empty")
+    }
+    if len(name) > 64 {
+        return fmt.Errorf("bucket name too long (max 64 characters)")
+    }
+    
+    // NATS bucket names: letters, numbers, dash, underscore
+    for _, char := range name {
+        if !((char >= 'a' && char <= 'z') || 
+             (char >= 'A' && char <= 'Z') || 
+             (char >= '0' && char <= '9') || 
+             char == '-' || char == '_') {
+            return fmt.Errorf("invalid character '%c' (allowed: a-z, A-Z, 0-9, -, _)", char)
+        }
+    }
+    
+    return nil
 }
