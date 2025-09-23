@@ -3,7 +3,7 @@
 package rule
 
 import (
-    "encoding/json"
+    json "github.com/goccy/go-json"
     "fmt"
     "regexp"
     "strconv"
