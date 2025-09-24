@@ -14,6 +14,15 @@ import (
     "rule-router/internal/logger"
 )
 
+// Enhanced regex patterns for KV field validation
+var (
+    // Matches KV fields in templates: {@kv.bucket.key} or {@kv.bucket.{var}.path}
+    templateKVPattern = regexp.MustCompile(`\{@kv\.[^}]+\}`)
+    
+    // Matches variable placeholders: {variable_name}
+    variablePattern = regexp.MustCompile(`\{([^}]+)\}`)
+)
+
 // RulesLoader handles loading and validation of rules from the filesystem
 type RulesLoader struct {
     logger            *logger.Logger
@@ -147,12 +156,12 @@ func (l *RulesLoader) validateRule(rule *Rule, filePath string, ruleIndex int) e
         l.logger.Info("action subject contains wildcards - ensure this is intentional", "actionSubject", rule.Action.Subject, "ruleSubject", rule.Subject, "file", filePath, "index", ruleIndex)
     }
 
-    // Validate KV field references in action payload
+    // ENHANCED: Validate KV field references in action payload
     if err := l.validateKVFieldsInTemplate(rule.Action.Payload); err != nil {
         return fmt.Errorf("invalid KV field in action payload: %w", err)
     }
 
-    // Validate KV field references in action subject template
+    // ENHANCED: Validate KV field references in action subject template
     if err := l.validateKVFieldsInTemplate(rule.Action.Subject); err != nil {
         return fmt.Errorf("invalid KV field in action subject: %w", err)
     }
@@ -212,9 +221,9 @@ func (l *RulesLoader) validateConditions(conditions *Conditions) error {
             }
         }
         
-        // Validate KV field references if present
+        // ENHANCED: Validate KV field references with variable support
         if strings.HasPrefix(condition.Field, "@kv") {
-            if err := l.validateKVField(condition.Field); err != nil {
+            if err := l.validateKVFieldWithVariables(condition.Field); err != nil {
                 return fmt.Errorf("invalid KV field '%s' at index %d: %w", condition.Field, i, err)
             }
         }
@@ -277,17 +286,15 @@ func (l *RulesLoader) isValidOperator(op string) bool {
     return validOperators[op]
 }
 
-// validateKVFieldsInTemplate validates all KV field references in a template string
+// ENHANCED: validateKVFieldsInTemplate validates all KV field references in a template string
 func (l *RulesLoader) validateKVFieldsInTemplate(template string) error {
     // Find all {@kv.bucket.key} patterns in the template
-    kvPattern := `\{@kv\.[^}]+\}`
-    re := regexp.MustCompile(kvPattern)
-    matches := re.FindAllString(template, -1)
+    matches := templateKVPattern.FindAllString(template, -1)
     
     for _, match := range matches {
         // Extract the field part (remove { and })
         field := match[1 : len(match)-1] // Remove { and }
-        if err := l.validateKVField(field); err != nil {
+        if err := l.validateKVFieldWithVariables(field); err != nil {
             return fmt.Errorf("invalid KV field '%s' in template: %w", field, err)
         }
     }
@@ -295,9 +302,11 @@ func (l *RulesLoader) validateKVFieldsInTemplate(template string) error {
     return nil
 }
 
-// validateKVField validates a single KV field reference like "@kv.bucket.key[.json.path]"
-func (l *RulesLoader) validateKVField(field string) error {
-    // Parse the field with JSON path support
+// ENHANCED: validateKVFieldWithVariables validates KV fields that may contain variables
+func (l *RulesLoader) validateKVFieldWithVariables(field string) error {
+    l.logger.Debug("validating KV field with variable support", "field", field)
+    
+    // Parse the field with variable awareness
     if !strings.HasPrefix(field, "@kv.") {
         return fmt.Errorf("KV field must start with '@kv.', got: %s", field)
     }
@@ -312,20 +321,22 @@ func (l *RulesLoader) validateKVField(field string) error {
     key := parts[1]
     jsonPath := parts[2:] // Everything after bucket.key is JSON path
     
-    // Validate bucket name format
+    // Validate bucket name format (must be literal, not a variable)
     if bucket == "" {
         return fmt.Errorf("KV bucket name cannot be empty in field: %s", field)
     }
-    if key == "" {
-        return fmt.Errorf("KV key name cannot be empty in field: %s", field)
+    
+    // ENHANCED: Check for variables in bucket name (not allowed)
+    if strings.Contains(bucket, "{") {
+        return fmt.Errorf("variables in bucket names are not supported: %s", field)
     }
     
-    // Validate bucket name characters (NATS bucket naming rules)
+    // Validate bucket name characters and existence
     if err := l.validateBucketNameFormat(bucket); err != nil {
         return fmt.Errorf("invalid bucket name '%s' in field '%s': %w", bucket, field, err)
     }
     
-    // Check that the bucket is configured
+    // CRITICAL: Check that the bucket is configured
     if !l.configuredBuckets[bucket] {
         availableBuckets := make([]string, 0, len(l.configuredBuckets))
         for b := range l.configuredBuckets {
@@ -334,22 +345,83 @@ func (l *RulesLoader) validateKVField(field string) error {
         return fmt.Errorf("KV bucket '%s' not configured (available: %v)", bucket, availableBuckets)
     }
     
-    // Validate JSON path segments (basic validation)
+    // ENHANCED: Validate key (can be a variable or literal)
+    if key == "" {
+        return fmt.Errorf("KV key name cannot be empty in field: %s", field)
+    }
+    
+    // If key contains variables, validate variable syntax but don't validate content
+    if strings.Contains(key, "{") {
+        if err := l.validateVariableSyntax(key); err != nil {
+            return fmt.Errorf("invalid variable syntax in key '%s': %w", key, err)
+        }
+        l.logger.Debug("validated KV field with variables in key", "field", field, "bucket", bucket, "key", key)
+    }
+    
+    // ENHANCED: Validate JSON path segments (can contain variables)
     for i, segment := range jsonPath {
         if segment == "" {
             return fmt.Errorf("empty JSON path segment at position %d in field: %s", i, field)
         }
-        // Allow alphanumeric, underscore, dash, and numbers (for array indices)
-        for _, char := range segment {
-            if !((char >= 'a' && char <= 'z') || 
-                 (char >= 'A' && char <= 'Z') || 
-                 (char >= '0' && char <= '9') || 
-                 char == '_' || char == '-') {
-                return fmt.Errorf("invalid character '%c' in JSON path segment '%s' (field: %s)", char, segment, field)
+        
+        // If segment contains variables, validate syntax
+        if strings.Contains(segment, "{") {
+            if err := l.validateVariableSyntax(segment); err != nil {
+                return fmt.Errorf("invalid variable syntax in JSON path segment '%s': %w", segment, err)
+            }
+        } else {
+            // Validate literal segments
+            if err := l.validateJSONPathSegment(segment); err != nil {
+                return fmt.Errorf("invalid JSON path segment '%s' in field %s: %w", segment, field, err)
             }
         }
     }
     
+    l.logger.Debug("successfully validated KV field with variables", "field", field, "bucket", bucket)
+    return nil
+}
+
+// NEW: validateVariableSyntax ensures variable placeholders are properly formatted
+func (l *RulesLoader) validateVariableSyntax(text string) error {
+    // Find all variable patterns in the text
+    matches := variablePattern.FindAllStringSubmatch(text, -1)
+    
+    for _, match := range matches {
+        if len(match) != 2 {
+            continue
+        }
+        
+        varName := match[1]
+        if varName == "" {
+            return fmt.Errorf("empty variable name in: %s", text)
+        }
+        
+        // Basic validation - variable names should be reasonable
+        if strings.Contains(varName, "{") || strings.Contains(varName, "}") {
+            return fmt.Errorf("nested braces not allowed in variable name: %s", varName)
+        }
+        
+        // Variables can be:
+        // - Simple field names: customer_id, sensor_id
+        // - System fields: @subject.1, @time.hour
+        // - Complex paths: user.profile.name
+        l.logger.Debug("validated variable syntax", "variable", varName, "context", text)
+    }
+    
+    return nil
+}
+
+// NEW: validateJSONPathSegment validates individual JSON path segments
+func (l *RulesLoader) validateJSONPathSegment(segment string) error {
+    // Allow alphanumeric, underscore, dash, and numbers (for array indices)
+    for _, char := range segment {
+        if !((char >= 'a' && char <= 'z') || 
+             (char >= 'A' && char <= 'Z') || 
+             (char >= '0' && char <= '9') || 
+             char == '_' || char == '-') {
+            return fmt.Errorf("invalid character '%c' in JSON path segment", char)
+        }
+    }
     return nil
 }
 

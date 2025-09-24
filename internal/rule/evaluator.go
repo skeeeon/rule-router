@@ -73,13 +73,14 @@ func (p *Processor) evaluateConditions(conditions *Conditions, msg map[string]in
     return finalResult
 }
 
+// ENHANCED: evaluateCondition with better KV handling and error logging
 func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext, kvCtx *KVContext) bool {
     var value interface{}
     var ok bool
     
     // Check if this is a system field (time, subject, or KV)
     if strings.HasPrefix(cond.Field, "@") {
-        // Try KV context first (for @kv.bucket.key fields) - NOW WITH VARIABLE RESOLUTION!
+        // ENHANCED: Try KV context first with improved error handling
         if strings.HasPrefix(cond.Field, "@kv") && kvCtx != nil {
             value, ok = kvCtx.GetFieldWithContext(cond.Field, msg, timeCtx, subjectCtx)
             if ok {
@@ -89,7 +90,8 @@ func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{
                     "expectedValue", cond.Value,
                     "actualKVValue", value)
             } else {
-                p.logger.Debug("KV field not found in condition",
+                // ENHANCED: More detailed logging for KV failures
+                p.logger.Debug("KV field not found in condition evaluation",
                     "field", cond.Field,
                     "availableBuckets", func() []string {
                         if kvCtx != nil {
@@ -97,6 +99,7 @@ func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{
                         }
                         return []string{}
                     }())
+                // For conditions, missing KV values should cause condition to fail
                 return false
             }
         } else if strings.HasPrefix(cond.Field, "@subject") {
@@ -123,7 +126,7 @@ func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{
             }
         }
         
-        // If still not found, log available fields for debugging
+        // ENHANCED: Better error reporting for unknown system fields
         if !ok {
             p.logger.Debug("unknown system field in condition",
                 "field", cond.Field,
@@ -173,15 +176,15 @@ func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{
     var result bool
     switch cond.Operator {
     case "eq":
-        result = value == cond.Value
+        result = p.compareValues(value, cond.Value, "eq")
     case "neq":
-        result = value != cond.Value
+        result = p.compareValues(value, cond.Value, "neq")
     case "gt", "lt", "gte", "lte":
         result = p.compareNumeric(value, cond.Value, cond.Operator)
     case "exists":
         result = value != nil
     case "contains":
-        result = strings.Contains(fmt.Sprint(value), fmt.Sprint(cond.Value))
+        result = p.compareContains(value, cond.Value)
     default:
         p.logger.Error("unknown operator", "operator", cond.Operator)
         return false
@@ -197,6 +200,76 @@ func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{
     return result
 }
 
+// NEW: compareValues handles equality/inequality with type awareness
+func (p *Processor) compareValues(a, b interface{}, op string) bool {
+    // Handle nil values
+    if a == nil && b == nil {
+        return op == "eq"
+    }
+    if a == nil || b == nil {
+        return op == "neq"
+    }
+
+    // Try direct comparison first
+    equal := false
+    switch va := a.(type) {
+    case string:
+        if vb, ok := b.(string); ok {
+            equal = va == vb
+        } else {
+            // Convert b to string for comparison
+            equal = va == p.convertToString(b)
+        }
+    case float64:
+        switch vb := b.(type) {
+        case float64:
+            equal = va == vb
+        case int:
+            equal = va == float64(vb)
+        case string:
+            if parsed, err := strconv.ParseFloat(vb, 64); err == nil {
+                equal = va == parsed
+            }
+        }
+    case int:
+        switch vb := b.(type) {
+        case int:
+            equal = va == vb
+        case float64:
+            equal = float64(va) == vb
+        case string:
+            if parsed, err := strconv.Atoi(vb); err == nil {
+                equal = va == parsed
+            }
+        }
+    case bool:
+        if vb, ok := b.(bool); ok {
+            equal = va == vb
+        } else if vb, ok := b.(string); ok {
+            if parsed, err := strconv.ParseBool(vb); err == nil {
+                equal = va == parsed
+            }
+        }
+    default:
+        // Fallback to string comparison
+        equal = p.convertToString(a) == p.convertToString(b)
+    }
+
+    if op == "eq" {
+        return equal
+    } else { // "neq"
+        return !equal
+    }
+}
+
+// NEW: compareContains handles string contains operations
+func (p *Processor) compareContains(a, b interface{}) bool {
+    aStr := p.convertToString(a)
+    bStr := p.convertToString(b)
+    
+    return strings.Contains(aStr, bStr)
+}
+
 func (p *Processor) compareNumeric(a, b interface{}, op string) bool {
     var numA, numB float64
     var err error
@@ -205,6 +278,8 @@ func (p *Processor) compareNumeric(a, b interface{}, op string) bool {
     case float64:
         numA = v
     case int:
+        numA = float64(v)
+    case int64:
         numA = float64(v)
     case string:
         numA, err = strconv.ParseFloat(v, 64)
@@ -225,6 +300,8 @@ func (p *Processor) compareNumeric(a, b interface{}, op string) bool {
     case float64:
         numB = v
     case int:
+        numB = float64(v)
+    case int64:
         numB = float64(v)
     case string:
         numB, err = strconv.ParseFloat(v, 64)

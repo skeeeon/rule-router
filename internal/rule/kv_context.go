@@ -114,20 +114,34 @@ func (kv *KVContext) GetField(field string) (interface{}, bool) {
 	return value, true
 }
 
-// GetFieldWithContext retrieves a value with variable substitution support
-// This is used by both condition evaluation and template processing
+// ENHANCED: GetFieldWithContext retrieves a value with variable substitution support
+// Now properly handles missing variables by returning empty strings
 func (kv *KVContext) GetFieldWithContext(field string, msgData map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext) (interface{}, bool) {
 	// First resolve any variables in the field specification
-	resolvedField, err := kv.resolveVariables(field, msgData, timeCtx, subjectCtx)
+	resolvedField, hasUnresolvedVars, err := kv.resolveVariablesEnhanced(field, msgData, timeCtx, subjectCtx)
 	if err != nil {
 		kv.logger.Debug("failed to resolve variables in KV field", "field", field, "error", err)
-		return nil, false
+		return "", false // Return empty string for template processing
+	}
+	
+	// ENHANCED: If variables couldn't be resolved, return empty string
+	if hasUnresolvedVars {
+		kv.logger.Debug("KV field has unresolved variables, returning empty", "original", field, "resolved", resolvedField)
+		return "", false
 	}
 
 	kv.logger.Debug("resolved KV field variables", "original", field, "resolved", resolvedField)
 
 	// Now do the actual KV lookup with JSON path support
-	return kv.GetField(resolvedField)
+	value, found := kv.GetField(resolvedField)
+	
+	// ENHANCED: If KV lookup fails, return empty string (not nil)
+	if !found {
+		kv.logger.Debug("KV lookup failed after variable resolution", "resolvedField", resolvedField)
+		return "", false
+	}
+	
+	return value, true
 }
 
 // parseKVFieldWithPath parses a KV field specification with optional JSON path
@@ -208,9 +222,15 @@ func (kv *KVContext) traverseJSONPath(jsonData []byte, path []string) (interface
 	return current, nil
 }
 
-// resolveVariables replaces {variable} placeholders in KV field specifications
-func (kv *KVContext) resolveVariables(field string, msgData map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext) (string, error) {
+// ENHANCED: resolveVariablesEnhanced replaces {variable} placeholders with better error handling
+func (kv *KVContext) resolveVariablesEnhanced(field string, msgData map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext) (string, bool, error) {
+	if !strings.Contains(field, "{") {
+		// No variables to resolve
+		return field, false, nil
+	}
+
 	result := field
+	hasUnresolvedVars := false
 
 	// Replace all {variable} patterns
 	result = kvVariablePattern.ReplaceAllStringFunc(result, func(match string) string {
@@ -225,11 +245,13 @@ func (kv *KVContext) resolveVariables(field string, msgData map[string]interface
 			return strValue
 		}
 
+		// ENHANCED: Mark as unresolved instead of returning original
 		kv.logger.Debug("KV variable not found", "variable", varName)
-		return match // Return original if not found
+		hasUnresolvedVars = true
+		return "" // Return empty string for missing variables
 	})
 
-	return result, nil
+	return result, hasUnresolvedVars, nil
 }
 
 // resolveVariable resolves a single variable from available contexts
@@ -326,7 +348,7 @@ func (kv *KVContext) convertValue(data []byte) interface{} {
 	return str
 }
 
-// convertToString converts any value to string (for variable substitution)
+// ENHANCED: convertToString with better handling of edge cases
 func (kv *KVContext) convertToString(value interface{}) string {
 	switch v := value.(type) {
 	case string:
@@ -335,15 +357,18 @@ func (kv *KVContext) convertToString(value interface{}) string {
 		return strconv.FormatFloat(v, 'f', -1, 64)
 	case int:
 		return strconv.Itoa(v)
+	case int64:
+		return strconv.FormatInt(v, 10)
 	case bool:
 		return strconv.FormatBool(v)
 	case nil:
-		return ""
+		return "" // ENHANCED: Return empty string for nil, not "null"
 	default:
 		// For complex types, marshal to JSON
 		if jsonBytes, err := json.Marshal(v); err == nil {
 			return string(jsonBytes)
 		}
+		// Final fallback
 		return fmt.Sprintf("%v", v)
 	}
 }
@@ -375,5 +400,6 @@ func (kv *KVContext) GetStats() map[string]interface{} {
 		"bucket_names":      kv.getBucketNames(),
 		"initialized":       true,
 		"json_path_support": true,
+		"variable_resolution": "enhanced", // Indicates new error handling
 	}
 }

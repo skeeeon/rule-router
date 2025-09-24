@@ -207,7 +207,7 @@ func (p *Processor) processActionTemplate(action *Action, msg map[string]interfa
     return processedAction, nil
 }
 
-// OPTIMIZED: Single-pass template processing with combined regex
+// ENHANCED: Single-pass template processing with improved error handling
 func (p *Processor) processTemplate(template string, data map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext, kvCtx *KVContext) (string, error) {
     if !strings.Contains(template, "{") {
         // No variables - return as-is
@@ -217,14 +217,10 @@ func (p *Processor) processTemplate(template string, data map[string]interface{}
     // SINGLE PASS: Process all variables (system and message) in one regex operation
     result := combinedVariablePattern.ReplaceAllStringFunc(template, func(match string) string {
         // Parse the match: {@time.hour} or {temperature}
-        // match[0] = full match: "{@time.hour}" or "{temperature}"
-        // We need to extract the groups from the regex match
-        
-        // Extract groups manually since ReplaceAllStringFunc doesn't provide them directly
         submatches := combinedVariablePattern.FindStringSubmatch(match)
         if len(submatches) != 3 {
             p.logger.Debug("unexpected regex match format", "match", match)
-            return match // Return original if parsing fails
+            return "" // ENHANCED: Return empty string instead of original match
         }
         
         isSystemVar := submatches[1] == "@"  // Group 1: optional @ prefix
@@ -264,7 +260,7 @@ func (p *Processor) processSystemFunction(function string) string {
         id, err := uuid.NewV7()
         if err != nil {
             p.logger.Error("failed to generate UUIDv7", "error", err)
-            return ""
+            return "" // ENHANCED: Return empty string on error
         }
         p.logger.Debug("generated UUIDv7", "uuid", id.String())
         return id.String()
@@ -274,22 +270,22 @@ func (p *Processor) processSystemFunction(function string) string {
         return timestamp
     default:
         p.logger.Debug("unknown system function", "function", function)
-        return "{@" + function + "}" // Return original
+        return "" // ENHANCED: Return empty string for unknown functions
     }
 }
 
-// processSystemField handles system time fields, subject fields, and KV fields
-// NOTE: This method now receives msgData to support KV variable resolution
+// ENHANCED: processSystemField with consistent empty string handling
 func (p *Processor) processSystemField(systemField string, msgData map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext, kvCtx *KVContext) string {
-    // Try KV context first (for @kv.bucket.key fields) - NOW WITH VARIABLE RESOLUTION!
+    // Try KV context first (for @kv.bucket.key fields) - WITH VARIABLE RESOLUTION!
     if strings.HasPrefix(systemField, "@kv") && kvCtx != nil {
         if value, exists := kvCtx.GetFieldWithContext(systemField, msgData, timeCtx, subjectCtx); exists {
             strValue := p.convertToString(value)
             p.logger.Debug("processed KV field", "field", systemField, "value", strValue)
             return strValue
         }
-        p.logger.Debug("KV field not found", "field", systemField)
-        return systemField // Return original if not found
+        // ENHANCED: Return empty string for failed KV lookups
+        p.logger.Debug("KV field not found, returning empty string", "field", systemField)
+        return ""
     }
     
     // Try subject context (for @subject.X fields)
@@ -299,6 +295,9 @@ func (p *Processor) processSystemField(systemField string, msgData map[string]in
             p.logger.Debug("processed subject field", "field", systemField, "value", strValue)
             return strValue
         }
+        // ENHANCED: Return empty string for failed subject lookups  
+        p.logger.Debug("subject field not found, returning empty string", "field", systemField)
+        return ""
     }
     
     // Try time context (for @time.X, @date.X, etc.)
@@ -308,18 +307,19 @@ func (p *Processor) processSystemField(systemField string, msgData map[string]in
         return strValue
     }
     
-    p.logger.Debug("unknown system field", "field", systemField)
-    return systemField // Return original
+    // ENHANCED: Return empty string for unknown system fields
+    p.logger.Debug("unknown system field, returning empty string", "field", systemField)
+    return ""
 }
 
-// processMessageVariable handles message field access with nested paths
+// ENHANCED: processMessageVariable with empty string handling
 func (p *Processor) processMessageVariable(fieldPath string, data map[string]interface{}) string {
     path := strings.Split(fieldPath, ".")
     
-    value, err := p.getValueFromPath(data, path) // Uses existing method from evaluator.go
+    value, err := p.getValueFromPath(data, path)
     if err != nil {
-        p.logger.Debug("message field not found", "path", fieldPath, "error", err)
-        return "{" + fieldPath + "}" // Return original
+        p.logger.Debug("message field not found, returning empty string", "path", fieldPath, "error", err)
+        return "" // ENHANCED: Return empty string instead of original template
     }
     
     strValue := p.convertToString(value)
@@ -327,6 +327,7 @@ func (p *Processor) processMessageVariable(fieldPath string, data map[string]int
     return strValue
 }
 
+// ENHANCED: convertToString with better nil handling for templates
 func (p *Processor) convertToString(value interface{}) string {
     switch v := value.(type) {
     case string:
@@ -335,18 +336,25 @@ func (p *Processor) convertToString(value interface{}) string {
         return strconv.FormatFloat(v, 'f', -1, 64)
     case int:
         return strconv.Itoa(v)
+    case int64:
+        return strconv.FormatInt(v, 10)
     case bool:
         return strconv.FormatBool(v)
     case nil:
-        return "null"
+        return "" // ENHANCED: Return empty string for nil values in templates
     case map[string]interface{}, []interface{}:
         jsonBytes, err := json.Marshal(v)
         if err != nil {
-            p.logger.Debug("failed to marshal complex value to JSON", "error", err)
-            return fmt.Sprintf("%v", v)
+            p.logger.Debug("failed to marshal complex value to JSON, returning empty string", "error", err)
+            return "" // ENHANCED: Return empty string instead of fmt.Sprintf fallback
         }
         return string(jsonBytes)
     default:
+        // Try JSON marshaling first for unknown types
+        if jsonBytes, err := json.Marshal(v); err == nil {
+            return string(jsonBytes)
+        }
+        // Final fallback - convert to string representation
         return fmt.Sprintf("%v", v)
     }
 }
