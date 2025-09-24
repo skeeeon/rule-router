@@ -153,6 +153,8 @@ See [config/config.yaml](config/config.yaml) for complete example with all optio
 
 ### Supported Operators
 
+**Comparison Operators**
+
 | Operator | Description | Example |
 |----------|-------------|---------|
 | `eq` | Equal | `value: 25` |
@@ -160,6 +162,26 @@ See [config/config.yaml](config/config.yaml) for complete example with all optio
 | `gt`, `lt`, `gte`, `lte` | Numeric comparison | `value: 30` |
 | `exists` | Field exists | (no value needed) |
 | `contains` | String contains | `value: "warning"` |
+
+**System Fields for Conditions**
+
+| Field | Type | Description | Values/Range |
+|-------|------|-------------|--------------|
+| `@time.hour` | int | Current hour | 0-23 |
+| `@time.minute` | int | Current minute | 0-59 |
+| `@day.name` | string | Day name | monday, tuesday, etc. |
+| `@day.number` | int | Day number | 1-7 (Mon=1, Sun=7) |
+| `@date.year` | int | Current year | e.g., 2024 |
+| `@date.month` | int | Current month | 1-12 |
+| `@date.day` | int | Day of month | 1-31 |
+| `@date.iso` | string | ISO date | YYYY-MM-DD |
+| `@timestamp.unix` | int | Unix timestamp | e.g., 1705344000 |
+| `@timestamp.iso` | string | ISO timestamp | RFC3339 format |
+| `@subject` | string | Full subject | e.g., "sensors.temp.room1" |
+| `@subject.count` | int | Token count | Number of dot-separated parts |
+| `@subject.N` | string | Token at index N | e.g., `@subject.0`, `@subject.1` |
+| `@subject.first` | string | First token | Same as `@subject.0` |
+| `@subject.last` | string | Last token | Final subject token |
 
 ### Advanced Features
 
