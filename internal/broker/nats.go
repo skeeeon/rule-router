@@ -3,8 +3,10 @@
 package broker
 
 import (
+	json "github.com/goccy/go-json"
 	"crypto/tls"
 	"fmt"
+	"strings"
 
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill-nats/v2/pkg/nats"
@@ -13,9 +15,10 @@ import (
 	"rule-router/config"
 	"rule-router/internal/logger"
 	"rule-router/internal/metrics"
+	"rule-router/internal/rule"
 )
 
-// NATSBroker connects to external NATS JetStream servers with KV support
+// NATSBroker connects to external NATS JetStream servers with KV support and local caching
 type NATSBroker struct {
 	publisher       message.Publisher
 	subscriber      message.Subscriber
@@ -29,6 +32,10 @@ type NATSBroker struct {
 	natsConn        *watermillNats.Conn
 	jetStreamCtx    watermillNats.JetStreamContext
 	kvStores        map[string]watermillNats.KeyValue  // bucket name -> KV store
+	
+	// Local KV cache for performance optimization
+	localKVCache    *rule.LocalKVCache
+	kvSubscriptions []*watermillNats.Subscription     // KV change stream subscriptions
 }
 
 // NewNATSBroker creates a new NATS broker that connects to external NATS servers
@@ -42,6 +49,8 @@ func NewNATSBroker(cfg *config.Config, log *logger.Logger, metrics *metrics.Metr
 		config:          cfg,
 		watermillLogger: watermillLogger,
 		kvStores:        make(map[string]watermillNats.KeyValue),
+		localKVCache:    rule.NewLocalKVCache(log),
+		kvSubscriptions: make([]*watermillNats.Subscription, 0),
 	}
 
 	// Initialize NATS connection first (needed for both pub/sub and KV)
@@ -70,6 +79,214 @@ func NewNATSBroker(cfg *config.Config, log *logger.Logger, metrics *metrics.Metr
 	}
 
 	return broker, nil
+}
+
+// InitializeKVCache populates the local cache and subscribes to changes
+// Call this after broker initialization to enable local KV caching
+func (b *NATSBroker) InitializeKVCache() error {
+	if !b.config.KV.Enabled {
+		b.logger.Info("KV not enabled, skipping cache initialization")
+		return nil
+	}
+
+	// Check if local cache is enabled in config
+	if !b.config.KV.LocalCache.Enabled {
+		b.logger.Info("local KV cache disabled in configuration")
+		b.localKVCache.SetEnabled(false)
+		return nil
+	}
+
+	b.logger.Info("initializing local KV cache", "buckets", b.config.KV.Buckets)
+
+	// Populate cache with existing data
+	if err := b.populateKVCache(); err != nil {
+		b.logger.Error("failed to populate KV cache", "error", err)
+		// Continue without cache - degrade gracefully
+		b.localKVCache.SetEnabled(false)
+		return nil
+	}
+
+	// Subscribe to KV changes for real-time updates
+	if err := b.subscribeToKVChanges(); err != nil {
+		b.logger.Error("failed to subscribe to KV changes", "error", err)
+		// Continue without real-time updates - cache will be stale
+		return nil
+	}
+
+	b.logger.Info("local KV cache initialized successfully", 
+		"cacheEnabled", b.localKVCache.IsEnabled(),
+		"stats", b.localKVCache.GetStats())
+
+	return nil
+}
+
+// populateKVCache loads all existing KV data into the local cache
+func (b *NATSBroker) populateKVCache() error {
+	b.logger.Info("populating local KV cache", "buckets", b.config.KV.Buckets)
+	
+	totalLoaded := 0
+	for _, bucketName := range b.config.KV.Buckets {
+		loaded, err := b.loadBucketIntoCache(bucketName)
+		if err != nil {
+			// Don't fail cache initialization for individual bucket failures
+			b.logger.Warn("failed to load bucket into cache", "bucket", bucketName, "error", err)
+			continue
+		}
+		totalLoaded += loaded
+	}
+	
+	b.logger.Info("KV cache population complete", 
+		"totalBuckets", len(b.config.KV.Buckets),
+		"totalKeysLoaded", totalLoaded)
+	
+	return nil
+}
+
+// loadBucketIntoCache loads all keys from a specific bucket into the cache
+func (b *NATSBroker) loadBucketIntoCache(bucketName string) (int, error) {
+	store, exists := b.kvStores[bucketName]
+	if !exists {
+		return 0, fmt.Errorf("bucket not found: %s", bucketName)
+	}
+
+	// Get all keys in bucket (NATS KV feature)
+	keys, err := store.Keys()
+	if err != nil {
+		// Handle case where bucket exists but has no keys
+		if err == watermillNats.ErrNoKeysFound {
+			b.logger.Debug("no keys found in bucket", "bucket", bucketName)
+			return 0, nil
+		}
+		return 0, fmt.Errorf("failed to get keys from bucket %s: %w", bucketName, err)
+	}
+
+	loadedCount := 0
+	for _, key := range keys {
+		entry, err := store.Get(key)
+		if err != nil {
+			b.logger.Debug("failed to get key during cache population", 
+				"bucket", bucketName, "key", key, "error", err)
+			continue // Skip bad keys, don't fail entire bucket
+		}
+
+		// Parse JSON once and store parsed result for maximum performance
+		var parsedValue interface{}
+		rawValue := entry.Value()
+		if len(rawValue) > 0 {
+			if err := json.Unmarshal(rawValue, &parsedValue); err != nil {
+				// Store as string if JSON parsing fails (backward compatibility)
+				parsedValue = string(rawValue)
+				b.logger.Debug("stored non-JSON value as string", 
+					"bucket", bucketName, "key", key)
+			}
+		} else {
+			// Empty value
+			parsedValue = ""
+		}
+
+		b.localKVCache.Set(bucketName, key, parsedValue)
+		loadedCount++
+
+		if loadedCount%100 == 0 {
+			b.logger.Debug("cache loading progress", 
+				"bucket", bucketName, "loaded", loadedCount, "total", len(keys))
+		}
+	}
+
+	b.logger.Info("loaded bucket into cache", 
+		"bucket", bucketName, 
+		"totalKeys", len(keys),
+		"loadedKeys", loadedCount)
+	
+	return loadedCount, nil
+}
+
+// subscribeToKVChanges subscribes to KV change streams for real-time cache updates
+func (b *NATSBroker) subscribeToKVChanges() error {
+	for _, bucketName := range b.config.KV.Buckets {
+		if err := b.subscribeToKVBucket(bucketName); err != nil {
+			b.logger.Error("failed to subscribe to KV bucket", "bucket", bucketName, "error", err)
+			// Continue with other buckets - partial functionality is better than none
+		}
+	}
+	
+	b.logger.Info("KV change subscriptions established", "buckets", len(b.kvSubscriptions))
+	return nil
+}
+
+// subscribeToKVBucket subscribes to changes for a specific KV bucket
+func (b *NATSBroker) subscribeToKVBucket(bucketName string) error {
+	// KV change stream subject: $KV.bucket_name.>
+	subject := fmt.Sprintf("$KV.%s.>", bucketName)
+	
+	// Create durable subscription for KV changes
+	sub, err := b.jetStreamCtx.Subscribe(subject, b.handleKVChange, 
+		watermillNats.DeliverAll(),                          // Get all changes from the beginning
+		watermillNats.Durable(fmt.Sprintf("rule-router-kv-cache-%s", bucketName)), // Survive restarts
+		watermillNats.ManualAck(),                           // Manual ack for reliability
+	)
+	
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to KV changes for bucket %s: %w", bucketName, err)
+	}
+	
+	// Store subscription for cleanup
+	b.kvSubscriptions = append(b.kvSubscriptions, sub)
+	
+	b.logger.Info("subscribed to KV changes", 
+		"bucket", bucketName, 
+		"subject", subject,
+		"durable", fmt.Sprintf("rule-router-kv-cache-%s", bucketName))
+	
+	return nil
+}
+
+// handleKVChange processes KV change notifications and updates the local cache
+func (b *NATSBroker) handleKVChange(msg *watermillNats.Msg) {
+	// Extract bucket and key from subject: $KV.customer_data.cust123
+	parts := strings.Split(msg.Subject, ".")
+	if len(parts) < 3 {
+		b.logger.Debug("invalid KV change subject format", "subject", msg.Subject)
+		msg.Ack() // Ack to avoid redelivery of bad messages
+		return
+	}
+	
+	bucketName := parts[1]
+	key := strings.Join(parts[2:], ".") // Handle keys with dots in them
+	
+	b.logger.Debug("processing KV change", 
+		"bucket", bucketName, "key", key, "dataLen", len(msg.Data))
+	
+	// Parse the new value
+	var parsedValue interface{}
+	if len(msg.Data) > 0 {
+		if err := json.Unmarshal(msg.Data, &parsedValue); err != nil {
+			// Store as string if JSON parsing fails
+			parsedValue = string(msg.Data)
+			b.logger.Debug("stored non-JSON KV update as string", 
+				"bucket", bucketName, "key", key, "error", err)
+		}
+	} else {
+		// Empty data typically means key was deleted
+		parsedValue = nil
+	}
+	
+	// Update local cache
+	if parsedValue != nil {
+		b.localKVCache.Set(bucketName, key, parsedValue)
+		b.logger.Debug("updated KV cache from stream", "bucket", bucketName, "key", key)
+	} else {
+		b.localKVCache.Delete(bucketName, key)
+		b.logger.Debug("deleted from KV cache from stream", "bucket", bucketName, "key", key)
+	}
+	
+	// Acknowledge the message
+	msg.Ack()
+}
+
+// GetLocalKVCache returns the local KV cache instance
+func (b *NATSBroker) GetLocalKVCache() *rule.LocalKVCache {
+	return b.localKVCache
 }
 
 // initializeNATSConnection establishes the core NATS connection and JetStream context
@@ -314,6 +531,13 @@ func (b *NATSBroker) Close() error {
 	b.logger.Info("closing NATS broker connections")
 
 	var errors []error
+
+	// Close KV change subscriptions first
+	for i, sub := range b.kvSubscriptions {
+		if err := sub.Unsubscribe(); err != nil {
+			errors = append(errors, fmt.Errorf("failed to unsubscribe from KV changes %d: %w", i, err))
+		}
+	}
 
 	if b.router != nil {
 		if err := b.router.Close(); err != nil {

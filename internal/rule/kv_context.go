@@ -19,21 +19,24 @@ var (
 )
 
 // KVContext provides access to NATS Key-Value stores for rule evaluation and templating
+// Now includes local cache support for improved performance
 type KVContext struct {
-	stores map[string]watermillNats.KeyValue
-	logger *logger.Logger
+	stores     map[string]watermillNats.KeyValue
+	logger     *logger.Logger
+	localCache *LocalKVCache  // Local cache for performance optimization
 }
 
-// NewKVContext creates a new KV context with the provided KV stores
-func NewKVContext(stores map[string]watermillNats.KeyValue, logger *logger.Logger) *KVContext {
+// NewKVContext creates a new KV context with the provided KV stores and optional local cache
+func NewKVContext(stores map[string]watermillNats.KeyValue, logger *logger.Logger, localCache *LocalKVCache) *KVContext {
 	if logger == nil {
 		// This should never happen in practice, but be defensive
 		panic("KVContext requires a logger")
 	}
 
 	ctx := &KVContext{
-		stores: make(map[string]watermillNats.KeyValue),
-		logger: logger,
+		stores:     make(map[string]watermillNats.KeyValue),
+		logger:     logger,
+		localCache: localCache,
 	}
 
 	// Copy the stores map to avoid external modification
@@ -41,13 +44,19 @@ func NewKVContext(stores map[string]watermillNats.KeyValue, logger *logger.Logge
 		ctx.stores[bucket] = store
 	}
 
+	cacheStatus := "disabled"
+	if localCache != nil && localCache.IsEnabled() {
+		cacheStatus = "enabled"
+	}
+
 	logger.Info("KV context initialized with JSON path support", 
 		"bucketCount", len(ctx.stores), 
-		"buckets", ctx.getBucketNames())
+		"buckets", ctx.getBucketNames(),
+		"localCache", cacheStatus)
 	return ctx
 }
 
-// GetField retrieves a value from a KV store based on the field specification
+// GetField retrieves a value from KV store (cache first, then NATS KV fallback)
 // Supports format: "@kv.bucket_name.key_name[.json.path.to.field]"
 // Returns the value and whether it was found successfully
 func (kv *KVContext) GetField(field string) (interface{}, bool) {
@@ -64,6 +73,66 @@ func (kv *KVContext) GetField(field string) (interface{}, bool) {
 		"key", key,
 		"jsonPath", jsonPath)
 
+	// Try local cache first for maximum performance
+	if kv.localCache != nil && kv.localCache.IsEnabled() {
+		if cachedValue, found := kv.localCache.Get(bucket, key); found {
+			kv.logger.Debug("KV cache hit", "bucket", bucket, "key", key)
+			
+			// Process JSON path if needed
+			if len(jsonPath) > 0 {
+				finalValue, err := kv.traverseJSONPathOnParsed(cachedValue, jsonPath)
+				if err != nil {
+					kv.logger.Debug("JSON path traversal failed on cached value", 
+						"bucket", bucket, "key", key, "jsonPath", jsonPath, "error", err)
+					return nil, false
+				}
+				return finalValue, true
+			}
+			
+			// No JSON path needed, return cached value directly
+			return cachedValue, true
+		}
+		
+		kv.logger.Debug("KV cache miss", "bucket", bucket, "key", key)
+	}
+
+	// Cache miss or cache disabled - fallback to NATS KV
+	kv.logger.Debug("falling back to NATS KV lookup", "bucket", bucket, "key", key)
+	return kv.getFromNATSKV(bucket, key, jsonPath)
+}
+
+// GetFieldWithContext retrieves a value with variable substitution support
+// Now properly handles missing variables by returning empty strings
+func (kv *KVContext) GetFieldWithContext(field string, msgData map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext) (interface{}, bool) {
+	// First resolve any variables in the field specification
+	resolvedField, hasUnresolvedVars, err := kv.resolveVariablesEnhanced(field, msgData, timeCtx, subjectCtx)
+	if err != nil {
+		kv.logger.Debug("failed to resolve variables in KV field", "field", field, "error", err)
+		return "", false // Return empty string for template processing
+	}
+	
+	// If variables couldn't be resolved, return empty string
+	if hasUnresolvedVars {
+		kv.logger.Debug("KV field has unresolved variables, returning empty", "original", field, "resolved", resolvedField)
+		return "", false
+	}
+
+	kv.logger.Debug("resolved KV field variables", "original", field, "resolved", resolvedField)
+
+	// Now do the actual KV lookup (cache first, then NATS KV fallback)
+	value, found := kv.GetField(resolvedField)
+	
+	// If KV lookup fails, return empty string (not nil)
+	if !found {
+		kv.logger.Debug("KV lookup failed after variable resolution", "resolvedField", resolvedField)
+		return "", false
+	}
+	
+	return value, true
+}
+
+// getFromNATSKV performs direct NATS KV lookup (fallback when cache misses)
+func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (interface{}, bool) {
 	// Check if the bucket exists in our configured stores
 	store, exists := kv.stores[bucket]
 	if !exists {
@@ -76,12 +145,12 @@ func (kv *KVContext) GetField(field string) (interface{}, bool) {
 	if err != nil {
 		// Handle key not found (this is a normal case, not an error)
 		if err == watermillNats.ErrKeyNotFound {
-			kv.logger.Debug("KV key not found", "bucket", bucket, "key", key)
+			kv.logger.Debug("KV key not found in NATS", "bucket", bucket, "key", key)
 			return nil, false
 		}
 
 		// Handle other errors (network issues, etc.)
-		kv.logger.Debug("KV lookup failed", "bucket", bucket, "key", key, "error", err)
+		kv.logger.Debug("NATS KV lookup failed", "bucket", bucket, "key", key, "error", err)
 		return nil, false
 	}
 
@@ -91,14 +160,14 @@ func (kv *KVContext) GetField(field string) (interface{}, bool) {
 	// If no JSON path, return the converted raw value
 	if len(jsonPath) == 0 {
 		value := kv.convertValue(rawValue)
-		kv.logger.Debug("KV lookup successful (no JSON path)", "bucket", bucket, "key", key, "value", value)
+		kv.logger.Debug("NATS KV lookup successful (no JSON path)", "bucket", bucket, "key", key, "value", value)
 		return value, true
 	}
 
 	// Parse as JSON and traverse the path
 	value, err := kv.traverseJSONPath(rawValue, jsonPath)
 	if err != nil {
-		kv.logger.Debug("JSON path traversal failed", 
+		kv.logger.Debug("JSON path traversal failed on NATS value", 
 			"bucket", bucket, 
 			"key", key, 
 			"jsonPath", jsonPath, 
@@ -106,7 +175,7 @@ func (kv *KVContext) GetField(field string) (interface{}, bool) {
 		return nil, false
 	}
 
-	kv.logger.Debug("KV lookup with JSON path successful", 
+	kv.logger.Debug("NATS KV lookup with JSON path successful", 
 		"bucket", bucket, 
 		"key", key, 
 		"jsonPath", jsonPath, 
@@ -114,34 +183,40 @@ func (kv *KVContext) GetField(field string) (interface{}, bool) {
 	return value, true
 }
 
-// ENHANCED: GetFieldWithContext retrieves a value with variable substitution support
-// Now properly handles missing variables by returning empty strings
-func (kv *KVContext) GetFieldWithContext(field string, msgData map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext) (interface{}, bool) {
-	// First resolve any variables in the field specification
-	resolvedField, hasUnresolvedVars, err := kv.resolveVariablesEnhanced(field, msgData, timeCtx, subjectCtx)
-	if err != nil {
-		kv.logger.Debug("failed to resolve variables in KV field", "field", field, "error", err)
-		return "", false // Return empty string for template processing
-	}
+// traverseJSONPathOnParsed traverses JSON path on already-parsed cached values
+// This avoids re-parsing JSON that's already been parsed during cache population
+func (kv *KVContext) traverseJSONPathOnParsed(parsedValue interface{}, path []string) (interface{}, error) {
+	current := parsedValue
 	
-	// ENHANCED: If variables couldn't be resolved, return empty string
-	if hasUnresolvedVars {
-		kv.logger.Debug("KV field has unresolved variables, returning empty", "original", field, "resolved", resolvedField)
-		return "", false
+	for i, segment := range path {
+		kv.logger.Debug("traversing cached JSON path segment", 
+			"segment", segment, 
+			"position", i, 
+			"totalSegments", len(path))
+
+		switch v := current.(type) {
+		case map[string]interface{}:
+			var ok bool
+			current, ok = v[segment]
+			if !ok {
+				return nil, fmt.Errorf("JSON path segment not found: %s", segment)
+			}
+		case []interface{}:
+			// Handle array access if the segment is a number
+			index, err := strconv.Atoi(segment)
+			if err != nil {
+				return nil, fmt.Errorf("invalid array index '%s': %w", segment, err)
+			}
+			if index < 0 || index >= len(v) {
+				return nil, fmt.Errorf("array index %d out of bounds (length: %d)", index, len(v))
+			}
+			current = v[index]
+		default:
+			return nil, fmt.Errorf("cannot traverse into non-object/non-array at path segment: %s", segment)
+		}
 	}
 
-	kv.logger.Debug("resolved KV field variables", "original", field, "resolved", resolvedField)
-
-	// Now do the actual KV lookup with JSON path support
-	value, found := kv.GetField(resolvedField)
-	
-	// ENHANCED: If KV lookup fails, return empty string (not nil)
-	if !found {
-		kv.logger.Debug("KV lookup failed after variable resolution", "resolvedField", resolvedField)
-		return "", false
-	}
-	
-	return value, true
+	return current, nil
 }
 
 // parseKVFieldWithPath parses a KV field specification with optional JSON path
@@ -181,7 +256,7 @@ func (kv *KVContext) parseKVFieldWithPath(field string) (bucket, key string, jso
 	return bucket, key, jsonPath, nil
 }
 
-// traverseJSONPath parses JSON and traverses the specified path
+// traverseJSONPath parses JSON and traverses the specified path (for NATS KV fallback)
 func (kv *KVContext) traverseJSONPath(jsonData []byte, path []string) (interface{}, error) {
 	// Parse the JSON data
 	var jsonObj interface{}
@@ -189,40 +264,11 @@ func (kv *KVContext) traverseJSONPath(jsonData []byte, path []string) (interface
 		return nil, fmt.Errorf("failed to parse JSON: %w", err)
 	}
 
-	// Traverse the path
-	current := jsonObj
-	for i, segment := range path {
-		kv.logger.Debug("traversing JSON path segment", 
-			"segment", segment, 
-			"position", i, 
-			"totalSegments", len(path))
-
-		switch v := current.(type) {
-		case map[string]interface{}:
-			var ok bool
-			current, ok = v[segment]
-			if !ok {
-				return nil, fmt.Errorf("JSON path segment not found: %s", segment)
-			}
-		case []interface{}:
-			// Handle array access if the segment is a number
-			index, err := strconv.Atoi(segment)
-			if err != nil {
-				return nil, fmt.Errorf("invalid array index '%s': %w", segment, err)
-			}
-			if index < 0 || index >= len(v) {
-				return nil, fmt.Errorf("array index %d out of bounds (length: %d)", index, len(v))
-			}
-			current = v[index]
-		default:
-			return nil, fmt.Errorf("cannot traverse into non-object/non-array at path segment: %s", segment)
-		}
-	}
-
-	return current, nil
+	// Traverse the path using the same logic as cached values
+	return kv.traverseJSONPathOnParsed(jsonObj, path)
 }
 
-// ENHANCED: resolveVariablesEnhanced replaces {variable} placeholders with better error handling
+// resolveVariablesEnhanced replaces {variable} placeholders with better error handling
 func (kv *KVContext) resolveVariablesEnhanced(field string, msgData map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext) (string, bool, error) {
 	if !strings.Contains(field, "{") {
 		// No variables to resolve
@@ -245,7 +291,7 @@ func (kv *KVContext) resolveVariablesEnhanced(field string, msgData map[string]i
 			return strValue
 		}
 
-		// ENHANCED: Mark as unresolved instead of returning original
+		// Mark as unresolved instead of returning original
 		kv.logger.Debug("KV variable not found", "variable", varName)
 		hasUnresolvedVars = true
 		return "" // Return empty string for missing variables
@@ -307,7 +353,7 @@ func (kv *KVContext) getValueFromPath(data map[string]interface{}, path []string
 }
 
 // convertValue converts raw KV store bytes to appropriate Go types
-// Only used when there's no JSON path (backwards compatibility)
+// Only used when there's no JSON path (backwards compatibility for NATS KV fallback)
 func (kv *KVContext) convertValue(data []byte) interface{} {
 	if len(data) == 0 {
 		return ""
@@ -348,7 +394,7 @@ func (kv *KVContext) convertValue(data []byte) interface{} {
 	return str
 }
 
-// ENHANCED: convertToString with better handling of edge cases
+// convertToString with better handling of edge cases
 func (kv *KVContext) convertToString(value interface{}) string {
 	switch v := value.(type) {
 	case string:
@@ -362,7 +408,7 @@ func (kv *KVContext) convertToString(value interface{}) string {
 	case bool:
 		return strconv.FormatBool(v)
 	case nil:
-		return "" // ENHANCED: Return empty string for nil, not "null"
+		return "" // Return empty string for nil, not "null"
 	default:
 		// For complex types, marshal to JSON
 		if jsonBytes, err := json.Marshal(v); err == nil {
@@ -395,11 +441,20 @@ func (kv *KVContext) HasBucket(bucketName string) bool {
 
 // GetStats returns basic statistics about the KV context
 func (kv *KVContext) GetStats() map[string]interface{} {
-	return map[string]interface{}{
-		"bucket_count":      len(kv.stores),
-		"bucket_names":      kv.getBucketNames(),
-		"initialized":       true,
-		"json_path_support": true,
-		"variable_resolution": "enhanced", // Indicates new error handling
+	stats := map[string]interface{}{
+		"bucket_count":         len(kv.stores),
+		"bucket_names":         kv.getBucketNames(),
+		"initialized":          true,
+		"json_path_support":    true,
+		"variable_resolution":  "enhanced", // Indicates new error handling
 	}
+
+	// Add local cache stats if available
+	if kv.localCache != nil {
+		stats["local_cache"] = kv.localCache.GetStats()
+	} else {
+		stats["local_cache"] = "disabled"
+	}
+
+	return stats
 }

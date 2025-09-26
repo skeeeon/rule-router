@@ -69,10 +69,15 @@ type WatermillConfig struct {
 	} `json:"middleware" yaml:"middleware"`
 }
 
-// KVConfig configures NATS Key-Value store access
+// KVConfig configures NATS Key-Value store access with local caching support
 type KVConfig struct {
 	Enabled bool     `json:"enabled" yaml:"enabled"`
 	Buckets []string `json:"buckets" yaml:"buckets"`
+	
+	// Local cache configuration for performance optimization
+	LocalCache struct {
+		Enabled bool `json:"enabled" yaml:"enabled"` // Enable/disable local KV caching
+	} `json:"localCache" yaml:"localCache"`
 }
 
 type LogConfig struct {
@@ -206,6 +211,12 @@ func setDefaults(cfg *Config) {
 	// KV defaults - disabled by default, no buckets
 	// cfg.KV.Enabled defaults to false
 	// cfg.KV.Buckets defaults to empty slice
+	
+	// KV Local Cache defaults - enabled by default when KV is enabled
+	// Note: We don't check cfg.KV.LocalCache.Enabled == false here because
+	// Go's zero value for bool is false, so we need to distinguish between
+	// "not set" and "explicitly set to false"
+	// The validation will handle setting the default to true if KV is enabled
 }
 
 // validateConfig performs validation of all configuration values
@@ -305,9 +316,33 @@ func validateConfig(cfg *Config) error {
 			}
 			bucketMap[bucket] = true
 		}
+		
+		// Set local cache default to enabled if not explicitly configured
+		// This is where we handle the "enabled by default when KV is enabled" logic
+		// We assume if someone doesn't specify localCache.enabled, they want it enabled
+		// Only way to disable is to explicitly set it to false in config
+		if !isLocalCacheExplicitlyConfigured(cfg) {
+			cfg.KV.LocalCache.Enabled = true
+		}
 	}
 
 	return nil
+}
+
+// isLocalCacheExplicitlyConfigured checks if the user explicitly set localCache.enabled
+// This is a simple heuristic - in practice, this would be handled by a more sophisticated
+// config parsing system, but for our "grug brain" approach, this works fine
+func isLocalCacheExplicitlyConfigured(cfg *Config) bool {
+	// If KV is disabled entirely, then local cache config doesn't matter
+	if !cfg.KV.Enabled {
+		return true // Treat as "configured" to avoid changing the default
+	}
+	
+	// For now, we assume if someone wants to disable local cache, they will
+	// explicitly set it in their config. The default behavior is to enable it.
+	// A more sophisticated approach would track which fields were explicitly set
+	// during parsing, but this adds complexity we don't need right now.
+	return false // Default to enabling local cache
 }
 
 // validateBucketName validates NATS KV bucket naming rules

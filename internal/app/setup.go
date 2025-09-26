@@ -90,7 +90,7 @@ func (a *App) setupMetricsServer(reg *prometheus.Registry) error {
 	return nil
 }
 
-// setupRules loads rules from directory and creates the processor
+// setupRules loads rules from directory and creates the processor with KV support
 func (a *App) setupRules() error {
 	// Load rules from directory with KV bucket validation
 	kvBuckets := []string{}
@@ -104,12 +104,17 @@ func (a *App) setupRules() error {
 		return fmt.Errorf("failed to load rules: %w", err)
 	}
 
-	// Create KV context if enabled
+	// Create KV context if enabled - now with local cache support
 	var kvContext *rule.KVContext
 	if a.config.KV.Enabled && a.broker != nil {
 		kvStores := a.broker.GetKVStores()
-		kvContext = rule.NewKVContext(kvStores, a.logger)
-		a.logger.Info("KV context created", "bucketCount", len(kvStores))
+		localKVCache := a.broker.GetLocalKVCache() // Get local cache from broker
+		
+		kvContext = rule.NewKVContext(kvStores, a.logger, localKVCache)
+		
+		a.logger.Info("KV context created with local cache support", 
+			"bucketCount", len(kvStores),
+			"localCacheEnabled", localKVCache.IsEnabled())
 	} else {
 		a.logger.Info("KV support disabled or NATS broker not ready")
 	}
@@ -124,12 +129,23 @@ func (a *App) setupRules() error {
 
 	a.logger.Info("rules loaded successfully",
 		"ruleCount", len(rules),
-		"kvEnabled", a.config.KV.Enabled)
+		"kvEnabled", a.config.KV.Enabled,
+		"localCacheEnabled", func() bool {
+			if kvContext != nil {
+				stats := kvContext.GetStats()
+				if cacheStats, ok := stats["local_cache"].(map[string]interface{}); ok {
+					if enabled, ok := cacheStats["enabled"].(bool); ok {
+						return enabled
+					}
+				}
+			}
+			return false
+		}())
 
 	return nil
 }
 
-// setupNATSBroker creates the NATS broker connection
+// setupNATSBroker creates the NATS broker connection and initializes KV cache
 func (a *App) setupNATSBroker() error {
 	a.logger.Info("connecting to NATS JetStream server", "urls", a.config.NATS.URLs)
 	
@@ -139,12 +155,36 @@ func (a *App) setupNATSBroker() error {
 	}
 	a.broker = natsBroker
 	
-	// Log KV initialization results
+	// Initialize local KV cache if KV is enabled
+	if a.config.KV.Enabled {
+		a.logger.Info("initializing local KV cache", 
+			"buckets", a.config.KV.Buckets,
+			"localCacheEnabled", a.config.KV.LocalCache.Enabled)
+		
+		if err := a.broker.InitializeKVCache(); err != nil {
+			// Don't fail startup for KV cache issues - log error and continue
+			// This allows the system to operate with degraded performance rather than failing
+			a.logger.Error("failed to initialize local KV cache", "error", err)
+			a.logger.Info("continuing with direct NATS KV access (degraded performance)")
+		} else {
+			// Log successful cache initialization with stats
+			localCache := a.broker.GetLocalKVCache()
+			if localCache != nil && localCache.IsEnabled() {
+				stats := localCache.GetStats()
+				a.logger.Info("local KV cache initialized successfully", "stats", stats)
+			}
+		}
+	}
+	
+	// Log NATS connection results
 	if a.config.KV.Enabled {
 		kvStores := a.broker.GetKVStores()
+		localCache := a.broker.GetLocalKVCache()
+		
 		a.logger.Info("NATS JetStream connected with KV support", 
 			"kvBuckets", len(kvStores),
-			"configuredBuckets", a.config.KV.Buckets)
+			"configuredBuckets", a.config.KV.Buckets,
+			"localCacheEnabled", localCache != nil && localCache.IsEnabled())
 	} else {
 		a.logger.Info("NATS JetStream connected without KV support")
 	}
