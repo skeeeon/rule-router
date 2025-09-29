@@ -22,7 +22,7 @@ var (
     // Combined pattern: captures optional @ prefix and variable content
     // {@time.hour} -> groups: ["@", "time.hour"]  
     // {temperature} -> groups: ["", "temperature"]
-    combinedVariablePattern = regexp.MustCompile(`\{(@?)([^}]+)\}`)
+    combinedVariablePattern = regexp.MustCompile(`\{(@?)([a-zA-Z0-9_.()]+)\}`)
 )
 
 type Processor struct {

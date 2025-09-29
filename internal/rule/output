@@ -1,0 +1,126 @@
+=== RUN   TestEvaluateCondition_Equality
+=== RUN   TestEvaluateCondition_Equality/string_equals_-_match
+=== RUN   TestEvaluateCondition_Equality/string_equals_-_no_match
+=== RUN   TestEvaluateCondition_Equality/string_not_equals_-_match
+=== RUN   TestEvaluateCondition_Equality/integer_equals
+=== RUN   TestEvaluateCondition_Equality/float_equals
+=== RUN   TestEvaluateCondition_Equality/boolean_equals_true
+=== RUN   TestEvaluateCondition_Equality/boolean_equals_false
+=== RUN   TestEvaluateCondition_Equality/nil_equals_nil
+=== RUN   TestEvaluateCondition_Equality/type_coercion_-_string_to_int
+--- PASS: TestEvaluateCondition_Equality (0.00s)
+    --- PASS: TestEvaluateCondition_Equality/string_equals_-_match (0.00s)
+    --- PASS: TestEvaluateCondition_Equality/string_equals_-_no_match (0.00s)
+    --- PASS: TestEvaluateCondition_Equality/string_not_equals_-_match (0.00s)
+    --- PASS: TestEvaluateCondition_Equality/integer_equals (0.00s)
+    --- PASS: TestEvaluateCondition_Equality/float_equals (0.00s)
+    --- PASS: TestEvaluateCondition_Equality/boolean_equals_true (0.00s)
+    --- PASS: TestEvaluateCondition_Equality/boolean_equals_false (0.00s)
+    --- PASS: TestEvaluateCondition_Equality/nil_equals_nil (0.00s)
+    --- PASS: TestEvaluateCondition_Equality/type_coercion_-_string_to_int (0.00s)
+=== RUN   TestEvaluateCondition_Numeric
+=== RUN   TestEvaluateCondition_Numeric/greater_than_-_true
+=== RUN   TestEvaluateCondition_Numeric/greater_than_-_false
+=== RUN   TestEvaluateCondition_Numeric/greater_than_-_equal_(false)
+=== RUN   TestEvaluateCondition_Numeric/less_than_-_true
+=== RUN   TestEvaluateCondition_Numeric/greater_than_or_equal_-_equal
+=== RUN   TestEvaluateCondition_Numeric/greater_than_or_equal_-_greater
+=== RUN   TestEvaluateCondition_Numeric/less_than_or_equal_-_equal
+=== RUN   TestEvaluateCondition_Numeric/float_comparison
+=== RUN   TestEvaluateCondition_Numeric/int_vs_float_comparison
+=== RUN   TestEvaluateCondition_Numeric/string_number_comparison
+--- PASS: TestEvaluateCondition_Numeric (0.00s)
+    --- PASS: TestEvaluateCondition_Numeric/greater_than_-_true (0.00s)
+    --- PASS: TestEvaluateCondition_Numeric/greater_than_-_false (0.00s)
+    --- PASS: TestEvaluateCondition_Numeric/greater_than_-_equal_(false) (0.00s)
+    --- PASS: TestEvaluateCondition_Numeric/less_than_-_true (0.00s)
+    --- PASS: TestEvaluateCondition_Numeric/greater_than_or_equal_-_equal (0.00s)
+    --- PASS: TestEvaluateCondition_Numeric/greater_than_or_equal_-_greater (0.00s)
+    --- PASS: TestEvaluateCondition_Numeric/less_than_or_equal_-_equal (0.00s)
+    --- PASS: TestEvaluateCondition_Numeric/float_comparison (0.00s)
+    --- PASS: TestEvaluateCondition_Numeric/int_vs_float_comparison (0.00s)
+    --- PASS: TestEvaluateCondition_Numeric/string_number_comparison (0.00s)
+=== RUN   TestEvaluateCondition_Exists
+=== RUN   TestEvaluateCondition_Exists/field_exists
+=== RUN   TestEvaluateCondition_Exists/field_does_not_exist
+=== RUN   TestEvaluateCondition_Exists/field_exists_with_nil_value
+=== RUN   TestEvaluateCondition_Exists/field_exists_with_zero_value
+--- PASS: TestEvaluateCondition_Exists (0.00s)
+    --- PASS: TestEvaluateCondition_Exists/field_exists (0.00s)
+    --- PASS: TestEvaluateCondition_Exists/field_does_not_exist (0.00s)
+    --- PASS: TestEvaluateCondition_Exists/field_exists_with_nil_value (0.00s)
+    --- PASS: TestEvaluateCondition_Exists/field_exists_with_zero_value (0.00s)
+=== RUN   TestEvaluateCondition_Contains
+=== RUN   TestEvaluateCondition_Contains/string_contains_-_match
+=== RUN   TestEvaluateCondition_Contains/string_contains_-_no_match
+=== RUN   TestEvaluateCondition_Contains/string_contains_-_case_sensitive
+=== RUN   TestEvaluateCondition_Contains/string_contains_-_substring_at_start
+=== RUN   TestEvaluateCondition_Contains/string_contains_-_substring_at_end
+--- PASS: TestEvaluateCondition_Contains (0.00s)
+    --- PASS: TestEvaluateCondition_Contains/string_contains_-_match (0.00s)
+    --- PASS: TestEvaluateCondition_Contains/string_contains_-_no_match (0.00s)
+    --- PASS: TestEvaluateCondition_Contains/string_contains_-_case_sensitive (0.00s)
+    --- PASS: TestEvaluateCondition_Contains/string_contains_-_substring_at_start (0.00s)
+    --- PASS: TestEvaluateCondition_Contains/string_contains_-_substring_at_end (0.00s)
+=== RUN   TestEvaluateCondition_NestedFields
+=== RUN   TestEvaluateCondition_NestedFields/two_level_nesting
+=== RUN   TestEvaluateCondition_NestedFields/three_level_nesting
+=== RUN   TestEvaluateCondition_NestedFields/nested_numeric_comparison
+=== RUN   TestEvaluateCondition_NestedFields/missing_nested_field
+--- PASS: TestEvaluateCondition_NestedFields (0.00s)
+    --- PASS: TestEvaluateCondition_NestedFields/two_level_nesting (0.00s)
+    --- PASS: TestEvaluateCondition_NestedFields/three_level_nesting (0.00s)
+    --- PASS: TestEvaluateCondition_NestedFields/nested_numeric_comparison (0.00s)
+    --- PASS: TestEvaluateCondition_NestedFields/missing_nested_field (0.00s)
+=== RUN   TestEvaluateCondition_TimeFields
+=== RUN   TestEvaluateCondition_TimeFields/time_hour_equals
+=== RUN   TestEvaluateCondition_TimeFields/time_hour_greater_than
+=== RUN   TestEvaluateCondition_TimeFields/business_hours_check
+=== RUN   TestEvaluateCondition_TimeFields/day_name_equals
+=== RUN   TestEvaluateCondition_TimeFields/day_number_weekday_check
+=== RUN   TestEvaluateCondition_TimeFields/date_year_check
+--- PASS: TestEvaluateCondition_TimeFields (0.00s)
+    --- PASS: TestEvaluateCondition_TimeFields/time_hour_equals (0.00s)
+    --- PASS: TestEvaluateCondition_TimeFields/time_hour_greater_than (0.00s)
+    --- PASS: TestEvaluateCondition_TimeFields/business_hours_check (0.00s)
+    --- PASS: TestEvaluateCondition_TimeFields/day_name_equals (0.00s)
+    --- PASS: TestEvaluateCondition_TimeFields/day_number_weekday_check (0.00s)
+    --- PASS: TestEvaluateCondition_TimeFields/date_year_check (0.00s)
+=== RUN   TestEvaluateCondition_SubjectFields
+=== RUN   TestEvaluateCondition_SubjectFields/subject_token_equals
+=== RUN   TestEvaluateCondition_SubjectFields/subject_token_not_equals
+=== RUN   TestEvaluateCondition_SubjectFields/subject_count_check
+=== RUN   TestEvaluateCondition_SubjectFields/subject_contains_check
+--- PASS: TestEvaluateCondition_SubjectFields (0.00s)
+    --- PASS: TestEvaluateCondition_SubjectFields/subject_token_equals (0.00s)
+    --- PASS: TestEvaluateCondition_SubjectFields/subject_token_not_equals (0.00s)
+    --- PASS: TestEvaluateCondition_SubjectFields/subject_count_check (0.00s)
+    --- PASS: TestEvaluateCondition_SubjectFields/subject_contains_check (0.00s)
+=== RUN   TestEvaluateConditions_LogicalOperators
+=== RUN   TestEvaluateConditions_LogicalOperators/AND_-_all_true
+=== RUN   TestEvaluateConditions_LogicalOperators/AND_-_one_false
+=== RUN   TestEvaluateConditions_LogicalOperators/OR_-_all_false
+=== RUN   TestEvaluateConditions_LogicalOperators/OR_-_one_true
+--- PASS: TestEvaluateConditions_LogicalOperators (0.00s)
+    --- PASS: TestEvaluateConditions_LogicalOperators/AND_-_all_true (0.00s)
+    --- PASS: TestEvaluateConditions_LogicalOperators/AND_-_one_false (0.00s)
+    --- PASS: TestEvaluateConditions_LogicalOperators/OR_-_all_false (0.00s)
+    --- PASS: TestEvaluateConditions_LogicalOperators/OR_-_one_true (0.00s)
+=== RUN   TestEvaluateConditions_NestedGroups
+=== RUN   TestEvaluateConditions_NestedGroups/nested_AND_within_OR
+=== RUN   TestEvaluateConditions_NestedGroups/complex_nested_conditions
+--- PASS: TestEvaluateConditions_NestedGroups (0.00s)
+    --- PASS: TestEvaluateConditions_NestedGroups/nested_AND_within_OR (0.00s)
+    --- PASS: TestEvaluateConditions_NestedGroups/complex_nested_conditions (0.00s)
+=== RUN   TestEvaluateCondition_EdgeCases
+=== RUN   TestEvaluateCondition_EdgeCases/missing_field_returns_false
+=== RUN   TestEvaluateCondition_EdgeCases/numeric_comparison_with_non-numeric
+=== RUN   TestEvaluateCondition_EdgeCases/unknown_operator_returns_false
+=== RUN   TestEvaluateCondition_EdgeCases/empty_string_comparison
+--- PASS: TestEvaluateCondition_EdgeCases (0.00s)
+    --- PASS: TestEvaluateCondition_EdgeCases/missing_field_returns_false (0.00s)
+    --- PASS: TestEvaluateCondition_EdgeCases/numeric_comparison_with_non-numeric (0.00s)
+    --- PASS: TestEvaluateCondition_EdgeCases/unknown_operator_returns_false (0.00s)
+    --- PASS: TestEvaluateCondition_EdgeCases/empty_string_comparison (0.00s)
+PASS
+ok  	rule-router/internal/rule	0.014s
