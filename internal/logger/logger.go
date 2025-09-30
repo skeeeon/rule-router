@@ -79,6 +79,12 @@ func (l *Logger) Error(msg string, args ...interface{}) {
 	l.Logger.Error(msg, fields...)
 }
 
+// Warn logs a message at Warn level
+func (l *Logger) Warn(msg string, args ...interface{}) {
+	fields := argsToFields(args...)
+	l.Logger.Warn(msg, fields...)
+}
+
 // Info logs a message at Info level
 func (l *Logger) Info(msg string, args ...interface{}) {
 	fields := argsToFields(args...)
