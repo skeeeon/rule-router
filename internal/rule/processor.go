@@ -274,7 +274,7 @@ func (p *Processor) processSystemFunction(function string) string {
     }
 }
 
-// ENHANCED: processSystemField with consistent empty string handling
+// ENHANCED: processSystemField with consistent empty string handling and WARN logging
 func (p *Processor) processSystemField(systemField string, msgData map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext, kvCtx *KVContext) string {
     // Try KV context first (for @kv.bucket.key fields) - WITH VARIABLE RESOLUTION!
     if strings.HasPrefix(systemField, "@kv") && kvCtx != nil {
@@ -283,8 +283,14 @@ func (p *Processor) processSystemField(systemField string, msgData map[string]in
             p.logger.Debug("processed KV field", "field", systemField, "value", strValue)
             return strValue
         }
-        // ENHANCED: Return empty string for failed KV lookups
-        p.logger.Debug("KV field not found, returning empty string", "field", systemField)
+        // UPDATED: Changed from DEBUG to WARN for better visibility
+        bucket, key := p.extractBucketAndKey(systemField)
+        p.logger.Warn("KV field not found in template - substituting empty string",
+            "field", systemField,
+            "bucket", bucket,
+            "key", key,
+            "availableBuckets", kvCtx.GetAllBuckets(),
+            "impact", "Template variable will be empty in output")
         return ""
     }
     
@@ -325,6 +331,28 @@ func (p *Processor) processMessageVariable(fieldPath string, data map[string]int
     strValue := p.convertToString(value)
     p.logger.Debug("processed message field", "path", fieldPath, "value", strValue)
     return strValue
+}
+
+// extractBucketAndKey is a helper to parse KV field for better logging (same as in evaluator)
+func (p *Processor) extractBucketAndKey(kvField string) (bucket string, key string) {
+    // Format: @kv.bucket.key or @kv.bucket.{var}.path
+    if !strings.HasPrefix(kvField, "@kv.") {
+        return "unknown", "unknown"
+    }
+    
+    parts := strings.Split(kvField[4:], ".") // Remove "@kv."
+    if len(parts) < 2 {
+        return "unknown", "unknown"
+    }
+    
+    bucket = parts[0]
+    // Key might have variables or paths, just return the next part
+    key = parts[1]
+    if len(parts) > 2 {
+        key = key + "..." // Indicate there's more
+    }
+    
+    return bucket, key
 }
 
 // ENHANCED: convertToString with better nil handling for templates

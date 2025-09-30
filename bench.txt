@@ -1,0 +1,39 @@
+?   	rule-router/cmd/rule-router	[no test files]
+?   	rule-router/config	[no test files]
+?   	rule-router/internal/app	[no test files]
+?   	rule-router/internal/broker	[no test files]
+?   	rule-router/internal/handler	[no test files]
+?   	rule-router/internal/logger	[no test files]
+?   	rule-router/internal/metrics	[no test files]
+goos: linux
+goarch: amd64
+pkg: rule-router/internal/rule
+cpu: Intel(R) Xeon(R) CPU E5-2690 v4 @ 2.60GHz
+BenchmarkEvaluateCondition_Simple-4          	  883464	      1243 ns/op	     640 B/op	       6 allocs/op
+BenchmarkEvaluateCondition_Nested-4          	  640046	      1668 ns/op	     800 B/op	       9 allocs/op
+BenchmarkEvaluateCondition_TimeField-4       	  837454	      1238 ns/op	     640 B/op	       6 allocs/op
+BenchmarkEvaluateConditions_SimpleAnd-4      	  168464	      6551 ns/op	    3331 B/op	      32 allocs/op
+BenchmarkEvaluateConditions_Complex-4        	  115936	     10275 ns/op	    5110 B/op	      52 allocs/op
+BenchmarkPatternMatcher_ExactMatch-4         	245547540	         4.876 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPatternMatcher_SingleWildcard-4     	 7574938	       161.0 ns/op	      48 B/op	       1 allocs/op
+BenchmarkPatternMatcher_GreedyWildcard-4     	 5881002	       199.7 ns/op	      80 B/op	       1 allocs/op
+BenchmarkPatternMatcher_MixedWildcards-4     	 4125937	       286.1 ns/op	     128 B/op	       1 allocs/op
+BenchmarkNewPatternMatcher-4                 	 2055436	       589.9 ns/op	     276 B/op	       5 allocs/op
+BenchmarkProcessTemplate_Simple-4            	  231481	      5022 ns/op	    1166 B/op	      25 allocs/op
+BenchmarkProcessTemplate_Nested-4            	  205546	      5779 ns/op	    1199 B/op	      23 allocs/op
+BenchmarkProcessTemplate_SystemFields-4      	  171674	      6820 ns/op	    1640 B/op	      32 allocs/op
+BenchmarkProcessTemplate_SystemFunctions-4   	   34744	     33702 ns/op	    1247 B/op	      23 allocs/op
+BenchmarkProcessTemplate_Complex-4           	   23408	     50873 ns/op	    5446 B/op	      81 allocs/op
+BenchmarkProcessTemplate_NoVariables-4       	100000000	        11.89 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProcessTemplate_ManyVariables-4     	   57585	     20762 ns/op	    5499 B/op	      97 allocs/op
+BenchmarkSubjectContext_Creation-4           	 5652525	       203.1 ns/op	      96 B/op	       2 allocs/op
+BenchmarkSubjectContext_GetToken-4           	1000000000	         0.4069 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSubjectContext_GetField-4           	16454090	        68.09 ns/op	      16 B/op	       1 allocs/op
+BenchmarkSubjectContext_MultipleFields-4     	 5644695	       212.6 ns/op	      48 B/op	       3 allocs/op
+BenchmarkSubjectContext_LongSubject-4        	 2367044	       511.4 ns/op	     288 B/op	       2 allocs/op
+BenchmarkTimeContext_GetField-4              	86629744	        13.71 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimeContext_MultipleFields-4        	15193627	        76.82 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimeContext_Creation-4              	   74838	     15790 ns/op	    1062 B/op	      12 allocs/op
+BenchmarkTimeContext_GetAllFieldNames-4      	 3215008	       377.8 ns/op	     160 B/op	       1 allocs/op
+PASS
+ok  	rule-router/internal/rule	34.860s

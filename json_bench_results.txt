@@ -1,0 +1,54 @@
+goos: linux
+goarch: amd64
+pkg: rule-router/internal/rule
+cpu: Intel(R) Xeon(R) CPU E5-2690 v4 @ 2.60GHz
+BenchmarkEvaluateCondition_Simple-4          	  884742	      1301 ns/op	     640 B/op	       6 allocs/op
+BenchmarkEvaluateCondition_Nested-4          	  674982	      1737 ns/op	     800 B/op	       9 allocs/op
+BenchmarkEvaluateCondition_TimeField-4       	  834513	      1302 ns/op	     640 B/op	       6 allocs/op
+BenchmarkEvaluateConditions_SimpleAnd-4      	  168369	      6945 ns/op	    3331 B/op	      32 allocs/op
+BenchmarkEvaluateConditions_Complex-4        	  109473	     10925 ns/op	    5110 B/op	      52 allocs/op
+BenchmarkUnmarshal_Small_StdLib-4            	  343204	      3346 ns/op	     392 B/op	      19 allocs/op
+BenchmarkUnmarshal_Small_GoccyJSON-4         	  787942	      1537 ns/op	     288 B/op	      13 allocs/op
+BenchmarkUnmarshal_Medium_StdLib-4           	  115420	     10158 ns/op	    2376 B/op	      61 allocs/op
+BenchmarkUnmarshal_Medium_GoccyJSON-4        	  146581	      8137 ns/op	    2840 B/op	      60 allocs/op
+BenchmarkUnmarshal_Large_StdLib-4            	   39913	     29768 ns/op	    5904 B/op	     173 allocs/op
+BenchmarkUnmarshal_Large_GoccyJSON-4         	   48364	     24648 ns/op	    7922 B/op	     182 allocs/op
+BenchmarkUnmarshal_Array_StdLib-4            	   90981	     13206 ns/op	    3112 B/op	      88 allocs/op
+BenchmarkUnmarshal_Array_GoccyJSON-4         	  114553	     10593 ns/op	    3449 B/op	      84 allocs/op
+BenchmarkMarshal_Small_StdLib-4              	  517959	      2117 ns/op	     384 B/op	      10 allocs/op
+BenchmarkMarshal_Small_GoccyJSON-4           	 1000000	      1051 ns/op	      96 B/op	       1 allocs/op
+BenchmarkMarshal_Medium_StdLib-4             	  185920	      6006 ns/op	    1088 B/op	      30 allocs/op
+BenchmarkMarshal_Medium_GoccyJSON-4          	  349405	      3329 ns/op	     462 B/op	       2 allocs/op
+BenchmarkNestedAccess_TwoLevel-4             	56654992	        21.14 ns/op	       0 B/op	       0 allocs/op
+BenchmarkNestedAccess_ThreeLevel-4           	31737783	        37.52 ns/op	       0 B/op	       0 allocs/op
+BenchmarkNestedAccess_FourLevel-4            	15540235	        76.95 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFullPipeline_Small-4                	  151352	      7873 ns/op	    1955 B/op	      41 allocs/op
+BenchmarkFullPipeline_Medium-4               	   65168	     18260 ns/op	    5073 B/op	      97 allocs/op
+BenchmarkFullPipeline_Large-4                	   32732	     36814 ns/op	   10245 B/op	     219 allocs/op
+BenchmarkUnmarshal_Invalid_StdLib-4          	 1793475	       670.5 ns/op	     264 B/op	       7 allocs/op
+BenchmarkUnmarshal_Invalid_GoccyJSON-4       	 1625661	       736.2 ns/op	     192 B/op	       6 allocs/op
+BenchmarkRealWorld_IoTSensorBurst-4          	    1531	    764765 ns/op	  184150 B/op	    4000 allocs/op
+BenchmarkRealWorld_MixedWorkload-4           	     541	   2212712 ns/op	  216307 B/op	    4551 allocs/op
+BenchmarkPatternMatcher_ExactMatch-4         	245645930	         4.877 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPatternMatcher_SingleWildcard-4     	 7006346	       165.8 ns/op	      48 B/op	       1 allocs/op
+BenchmarkPatternMatcher_GreedyWildcard-4     	 5784462	       209.7 ns/op	      80 B/op	       1 allocs/op
+BenchmarkPatternMatcher_MixedWildcards-4     	 3972471	       310.5 ns/op	     128 B/op	       1 allocs/op
+BenchmarkNewPatternMatcher-4                 	 1892554	       629.0 ns/op	     276 B/op	       5 allocs/op
+BenchmarkProcessTemplate_Simple-4            	  223506	      5229 ns/op	    1170 B/op	      25 allocs/op
+BenchmarkProcessTemplate_Nested-4            	  198668	      5874 ns/op	    1201 B/op	      23 allocs/op
+BenchmarkProcessTemplate_SystemFields-4      	  163718	      7067 ns/op	    1645 B/op	      32 allocs/op
+BenchmarkProcessTemplate_SystemFunctions-4   	   35005	     34009 ns/op	    1246 B/op	      23 allocs/op
+BenchmarkProcessTemplate_Complex-4           	   23172	     51632 ns/op	    5463 B/op	      81 allocs/op
+BenchmarkProcessTemplate_NoVariables-4       	100000000	        11.89 ns/op	       0 B/op	       0 allocs/op
+BenchmarkProcessTemplate_ManyVariables-4     	   55297	     21686 ns/op	    5514 B/op	      97 allocs/op
+BenchmarkSubjectContext_Creation-4           	 5392006	       221.6 ns/op	      96 B/op	       2 allocs/op
+BenchmarkSubjectContext_GetToken-4           	1000000000	         0.4057 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSubjectContext_GetField-4           	16015669	        69.53 ns/op	      16 B/op	       1 allocs/op
+BenchmarkSubjectContext_MultipleFields-4     	 5510602	       217.6 ns/op	      48 B/op	       3 allocs/op
+BenchmarkSubjectContext_LongSubject-4        	 2130423	       570.3 ns/op	     288 B/op	       2 allocs/op
+BenchmarkTimeContext_GetField-4              	87633151	        13.68 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimeContext_MultipleFields-4        	15364192	        84.20 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimeContext_Creation-4              	   74503	     15944 ns/op	    1062 B/op	      12 allocs/op
+BenchmarkTimeContext_GetAllFieldNames-4      	 2932830	       408.6 ns/op	     160 B/op	       1 allocs/op
+PASS
+ok  	rule-router/internal/rule	65.334s

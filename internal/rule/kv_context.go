@@ -132,6 +132,7 @@ func (kv *KVContext) GetFieldWithContext(field string, msgData map[string]interf
 }
 
 // getFromNATSKV performs direct NATS KV lookup (fallback when cache misses)
+// UPDATED: Enhanced error handling with WARN for missing keys, ERROR for infrastructure issues
 func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (interface{}, bool) {
 	// Check if the bucket exists in our configured stores
 	store, exists := kv.stores[bucket]
@@ -143,14 +144,23 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
 	// Perform the KV lookup
 	entry, err := store.Get(key)
 	if err != nil {
-		// Handle key not found (this is a normal case, not an error)
+		// UPDATED: Differentiate between key not found (WARN) and other errors (ERROR)
 		if err == watermillNats.ErrKeyNotFound {
-			kv.logger.Debug("KV key not found in NATS", "bucket", bucket, "key", key)
+			kv.logger.Warn("KV key does not exist in bucket",
+				"bucket", bucket,
+				"key", key,
+				"hasJSONPath", len(jsonPath) > 0,
+				"impact", "Rule will use empty value")
 			return nil, false
 		}
 
-		// Handle other errors (network issues, etc.)
-		kv.logger.Debug("NATS KV lookup failed", "bucket", bucket, "key", key, "error", err)
+		// All other errors are infrastructure problems (network, permissions, etc.)
+		kv.logger.Error("NATS KV lookup failed - infrastructure issue",
+			"bucket", bucket,
+			"key", key,
+			"error", err,
+			"errorType", fmt.Sprintf("%T", err),
+			"impact", "Rule will use empty value - investigate NATS connectivity/permissions")
 		return nil, false
 	}
 

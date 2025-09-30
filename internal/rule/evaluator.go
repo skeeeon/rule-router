@@ -90,15 +90,14 @@ func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{
                     "expectedValue", cond.Value,
                     "actualKVValue", value)
             } else {
-                // ENHANCED: More detailed logging for KV failures
-                p.logger.Debug("KV field not found in condition evaluation",
+                // UPDATED: Changed from DEBUG to WARN with more context
+                bucket, key := p.extractBucketAndKey(cond.Field)
+                p.logger.Warn("KV field not found in rule condition - condition will fail",
                     "field", cond.Field,
-                    "availableBuckets", func() []string {
-                        if kvCtx != nil {
-                            return kvCtx.GetAllBuckets()
-                        }
-                        return []string{}
-                    }())
+                    "bucket", bucket,
+                    "key", key,
+                    "availableBuckets", kvCtx.GetAllBuckets(),
+                    "impact", "Rule condition evaluates to false")
                 // For conditions, missing KV values should cause condition to fail
                 return false
             }
