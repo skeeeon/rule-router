@@ -33,6 +33,10 @@ type NATSBroker struct {
 	jetStreamCtx    watermillNats.JetStreamContext
 	kvStores        map[string]watermillNats.KeyValue  // bucket name -> KV store
 	
+	// FIXED: Store NATS options for reuse in publisher/subscriber creation
+	// Watermill creates separate connections for publisher/subscriber, so they need auth options too
+	natsOptions     []watermillNats.Option
+	
 	// Local KV cache for performance optimization
 	localKVCache    *rule.LocalKVCache
 	kvSubscriptions []*watermillNats.Subscription     // KV change stream subscriptions
@@ -65,7 +69,7 @@ func NewNATSBroker(cfg *config.Config, log *logger.Logger, metrics *metrics.Metr
 		}
 	}
 
-	// Initialize publisher and subscriber that use the existing connection
+	// Initialize publisher and subscriber that use the stored NATS options
 	if err := broker.initializePublisher(); err != nil {
 		return nil, fmt.Errorf("failed to initialize NATS publisher: %w", err)
 	}
@@ -293,13 +297,17 @@ func (b *NATSBroker) GetLocalKVCache() *rule.LocalKVCache {
 func (b *NATSBroker) initializeNATSConnection() error {
 	b.logger.Info("establishing NATS connection", "urls", b.config.NATS.URLs)
 
-	// Configure NATS connection options
+	// Configure NATS connection options WITH authentication
 	natsOptions, err := b.buildNATSOptions()
 	if err != nil {
 		return fmt.Errorf("failed to build NATS options: %w", err)
 	}
 
-	// Connect to NATS
+	// FIXED: Store the options for reuse in publisher/subscriber creation
+	// This ensures all Watermill components use the same authentication
+	b.natsOptions = natsOptions
+
+	// Connect to NATS with authenticated options
 	b.natsConn, err = watermillNats.Connect(b.getFirstNATSURL(), natsOptions...)
 	if err != nil {
 		return fmt.Errorf("failed to connect to NATS: %w", err)
@@ -354,7 +362,7 @@ func (b *NATSBroker) initializeKVStores() error {
 	return nil
 }
 
-// initializePublisher creates a publisher using the existing NATS connection
+// initializePublisher creates a publisher using the stored NATS authentication options
 func (b *NATSBroker) initializePublisher() error {
 	b.logger.Info("initializing NATS publisher")
 
@@ -370,7 +378,7 @@ func (b *NATSBroker) initializePublisher() error {
 
 	publisherConfig := nats.PublisherConfig{
 		URL:         b.getFirstNATSURL(),
-		NatsOptions: []watermillNats.Option{}, // Options already applied to connection
+		NatsOptions: b.natsOptions, // FIXED: Use stored auth options
 		JetStream:   jsConfig,
 		Marshaler:   &nats.NATSMarshaler{},
 	}
@@ -385,7 +393,7 @@ func (b *NATSBroker) initializePublisher() error {
 	return nil
 }
 
-// initializeSubscriber creates a subscriber using the existing NATS connection
+// initializeSubscriber creates a subscriber using the stored NATS authentication options
 func (b *NATSBroker) initializeSubscriber() error {
 	b.logger.Info("initializing NATS subscriber", "subscriberCount", b.config.Watermill.NATS.SubscriberCount)
 
@@ -406,7 +414,7 @@ func (b *NATSBroker) initializeSubscriber() error {
 		QueueGroupPrefix: "rule-router-workers",  // Consistent naming
 		SubscribersCount: b.config.Watermill.NATS.SubscriberCount,
 		AckWaitTimeout:   b.config.Watermill.NATS.AckWaitTimeout,
-		NatsOptions:      []watermillNats.Option{}, // Options already applied to connection
+		NatsOptions:      b.natsOptions, // FIXED: Use stored auth options
 		JetStream:        jsConfig,
 		Unmarshaler:      &nats.NATSMarshaler{},
 	}
