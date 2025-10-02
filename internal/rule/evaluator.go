@@ -135,41 +135,23 @@ func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{
             return false
         }
     } else {
-        // Regular message field - supports nested paths
-        if strings.Contains(cond.Field, ".") {
-            // Nested field access using dot notation
-            path := strings.Split(cond.Field, ".")
-            var err error
-            value, err = p.getValueFromPath(msg, path)
-            if err != nil {
-                p.logger.Debug("nested field not found in message",
-                    "field", cond.Field,
-                    "path", path,
-                    "error", err,
-                    "availableTopLevelFields", getMapKeys(msg))
-                return false
-            }
-            p.logger.Debug("evaluating nested message field condition",
+        // Regular message field - NOW SUPPORTS ARRAYS via shared traverser!
+        path := strings.Split(cond.Field, ".")
+        value, err := TraverseJSONPath(msg, path)
+        if err != nil {
+            p.logger.Debug("field not found in message",
                 "field", cond.Field,
                 "path", path,
-                "operator", cond.Operator,
-                "expectedValue", cond.Value,
-                "actualValue", value)
-        } else {
-            // Direct field access (backward compatibility)
-            value, ok = msg[cond.Field]
-            if !ok {
-                p.logger.Debug("field not found in message",
-                    "field", cond.Field,
-                    "availableFields", getMapKeys(msg))
-                return false
-            }
-            p.logger.Debug("evaluating message field condition",
-                "field", cond.Field,
-                "operator", cond.Operator,
-                "expectedValue", cond.Value,
-                "actualValue", value)
+                "error", err,
+                "availableTopLevelFields", getMapKeys(msg))
+            return false
         }
+        p.logger.Debug("evaluating message field condition",
+            "field", cond.Field,
+            "path", path,
+            "operator", cond.Operator,
+            "expectedValue", cond.Value,
+            "actualValue", value)
     }
 
     var result bool
@@ -330,6 +312,8 @@ func (p *Processor) compareNumeric(a, b interface{}, op string) bool {
         return false
     }
 }
+
+// REMOVED getValueFromPath - now using shared TraverseJSONPath from json_traversal.go
 
 func getMapKeys(m map[string]interface{}) []string {
     keys := make([]string, 0, len(m))

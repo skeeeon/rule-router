@@ -24,6 +24,7 @@ type KVContext struct {
 	stores     map[string]watermillNats.KeyValue
 	logger     *logger.Logger
 	localCache *LocalKVCache  // Local cache for performance optimization
+	traverser  *JSONPathTraverser // Shared JSON path traversal
 }
 
 // NewKVContext creates a new KV context with the provided KV stores and optional local cache
@@ -37,6 +38,7 @@ func NewKVContext(stores map[string]watermillNats.KeyValue, logger *logger.Logge
 		stores:     make(map[string]watermillNats.KeyValue),
 		logger:     logger,
 		localCache: localCache,
+		traverser:  NewJSONPathTraverser(), // Use shared traverser
 	}
 
 	// Copy the stores map to avoid external modification
@@ -78,9 +80,9 @@ func (kv *KVContext) GetField(field string) (interface{}, bool) {
 		if cachedValue, found := kv.localCache.Get(bucket, key); found {
 			kv.logger.Debug("KV cache hit", "bucket", bucket, "key", key)
 			
-			// Process JSON path if needed
+			// Process JSON path if needed using shared traverser
 			if len(jsonPath) > 0 {
-				finalValue, err := kv.traverseJSONPathOnParsed(cachedValue, jsonPath)
+				finalValue, err := kv.traverser.TraversePath(cachedValue, jsonPath)
 				if err != nil {
 					kv.logger.Debug("JSON path traversal failed on cached value", 
 						"bucket", bucket, "key", key, "jsonPath", jsonPath, "error", err)
@@ -174,8 +176,17 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
 		return value, true
 	}
 
-	// Parse as JSON and traverse the path
-	value, err := kv.traverseJSONPath(rawValue, jsonPath)
+	// Parse as JSON and traverse the path using shared traverser
+	var jsonObj interface{}
+	if err := json.Unmarshal(rawValue, &jsonObj); err != nil {
+		kv.logger.Debug("failed to parse JSON from KV", 
+			"bucket", bucket, 
+			"key", key, 
+			"error", err)
+		return nil, false
+	}
+
+	value, err := kv.traverser.TraversePath(jsonObj, jsonPath)
 	if err != nil {
 		kv.logger.Debug("JSON path traversal failed on NATS value", 
 			"bucket", bucket, 
@@ -191,42 +202,6 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
 		"jsonPath", jsonPath, 
 		"value", value)
 	return value, true
-}
-
-// traverseJSONPathOnParsed traverses JSON path on already-parsed cached values
-// This avoids re-parsing JSON that's already been parsed during cache population
-func (kv *KVContext) traverseJSONPathOnParsed(parsedValue interface{}, path []string) (interface{}, error) {
-	current := parsedValue
-	
-	for i, segment := range path {
-		kv.logger.Debug("traversing cached JSON path segment", 
-			"segment", segment, 
-			"position", i, 
-			"totalSegments", len(path))
-
-		switch v := current.(type) {
-		case map[string]interface{}:
-			var ok bool
-			current, ok = v[segment]
-			if !ok {
-				return nil, fmt.Errorf("JSON path segment not found: %s", segment)
-			}
-		case []interface{}:
-			// Handle array access if the segment is a number
-			index, err := strconv.Atoi(segment)
-			if err != nil {
-				return nil, fmt.Errorf("invalid array index '%s': %w", segment, err)
-			}
-			if index < 0 || index >= len(v) {
-				return nil, fmt.Errorf("array index %d out of bounds (length: %d)", index, len(v))
-			}
-			current = v[index]
-		default:
-			return nil, fmt.Errorf("cannot traverse into non-object/non-array at path segment: %s", segment)
-		}
-	}
-
-	return current, nil
 }
 
 // parseKVFieldWithPath parses a KV field specification with optional JSON path
@@ -250,7 +225,7 @@ func (kv *KVContext) parseKVFieldWithPath(field string) (bucket, key string, jso
 	bucket = parts[0]
 	key = parts[1]
 	
-	// Everything after bucket.key is the JSON path
+	// Everything after bucket.key is the JSON path (including array indices)
 	if len(parts) > 2 {
 		jsonPath = parts[2:]
 	}
@@ -264,18 +239,6 @@ func (kv *KVContext) parseKVFieldWithPath(field string) (bucket, key string, jso
 	}
 
 	return bucket, key, jsonPath, nil
-}
-
-// traverseJSONPath parses JSON and traverses the specified path (for NATS KV fallback)
-func (kv *KVContext) traverseJSONPath(jsonData []byte, path []string) (interface{}, error) {
-	// Parse the JSON data
-	var jsonObj interface{}
-	if err := json.Unmarshal(jsonData, &jsonObj); err != nil {
-		return nil, fmt.Errorf("failed to parse JSON: %w", err)
-	}
-
-	// Traverse the path using the same logic as cached values
-	return kv.traverseJSONPathOnParsed(jsonObj, path)
 }
 
 // resolveVariablesEnhanced replaces {variable} placeholders with better error handling
@@ -324,42 +287,13 @@ func (kv *KVContext) resolveVariable(varName string, msgData map[string]interfac
 		return nil, false
 	}
 
-	// Regular message field (supports nested paths)
-	if strings.Contains(varName, ".") {
-		// Nested field access
-		path := strings.Split(varName, ".")
-		return kv.getValueFromPath(msgData, path)
-	} else {
-		// Direct field access
-		value, exists := msgData[varName]
-		return value, exists
+	// Regular message field - use shared traverser for consistent behavior
+	path := strings.Split(varName, ".")
+	value, err := kv.traverser.TraversePath(msgData, path)
+	if err != nil {
+		return nil, false
 	}
-}
-
-// getValueFromPath traverses nested map structure
-func (kv *KVContext) getValueFromPath(data map[string]interface{}, path []string) (interface{}, bool) {
-	var current interface{} = data
-
-	for _, key := range path {
-		switch v := current.(type) {
-		case map[string]interface{}:
-			var ok bool
-			current, ok = v[key]
-			if !ok {
-				return nil, false
-			}
-		case map[interface{}]interface{}:
-			var ok bool
-			current, ok = v[key]
-			if !ok {
-				return nil, false
-			}
-		default:
-			return nil, false
-		}
-	}
-
-	return current, true
+	return value, true
 }
 
 // convertValue converts raw KV store bytes to appropriate Go types
@@ -456,7 +390,8 @@ func (kv *KVContext) GetStats() map[string]interface{} {
 		"bucket_names":         kv.getBucketNames(),
 		"initialized":          true,
 		"json_path_support":    true,
-		"variable_resolution":  "enhanced", // Indicates new error handling
+		"array_access_support": true, // NEW: Now supports array access
+		"variable_resolution":  "enhanced",
 	}
 
 	// Add local cache stats if available

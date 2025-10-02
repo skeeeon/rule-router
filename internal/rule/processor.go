@@ -32,6 +32,7 @@ type Processor struct {
     logger       *logger.Logger
     metrics      *metrics.Metrics
     stats        ProcessorStats
+    traverser    *JSONPathTraverser // Shared JSON path traverser
 }
 
 type ProcessorStats struct {
@@ -47,6 +48,7 @@ func NewProcessor(log *logger.Logger, metrics *metrics.Metrics, kvCtx *KVContext
         kvContext:    kvCtx,  // Store KV context (can be nil if KV is disabled)
         logger:       log,
         metrics:      metrics,
+        traverser:    NewJSONPathTraverser(), // Use shared traverser
     }
 
     if kvCtx != nil {
@@ -241,7 +243,7 @@ func (p *Processor) processTemplate(template string, data map[string]interface{}
                 return p.processSystemField("@"+varContent, data, timeCtx, subjectCtx, kvCtx)
             }
         } else {
-            // Message variable: temperature, sensor.location
+            // Message variable: temperature, sensor.location, readings.0.value (NOW WITH ARRAYS!)
             return p.processMessageVariable(varContent, data)
         }
     })
@@ -318,11 +320,12 @@ func (p *Processor) processSystemField(systemField string, msgData map[string]in
     return ""
 }
 
-// ENHANCED: processMessageVariable with empty string handling
+// ENHANCED: processMessageVariable with array support via shared traverser
 func (p *Processor) processMessageVariable(fieldPath string, data map[string]interface{}) string {
     path := strings.Split(fieldPath, ".")
     
-    value, err := p.getValueFromPath(data, path)
+    // Use shared traverser for consistent array support!
+    value, err := p.traverser.TraversePath(data, path)
     if err != nil {
         p.logger.Debug("message field not found, returning empty string", "path", fieldPath, "error", err)
         return "" // ENHANCED: Return empty string instead of original template
@@ -387,32 +390,7 @@ func (p *Processor) convertToString(value interface{}) string {
     }
 }
 
-// getValueFromPath traverses a nested map using a path array
-// This is the same logic used in template processing for consistency
-func (p *Processor) getValueFromPath(data map[string]interface{}, path []string) (interface{}, error) {
-    var current interface{} = data
-
-    for _, key := range path {
-        switch v := current.(type) {
-        case map[string]interface{}:
-            var ok bool
-            current, ok = v[key]
-            if !ok {
-                return nil, fmt.Errorf("key not found: %s", key)
-            }
-        case map[interface{}]interface{}:
-            var ok bool
-            current, ok = v[key]
-            if !ok {
-                return nil, fmt.Errorf("key not found: %s", key)
-            }
-        default:
-            return nil, fmt.Errorf("invalid path: %s is not a map", key)
-        }
-    }
-
-    return current, nil
-}
+// REMOVED getValueFromPath - now using shared traverser.TraversePath
 
 func (p *Processor) GetStats() ProcessorStats {
     stats := ProcessorStats{
