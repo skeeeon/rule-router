@@ -17,12 +17,13 @@ type Metrics struct {
 	ruleMatchesTotal prometheus.Counter
 	rulesActive      prometheus.Gauge
 
-	// NATS metrics (renamed from MQTT for clarity)
+	// NATS metrics
 	natsConnectionStatus prometheus.Gauge
-	natsReconnectsTotal prometheus.Counter
+	natsReconnectsTotal  prometheus.Counter
 
 	// Action metrics
-	actionsTotal *prometheus.CounterVec
+	actionsTotal          *prometheus.CounterVec
+	actionPublishFailures prometheus.Counter
 
 	// Template metrics
 	templateOpsTotal *prometheus.CounterVec
@@ -85,6 +86,12 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			},
 			[]string{"status"},
 		),
+		actionPublishFailures: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "action_publish_failures_total",
+				Help: "Total number of action publish failures (before retry)",
+			},
+		),
 		templateOpsTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "template_operations_total",
@@ -116,6 +123,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.natsConnectionStatus,
 		m.natsReconnectsTotal,
 		m.actionsTotal,
+		m.actionPublishFailures,
 		m.templateOpsTotal,
 		m.processGoroutines,
 		m.processMemoryBytes,
@@ -174,6 +182,11 @@ func (m *Metrics) IncActionsTotal(status string) {
 	m.actionsTotal.WithLabelValues(status).Inc()
 }
 
+// IncActionPublishFailures increments the action publish failures counter
+func (m *Metrics) IncActionPublishFailures() {
+	m.actionPublishFailures.Inc()
+}
+
 // IncTemplateOpsTotal increments the template operations counter for a given status
 func (m *Metrics) IncTemplateOpsTotal(status string) {
 	m.templateOpsTotal.WithLabelValues(status).Inc()
@@ -186,7 +199,6 @@ func (m *Metrics) SetProcessMetrics(goroutines, memoryBytes float64) {
 }
 
 // Legacy compatibility methods for MQTT metrics (now mapping to NATS)
-// Keeping these to avoid breaking existing code
 
 // SetMQTTConnectionStatus sets the NATS connection status (legacy method)
 func (m *Metrics) SetMQTTConnectionStatus(connected bool) {

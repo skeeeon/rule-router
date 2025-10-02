@@ -9,7 +9,7 @@ import (
 	"time"
 
 	watermillNats "github.com/nats-io/nats.go"
-	"rule-router/internal/handler"
+	"rule-router/config"
 	"rule-router/internal/logger"
 	"rule-router/internal/metrics"
 	"rule-router/internal/rule"
@@ -21,6 +21,7 @@ type SubscriptionManager struct {
 	logger        *logger.Logger
 	metrics       *metrics.Metrics
 	processor     *rule.Processor
+	config        *config.ConsumerConfig
 	subscriptions []*Subscription
 	wg            sync.WaitGroup
 	mu            sync.RWMutex
@@ -32,10 +33,10 @@ type Subscription struct {
 	ConsumerName  string
 	StreamName    string
 	Sub           *watermillNats.Subscription
-	Handler       *handler.MessageHandler
 	Workers       int // Number of concurrent workers
 	cancel        context.CancelFunc
 	logger        *logger.Logger
+	config        *config.ConsumerConfig
 }
 
 // NewSubscriptionManager creates a new subscription manager
@@ -44,12 +45,14 @@ func NewSubscriptionManager(
 	processor *rule.Processor,
 	logger *logger.Logger,
 	metrics *metrics.Metrics,
+	consumerConfig *config.ConsumerConfig,
 ) *SubscriptionManager {
 	return &SubscriptionManager{
 		jsCtx:         jsCtx,
 		logger:        logger,
 		metrics:       metrics,
 		processor:     processor,
+		config:        consumerConfig,
 		subscriptions: make([]*Subscription, 0),
 	}
 }
@@ -81,17 +84,14 @@ func (sm *SubscriptionManager) AddSubscription(
 		return fmt.Errorf("failed to create pull subscription for %s: %w", subject, err)
 	}
 
-	// Create message handler for this subject
-	messageHandler := handler.NewMessageHandler(sm.processor, sm.logger, sm.metrics)
-
 	subscription := &Subscription{
 		Subject:      subject,
 		ConsumerName: consumerName,
 		StreamName:   streamName,
 		Sub:          sub,
-		Handler:      messageHandler,
 		Workers:      workers,
 		logger:       sm.logger,
+		config:       sm.config,
 	}
 
 	sm.subscriptions = append(sm.subscriptions, subscription)
@@ -99,7 +99,9 @@ func (sm *SubscriptionManager) AddSubscription(
 	sm.logger.Info("pull subscription created",
 		"subject", subject,
 		"stream", streamName,
-		"consumer", consumerName)
+		"consumer", consumerName,
+		"fetchBatchSize", sm.config.FetchBatchSize,
+		"fetchTimeout", sm.config.FetchTimeout)
 
 	return nil
 }
@@ -140,7 +142,8 @@ func (sm *SubscriptionManager) worker(ctx context.Context, sub *Subscription, wo
 
 	sub.logger.Debug("worker started",
 		"subject", sub.Subject,
-		"workerID", workerID)
+		"workerID", workerID,
+		"fetchBatchSize", sub.config.FetchBatchSize)
 
 	for {
 		select {
@@ -150,8 +153,11 @@ func (sm *SubscriptionManager) worker(ctx context.Context, sub *Subscription, wo
 				"workerID", workerID)
 			return
 		default:
-			// Fetch messages from JetStream (batch of 1 for simplicity)
-			msgs, err := sub.Sub.Fetch(1, watermillNats.MaxWait(5*time.Second))
+			// Fetch messages from JetStream using configured batch size
+			msgs, err := sub.Sub.Fetch(
+				sub.config.FetchBatchSize,
+				watermillNats.MaxWait(sub.config.FetchTimeout),
+			)
 			if err != nil {
 				// Timeout is normal when no messages available
 				if err == watermillNats.ErrTimeout {
@@ -166,7 +172,7 @@ func (sm *SubscriptionManager) worker(ctx context.Context, sub *Subscription, wo
 				continue
 			}
 
-			// Process each message
+			// Process each message in the batch
 			for _, msg := range msgs {
 				if err := sm.processMessage(ctx, sub, msg); err != nil {
 					sub.logger.Error("failed to process message",
@@ -193,7 +199,7 @@ func (sm *SubscriptionManager) worker(ctx context.Context, sub *Subscription, wo
 	}
 }
 
-// processMessage handles a single message through the middleware and rule engine
+// processMessage handles a single message through the rule engine
 func (sm *SubscriptionManager) processMessage(ctx context.Context, sub *Subscription, msg *watermillNats.Msg) error {
 	start := time.Now()
 
@@ -212,10 +218,10 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, sub *Subscrip
 		return fmt.Errorf("rule processing failed: %w", err)
 	}
 
-	// Publish actions
+	// Publish actions with retry logic
 	for _, action := range actions {
-		if err := sm.publishAction(ctx, action); err != nil {
-			sub.logger.Error("failed to publish action",
+		if err := sm.publishActionWithRetry(ctx, action); err != nil {
+			sub.logger.Error("failed to publish action after retries",
 				"actionSubject", action.Subject,
 				"error", err)
 			return fmt.Errorf("failed to publish action: %w", err)
@@ -236,19 +242,74 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, sub *Subscrip
 	return nil
 }
 
-// publishAction publishes an action message to NATS
-func (sm *SubscriptionManager) publishAction(ctx context.Context, action *rule.Action) error {
-	sm.logger.Debug("publishing action",
-		"subject", action.Subject,
-		"payloadSize", len(action.Payload))
-
-	// Publish directly to JetStream
-	_, err := sm.jsCtx.Publish(action.Subject, []byte(action.Payload))
-	if err != nil {
-		return fmt.Errorf("failed to publish to %s: %w", action.Subject, err)
+// publishActionWithRetry publishes an action with exponential backoff retry
+func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, action *rule.Action) error {
+	maxRetries := 3
+	baseDelay := 100 * time.Millisecond
+	
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Check context cancellation
+		if ctx.Err() != nil {
+			return fmt.Errorf("context cancelled: %w", ctx.Err())
+		}
+		
+		// Attempt to publish
+		_, err := sm.jsCtx.Publish(action.Subject, []byte(action.Payload))
+		if err == nil {
+			// Success
+			if attempt > 0 {
+				sm.logger.Info("action published after retry",
+					"subject", action.Subject,
+					"attempts", attempt+1)
+			} else {
+				sm.logger.Debug("action published",
+					"subject", action.Subject,
+					"payloadSize", len(action.Payload))
+			}
+			return nil
+		}
+		
+		lastErr = err
+		
+		// Log the failure
+		sm.logger.Warn("action publish failed, will retry",
+			"attempt", attempt+1,
+			"maxRetries", maxRetries,
+			"subject", action.Subject,
+			"error", err)
+		
+		// Update failure metrics
+		if sm.metrics != nil {
+			sm.metrics.IncActionPublishFailures()
+		}
+		
+		// Last attempt - don't sleep
+		if attempt == maxRetries-1 {
+			sm.logger.Error("action publish failed after all retries",
+				"subject", action.Subject,
+				"attempts", maxRetries,
+				"error", lastErr)
+			break
+		}
+		
+		// Exponential backoff: 100ms, 200ms, 400ms
+		delay := baseDelay * time.Duration(1<<attempt)
+		
+		sm.logger.Debug("backing off before retry",
+			"attempt", attempt+1,
+			"delay", delay)
+		
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled during retry backoff: %w", ctx.Err())
+		case <-time.After(delay):
+			// Continue to next retry
+		}
 	}
-
-	return nil
+	
+	// All retries exhausted
+	return fmt.Errorf("failed to publish after %d attempts: %w", maxRetries, lastErr)
 }
 
 // Stop gracefully shuts down all subscriptions

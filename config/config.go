@@ -14,11 +14,10 @@ import (
 )
 
 type Config struct {
-	NATS       NATSConfig      `json:"nats" yaml:"nats"`
-	Logging    LogConfig       `json:"logging" yaml:"logging"`
-	Metrics    MetricsConfig   `json:"metrics" yaml:"metrics"`
-	Watermill  WatermillConfig `json:"watermill" yaml:"watermill"`
-	KV         KVConfig        `json:"kv" yaml:"kv"`
+	NATS    NATSConfig    `json:"nats" yaml:"nats"`
+	Logging LogConfig     `json:"logging" yaml:"logging"`
+	Metrics MetricsConfig `json:"metrics" yaml:"metrics"`
+	KV      KVConfig      `json:"kv" yaml:"kv"`
 }
 
 type NATSConfig struct {
@@ -38,34 +37,35 @@ type NATSConfig struct {
 		CAFile   string `json:"caFile" yaml:"caFile"`
 		Insecure bool   `json:"insecure" yaml:"insecure"` // Skip certificate verification
 	} `json:"tls" yaml:"tls"`
+	
+	// JetStream consumer configuration
+	Consumers ConsumerConfig `json:"consumers" yaml:"consumers"`
+	
+	// NATS connection behavior
+	Connection ConnectionConfig `json:"connection" yaml:"connection"`
 }
 
-type WatermillConfig struct {
-	// NATS JetStream configuration
-	NATS struct {
-		MaxReconnects    int           `json:"maxReconnects" yaml:"maxReconnects"`
-		ReconnectWait    time.Duration `json:"reconnectWait" yaml:"reconnectWait"`
-		PublishAsync     bool          `json:"publishAsync" yaml:"publishAsync"`
-		MaxPendingAsync  int           `json:"maxPendingAsync" yaml:"maxPendingAsync"`
-		SubscriberCount  int           `json:"subscriberCount" yaml:"subscriberCount"`
-		AckWaitTimeout   time.Duration `json:"ackWaitTimeout" yaml:"ackWaitTimeout"`
-		MaxDeliver       int           `json:"maxDeliver" yaml:"maxDeliver"`
-		WriteBufferSize  int           `json:"writeBufferSize" yaml:"writeBufferSize"`
-		ReconnectBufSize int           `json:"reconnectBufSize" yaml:"reconnectBufSize"`
-	} `json:"nats" yaml:"nats"`
+// ConsumerConfig defines JetStream consumer behavior and performance settings
+type ConsumerConfig struct {
+	// Performance tuning
+	SubscriberCount int           `json:"subscriberCount" yaml:"subscriberCount"` // Concurrent workers per subscription
+	FetchBatchSize  int           `json:"fetchBatchSize" yaml:"fetchBatchSize"`   // Messages to fetch per pull request
+	FetchTimeout    time.Duration `json:"fetchTimeout" yaml:"fetchTimeout"`       // Max wait time when fetching messages
+	MaxAckPending   int           `json:"maxAckPending" yaml:"maxAckPending"`     // Max unacknowledged messages
 	
-	// Router configuration
-	Router struct {
-		CloseTimeout time.Duration `json:"closeTimeout" yaml:"closeTimeout"`
-	} `json:"router" yaml:"router"`
+	// Reliability settings
+	AckWaitTimeout time.Duration `json:"ackWaitTimeout" yaml:"ackWaitTimeout"` // Time to wait for ack before redelivery
+	MaxDeliver     int           `json:"maxDeliver" yaml:"maxDeliver"`         // Max redelivery attempts
 	
-	// Middleware configuration
-	Middleware struct {
-		RetryMaxAttempts int           `json:"retryMaxAttempts" yaml:"retryMaxAttempts"`
-		RetryInterval    time.Duration `json:"retryInterval" yaml:"retryInterval"`
-		MetricsEnabled   bool          `json:"metricsEnabled" yaml:"metricsEnabled"`
-		TracingEnabled   bool          `json:"tracingEnabled" yaml:"tracingEnabled"`
-	} `json:"middleware" yaml:"middleware"`
+	// Delivery behavior
+	DeliverPolicy string `json:"deliverPolicy" yaml:"deliverPolicy"` // all, new, last, by_start_time, by_start_sequence
+	ReplayPolicy  string `json:"replayPolicy" yaml:"replayPolicy"`   // instant, original
+}
+
+// ConnectionConfig defines NATS connection behavior
+type ConnectionConfig struct {
+	MaxReconnects int           `json:"maxReconnects" yaml:"maxReconnects"` // -1 for unlimited
+	ReconnectWait time.Duration `json:"reconnectWait" yaml:"reconnectWait"` // Wait time between reconnect attempts
 }
 
 // KVConfig configures NATS Key-Value store access with local caching support
@@ -166,56 +166,43 @@ func setDefaults(cfg *Config) {
 		cfg.NATS.URLs = []string{"nats://localhost:4222"}
 	}
 
-	// Watermill NATS defaults
-	if cfg.Watermill.NATS.MaxReconnects == 0 {
-		cfg.Watermill.NATS.MaxReconnects = -1 // Unlimited
+	// NATS Connection defaults
+	if cfg.NATS.Connection.MaxReconnects == 0 {
+		cfg.NATS.Connection.MaxReconnects = -1 // Unlimited
 	}
-	if cfg.Watermill.NATS.ReconnectWait == 0 {
-		cfg.Watermill.NATS.ReconnectWait = 50 * time.Millisecond
-	}
-	if cfg.Watermill.NATS.MaxPendingAsync == 0 {
-		cfg.Watermill.NATS.MaxPendingAsync = 2000 // High throughput
-	}
-	if cfg.Watermill.NATS.SubscriberCount == 0 {
-		cfg.Watermill.NATS.SubscriberCount = 2
-	}
-	if cfg.Watermill.NATS.AckWaitTimeout == 0 {
-		cfg.Watermill.NATS.AckWaitTimeout = 30 * time.Second
-	}
-	if cfg.Watermill.NATS.MaxDeliver == 0 {
-		cfg.Watermill.NATS.MaxDeliver = 3
-	}
-	if cfg.Watermill.NATS.WriteBufferSize == 0 {
-		cfg.Watermill.NATS.WriteBufferSize = 2 * 1024 * 1024 // 2MB
-	}
-	if cfg.Watermill.NATS.ReconnectBufSize == 0 {
-		cfg.Watermill.NATS.ReconnectBufSize = 16 * 1024 * 1024 // 16MB
-	}
-	cfg.Watermill.NATS.PublishAsync = true // Default to async for performance
-
-	// Router defaults
-	if cfg.Watermill.Router.CloseTimeout == 0 {
-		cfg.Watermill.Router.CloseTimeout = 30 * time.Second
+	if cfg.NATS.Connection.ReconnectWait == 0 {
+		cfg.NATS.Connection.ReconnectWait = 50 * time.Millisecond
 	}
 
-	// Middleware defaults
-	if cfg.Watermill.Middleware.RetryMaxAttempts == 0 {
-		cfg.Watermill.Middleware.RetryMaxAttempts = 3
+	// Consumer defaults
+	if cfg.NATS.Consumers.SubscriberCount == 0 {
+		cfg.NATS.Consumers.SubscriberCount = 2
 	}
-	if cfg.Watermill.Middleware.RetryInterval == 0 {
-		cfg.Watermill.Middleware.RetryInterval = 100 * time.Millisecond
+	if cfg.NATS.Consumers.FetchBatchSize == 0 {
+		cfg.NATS.Consumers.FetchBatchSize = 1 // Conservative default
 	}
-	cfg.Watermill.Middleware.MetricsEnabled = true  // Default enabled
+	if cfg.NATS.Consumers.FetchTimeout == 0 {
+		cfg.NATS.Consumers.FetchTimeout = 5 * time.Second
+	}
+	if cfg.NATS.Consumers.AckWaitTimeout == 0 {
+		cfg.NATS.Consumers.AckWaitTimeout = 30 * time.Second
+	}
+	if cfg.NATS.Consumers.MaxDeliver == 0 {
+		cfg.NATS.Consumers.MaxDeliver = 3
+	}
+	if cfg.NATS.Consumers.MaxAckPending == 0 {
+		cfg.NATS.Consumers.MaxAckPending = 1000
+	}
+	if cfg.NATS.Consumers.DeliverPolicy == "" {
+		cfg.NATS.Consumers.DeliverPolicy = "all"
+	}
+	if cfg.NATS.Consumers.ReplayPolicy == "" {
+		cfg.NATS.Consumers.ReplayPolicy = "instant"
+	}
 
 	// KV defaults - disabled by default, no buckets
-	// cfg.KV.Enabled defaults to false
-	// cfg.KV.Buckets defaults to empty slice
-	
 	// KV Local Cache defaults - enabled by default when KV is enabled
-	// Note: We don't check cfg.KV.LocalCache.Enabled == false here because
-	// Go's zero value for bool is false, so we need to distinguish between
-	// "not set" and "explicitly set to false"
-	// The validation will handle setting the default to true if KV is enabled
+	// Validation will handle setting the default to true if KV is enabled
 }
 
 // validateConfig performs validation of all configuration values
@@ -263,6 +250,46 @@ func validateConfig(cfg *Config) error {
 		}
 	}
 
+	// Validate consumer configuration
+	if cfg.NATS.Consumers.SubscriberCount < 1 {
+		return fmt.Errorf("subscriber count must be at least 1")
+	}
+	if cfg.NATS.Consumers.FetchBatchSize < 1 {
+		return fmt.Errorf("fetch batch size must be at least 1")
+	}
+	if cfg.NATS.Consumers.FetchTimeout <= 0 {
+		return fmt.Errorf("fetch timeout must be positive")
+	}
+	if cfg.NATS.Consumers.MaxAckPending < 1 {
+		return fmt.Errorf("max ack pending must be at least 1")
+	}
+	if cfg.NATS.Consumers.MaxDeliver < 1 {
+		return fmt.Errorf("max deliver must be at least 1")
+	}
+	
+	// Validate deliver policy
+	validDeliverPolicies := map[string]bool{
+		"all":                true,
+		"new":                true,
+		"last":               true,
+		"by_start_time":      true,
+		"by_start_sequence":  true,
+	}
+	if !validDeliverPolicies[cfg.NATS.Consumers.DeliverPolicy] {
+		return fmt.Errorf("invalid deliver policy: %s (valid options: all, new, last, by_start_time, by_start_sequence)", 
+			cfg.NATS.Consumers.DeliverPolicy)
+	}
+	
+	// Validate replay policy
+	validReplayPolicies := map[string]bool{
+		"instant":  true,
+		"original": true,
+	}
+	if !validReplayPolicies[cfg.NATS.Consumers.ReplayPolicy] {
+		return fmt.Errorf("invalid replay policy: %s (valid options: instant, original)", 
+			cfg.NATS.Consumers.ReplayPolicy)
+	}
+
 	// Validate logging config
 	switch cfg.Logging.Level {
 	case "debug", "info", "warn", "error":
@@ -281,17 +308,6 @@ func validateConfig(cfg *Config) error {
 		if _, err := time.ParseDuration(cfg.Metrics.UpdateInterval); err != nil {
 			return fmt.Errorf("invalid metrics update interval: %w", err)
 		}
-	}
-
-	// Validate Watermill config
-	if cfg.Watermill.NATS.SubscriberCount < 1 {
-		return fmt.Errorf("subscriber count must be greater than 0")
-	}
-	if cfg.Watermill.NATS.MaxPendingAsync < 100 {
-		return fmt.Errorf("max pending async must be at least 100 for reasonable performance")
-	}
-	if cfg.Watermill.Middleware.RetryMaxAttempts < 0 {
-		return fmt.Errorf("retry max attempts cannot be negative")
 	}
 
 	// Validate KV config
@@ -317,9 +333,6 @@ func validateConfig(cfg *Config) error {
 		}
 		
 		// Set local cache default to enabled if not explicitly configured
-		// This is where we handle the "enabled by default when KV is enabled" logic
-		// We assume if someone doesn't specify localCache.enabled, they want it enabled
-		// Only way to disable is to explicitly set it to false in config
 		if !isLocalCacheExplicitlyConfigured(cfg) {
 			cfg.KV.LocalCache.Enabled = true
 		}
@@ -329,19 +342,11 @@ func validateConfig(cfg *Config) error {
 }
 
 // isLocalCacheExplicitlyConfigured checks if the user explicitly set localCache.enabled
-// This is a simple heuristic - in practice, this would be handled by a more sophisticated
-// config parsing system, but for our "grug brain" approach, this works fine
 func isLocalCacheExplicitlyConfigured(cfg *Config) bool {
-	// If KV is disabled entirely, then local cache config doesn't matter
 	if !cfg.KV.Enabled {
-		return true // Treat as "configured" to avoid changing the default
+		return true
 	}
-	
-	// For now, we assume if someone wants to disable local cache, they will
-	// explicitly set it in their config. The default behavior is to enable it.
-	// A more sophisticated approach would track which fields were explicitly set
-	// during parsing, but this adds complexity we don't need right now.
-	return false // Default to enabling local cache
+	return false
 }
 
 // validateBucketName validates NATS KV bucket naming rules

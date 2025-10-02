@@ -86,8 +86,12 @@ func (b *NATSBroker) InitializeSubscriptionManager(processor *rule.Processor) {
 		processor,
 		b.logger,
 		b.metrics,
+		&b.config.NATS.Consumers,
 	)
-	b.logger.Info("subscription manager initialized")
+	b.logger.Info("subscription manager initialized",
+		"subscriberCount", b.config.NATS.Consumers.SubscriberCount,
+		"fetchBatchSize", b.config.NATS.Consumers.FetchBatchSize,
+		"fetchTimeout", b.config.NATS.Consumers.FetchTimeout)
 }
 
 // CreateConsumerForSubject creates a durable consumer for the given subject
@@ -111,15 +115,28 @@ func (b *NATSBroker) CreateConsumerForSubject(subject string) error {
 	// Generate a valid consumer name
 	consumerName := b.generateConsumerName(subject)
 
+	// Map deliver policy from config string to NATS constant
+	deliverPolicy, err := b.parseDeliverPolicy(b.config.NATS.Consumers.DeliverPolicy)
+	if err != nil {
+		return fmt.Errorf("invalid deliver policy: %w", err)
+	}
+
+	// Map replay policy from config string to NATS constant
+	replayPolicy, err := b.parseReplayPolicy(b.config.NATS.Consumers.ReplayPolicy)
+	if err != nil {
+		return fmt.Errorf("invalid replay policy: %w", err)
+	}
+
 	// Create consumer configuration
 	consumerConfig := &watermillNats.ConsumerConfig{
 		Durable:       consumerName,
 		FilterSubject: subject,
 		AckPolicy:     watermillNats.AckExplicitPolicy,
-		AckWait:       b.config.Watermill.NATS.AckWaitTimeout,
-		MaxDeliver:    b.config.Watermill.NATS.MaxDeliver,
-		DeliverPolicy: watermillNats.DeliverAllPolicy,
-		ReplayPolicy:  watermillNats.ReplayInstantPolicy,
+		AckWait:       b.config.NATS.Consumers.AckWaitTimeout,
+		MaxDeliver:    b.config.NATS.Consumers.MaxDeliver,
+		MaxAckPending: b.config.NATS.Consumers.MaxAckPending,
+		DeliverPolicy: deliverPolicy,
+		ReplayPolicy:  replayPolicy,
 	}
 
 	// Check if consumer already exists in NATS
@@ -130,7 +147,9 @@ func (b *NATSBroker) CreateConsumerForSubject(subject string) error {
 			"consumer", consumerName,
 			"subject", subject,
 			"pending", existingConsumer.NumPending,
-			"delivered", existingConsumer.Delivered.Stream)
+			"delivered", existingConsumer.Delivered.Stream,
+			"deliverPolicy", b.config.NATS.Consumers.DeliverPolicy,
+			"maxAckPending", b.config.NATS.Consumers.MaxAckPending)
 		b.consumers[subject] = consumerName
 		return nil
 	}
@@ -150,9 +169,43 @@ func (b *NATSBroker) CreateConsumerForSubject(subject string) error {
 		"consumer", consumerName,
 		"subject", subject,
 		"filterSubject", consumerInfo.Config.FilterSubject,
-		"ackWait", consumerInfo.Config.AckWait)
+		"ackWait", consumerInfo.Config.AckWait,
+		"maxDeliver", consumerInfo.Config.MaxDeliver,
+		"maxAckPending", consumerInfo.Config.MaxAckPending,
+		"deliverPolicy", b.config.NATS.Consumers.DeliverPolicy,
+		"replayPolicy", b.config.NATS.Consumers.ReplayPolicy)
 
 	return nil
+}
+
+// parseDeliverPolicy converts config string to NATS DeliverPolicy constant
+func (b *NATSBroker) parseDeliverPolicy(policy string) (watermillNats.DeliverPolicy, error) {
+	switch policy {
+	case "all":
+		return watermillNats.DeliverAllPolicy, nil
+	case "new":
+		return watermillNats.DeliverNewPolicy, nil
+	case "last":
+		return watermillNats.DeliverLastPolicy, nil
+	case "by_start_time":
+		return watermillNats.DeliverByStartTimePolicy, nil
+	case "by_start_sequence":
+		return watermillNats.DeliverByStartSequencePolicy, nil
+	default:
+		return watermillNats.DeliverAllPolicy, fmt.Errorf("unknown deliver policy: %s", policy)
+	}
+}
+
+// parseReplayPolicy converts config string to NATS ReplayPolicy constant
+func (b *NATSBroker) parseReplayPolicy(policy string) (watermillNats.ReplayPolicy, error) {
+	switch policy {
+	case "instant":
+		return watermillNats.ReplayInstantPolicy, nil
+	case "original":
+		return watermillNats.ReplayOriginalPolicy, nil
+	default:
+		return watermillNats.ReplayInstantPolicy, fmt.Errorf("unknown replay policy: %s", policy)
+	}
 }
 
 // AddSubscription creates a pull subscription for a subject
@@ -174,7 +227,7 @@ func (b *NATSBroker) AddSubscription(subject string) error {
 	}
 
 	// Add subscription with configured worker count
-	workers := b.config.Watermill.NATS.SubscriberCount
+	workers := b.config.NATS.Consumers.SubscriberCount
 	if err := b.subscriptionMgr.AddSubscription(streamName, consumerName, subject, workers); err != nil {
 		return fmt.Errorf("failed to add subscription for '%s': %w", subject, err)
 	}
@@ -463,8 +516,8 @@ func (b *NATSBroker) buildNATSOptions() ([]watermillNats.Option, error) {
 	var natsOptions []watermillNats.Option
 
 	natsOptions = append(natsOptions,
-		watermillNats.ReconnectWait(b.config.Watermill.NATS.ReconnectWait),
-		watermillNats.MaxReconnects(b.config.Watermill.NATS.MaxReconnects),
+		watermillNats.ReconnectWait(b.config.NATS.Connection.ReconnectWait),
+		watermillNats.MaxReconnects(b.config.NATS.Connection.MaxReconnects),
 	)
 
 	if b.config.NATS.CredsFile != "" {
