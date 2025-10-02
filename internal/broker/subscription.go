@@ -1,0 +1,289 @@
+//file: internal/broker/subscription.go
+
+package broker
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	watermillNats "github.com/nats-io/nats.go"
+	"rule-router/internal/handler"
+	"rule-router/internal/logger"
+	"rule-router/internal/metrics"
+	"rule-router/internal/rule"
+)
+
+// SubscriptionManager manages direct NATS pull subscriptions for rule subjects
+type SubscriptionManager struct {
+	jsCtx         watermillNats.JetStreamContext
+	logger        *logger.Logger
+	metrics       *metrics.Metrics
+	processor     *rule.Processor
+	subscriptions []*Subscription
+	wg            sync.WaitGroup
+	mu            sync.RWMutex
+}
+
+// Subscription represents a single NATS pull subscription
+type Subscription struct {
+	Subject       string
+	ConsumerName  string
+	StreamName    string
+	Sub           *watermillNats.Subscription
+	Handler       *handler.MessageHandler
+	Workers       int // Number of concurrent workers
+	cancel        context.CancelFunc
+	logger        *logger.Logger
+}
+
+// NewSubscriptionManager creates a new subscription manager
+func NewSubscriptionManager(
+	jsCtx watermillNats.JetStreamContext,
+	processor *rule.Processor,
+	logger *logger.Logger,
+	metrics *metrics.Metrics,
+) *SubscriptionManager {
+	return &SubscriptionManager{
+		jsCtx:         jsCtx,
+		logger:        logger,
+		metrics:       metrics,
+		processor:     processor,
+		subscriptions: make([]*Subscription, 0),
+	}
+}
+
+// AddSubscription creates a pull subscription for a subject
+func (sm *SubscriptionManager) AddSubscription(
+	streamName string,
+	consumerName string,
+	subject string,
+	workers int,
+) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	sm.logger.Info("creating pull subscription",
+		"subject", subject,
+		"stream", streamName,
+		"consumer", consumerName,
+		"workers", workers)
+
+	// Create pull subscription bound to the consumer
+	sub, err := sm.jsCtx.PullSubscribe(
+		subject,
+		consumerName,
+		watermillNats.Bind(streamName, consumerName),
+		watermillNats.ManualAck(),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create pull subscription for %s: %w", subject, err)
+	}
+
+	// Create message handler for this subject
+	messageHandler := handler.NewMessageHandler(sm.processor, sm.logger, sm.metrics)
+
+	subscription := &Subscription{
+		Subject:      subject,
+		ConsumerName: consumerName,
+		StreamName:   streamName,
+		Sub:          sub,
+		Handler:      messageHandler,
+		Workers:      workers,
+		logger:       sm.logger,
+	}
+
+	sm.subscriptions = append(sm.subscriptions, subscription)
+
+	sm.logger.Info("pull subscription created",
+		"subject", subject,
+		"stream", streamName,
+		"consumer", consumerName)
+
+	return nil
+}
+
+// Start begins processing messages on all subscriptions
+func (sm *SubscriptionManager) Start(ctx context.Context) error {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	if len(sm.subscriptions) == 0 {
+		return fmt.Errorf("no subscriptions configured")
+	}
+
+	sm.logger.Info("starting all subscriptions", "count", len(sm.subscriptions))
+
+	for _, sub := range sm.subscriptions {
+		// Create cancellable context for this subscription
+		subCtx, cancel := context.WithCancel(ctx)
+		sub.cancel = cancel
+
+		// Start worker goroutines for this subscription
+		for i := 0; i < sub.Workers; i++ {
+			sm.wg.Add(1)
+			go sm.worker(subCtx, sub, i)
+		}
+
+		sm.logger.Info("started workers for subscription",
+			"subject", sub.Subject,
+			"workers", sub.Workers)
+	}
+
+	return nil
+}
+
+// worker processes messages from a pull subscription
+func (sm *SubscriptionManager) worker(ctx context.Context, sub *Subscription, workerID int) {
+	defer sm.wg.Done()
+
+	sub.logger.Debug("worker started",
+		"subject", sub.Subject,
+		"workerID", workerID)
+
+	for {
+		select {
+		case <-ctx.Done():
+			sub.logger.Debug("worker stopping",
+				"subject", sub.Subject,
+				"workerID", workerID)
+			return
+		default:
+			// Fetch messages from JetStream (batch of 1 for simplicity)
+			msgs, err := sub.Sub.Fetch(1, watermillNats.MaxWait(5*time.Second))
+			if err != nil {
+				// Timeout is normal when no messages available
+				if err == watermillNats.ErrTimeout {
+					continue
+				}
+				
+				// Log other errors but continue processing
+				sub.logger.Debug("fetch error",
+					"subject", sub.Subject,
+					"workerID", workerID,
+					"error", err)
+				continue
+			}
+
+			// Process each message
+			for _, msg := range msgs {
+				if err := sm.processMessage(ctx, sub, msg); err != nil {
+					sub.logger.Error("failed to process message",
+						"subject", sub.Subject,
+						"workerID", workerID,
+						"error", err)
+					
+					// Negative ack on processing failure
+					msg.Nak()
+					
+					if sm.metrics != nil {
+						sm.metrics.IncMessagesTotal("error")
+					}
+				} else {
+					// Ack successful processing
+					msg.Ack()
+					
+					if sm.metrics != nil {
+						sm.metrics.IncMessagesTotal("processed")
+					}
+				}
+			}
+		}
+	}
+}
+
+// processMessage handles a single message through the middleware and rule engine
+func (sm *SubscriptionManager) processMessage(ctx context.Context, sub *Subscription, msg *watermillNats.Msg) error {
+	start := time.Now()
+
+	// Update metrics
+	if sm.metrics != nil {
+		sm.metrics.IncMessagesTotal("received")
+	}
+
+	sub.logger.Debug("processing message",
+		"subject", msg.Subject,
+		"size", len(msg.Data))
+
+	// Process through rule engine
+	actions, err := sm.processor.ProcessWithSubject(msg.Subject, msg.Data)
+	if err != nil {
+		return fmt.Errorf("rule processing failed: %w", err)
+	}
+
+	// Publish actions
+	for _, action := range actions {
+		if err := sm.publishAction(ctx, action); err != nil {
+			sub.logger.Error("failed to publish action",
+				"actionSubject", action.Subject,
+				"error", err)
+			return fmt.Errorf("failed to publish action: %w", err)
+		}
+
+		if sm.metrics != nil {
+			sm.metrics.IncActionsTotal("success")
+			sm.metrics.IncRuleMatches()
+		}
+	}
+
+	duration := time.Since(start)
+	sub.logger.Debug("message processed",
+		"subject", msg.Subject,
+		"duration", duration,
+		"actionsPublished", len(actions))
+
+	return nil
+}
+
+// publishAction publishes an action message to NATS
+func (sm *SubscriptionManager) publishAction(ctx context.Context, action *rule.Action) error {
+	sm.logger.Debug("publishing action",
+		"subject", action.Subject,
+		"payloadSize", len(action.Payload))
+
+	// Publish directly to JetStream
+	_, err := sm.jsCtx.Publish(action.Subject, []byte(action.Payload))
+	if err != nil {
+		return fmt.Errorf("failed to publish to %s: %w", action.Subject, err)
+	}
+
+	return nil
+}
+
+// Stop gracefully shuts down all subscriptions
+func (sm *SubscriptionManager) Stop() error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	sm.logger.Info("stopping all subscriptions", "count", len(sm.subscriptions))
+
+	// Cancel all subscription contexts
+	for _, sub := range sm.subscriptions {
+		if sub.cancel != nil {
+			sub.cancel()
+		}
+	}
+
+	// Wait for all workers to finish
+	sm.wg.Wait()
+
+	// Unsubscribe from NATS
+	for _, sub := range sm.subscriptions {
+		if err := sub.Sub.Unsubscribe(); err != nil {
+			sm.logger.Error("failed to unsubscribe",
+				"subject", sub.Subject,
+				"error", err)
+		}
+	}
+
+	sm.logger.Info("all subscriptions stopped")
+	return nil
+}
+
+// GetSubscriptionCount returns the number of active subscriptions
+func (sm *SubscriptionManager) GetSubscriptionCount() int {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return len(sm.subscriptions)
+}

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -178,7 +177,7 @@ func setDefaults(cfg *Config) {
 		cfg.Watermill.NATS.MaxPendingAsync = 2000 // High throughput
 	}
 	if cfg.Watermill.NATS.SubscriberCount == 0 {
-		cfg.Watermill.NATS.SubscriberCount = runtime.NumCPU() * 2
+		cfg.Watermill.NATS.SubscriberCount = 2
 	}
 	if cfg.Watermill.NATS.AckWaitTimeout == 0 {
 		cfg.Watermill.NATS.AckWaitTimeout = 30 * time.Second

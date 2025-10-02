@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ThreeDotsLabs/watermill/message"
 	"rule-router/config"
 	"rule-router/internal/broker"
 	"rule-router/internal/logger"
@@ -27,7 +26,6 @@ type App struct {
 	metrics          *metrics.Metrics
 	processor        *rule.Processor
 	broker           *broker.NATSBroker
-	router           *message.Router
 	httpServer       *http.Server
 	metricsCollector *metrics.MetricsCollector
 }
@@ -53,107 +51,102 @@ func NewApp(cfg *config.Config, rulesPath string) (*App, error) {
 		return nil, fmt.Errorf("failed to setup NATS broker: %w", err)
 	}
 
-	// Setup rules after broker (so KV stores are available for validation and processor)
+	// Setup rules after broker (so KV stores are available)
 	if err := app.setupRules(); err != nil {
 		return nil, fmt.Errorf("failed to setup rules: %w", err)
 	}
 
-	if err := app.setupRouter(); err != nil {
-		return nil, fmt.Errorf("failed to setup router: %w", err)
+	// Initialize subscription manager with processor
+	app.broker.InitializeSubscriptionManager(app.processor)
+
+	// Setup subscriptions for all rule subjects
+	if err := app.setupSubscriptions(); err != nil {
+		return nil, fmt.Errorf("failed to setup subscriptions: %w", err)
 	}
 
 	return app, nil
 }
 
 // Run starts the application and waits for shutdown signal
-func (a *App) Run(ctx context.Context) error {
+func (app *App) Run(ctx context.Context) error {
 	// Setup signal handling
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer cancel()
 
-	// Start the router
-	a.logger.Info("starting Watermill router with NATS JetStream connection",
-		"natsUrls", a.config.NATS.URLs,
-		"subjectsCount", len(a.processor.GetSubjects()),
-		"metricsEnabled", a.config.Metrics.Enabled,
-		"kvEnabled", a.config.KV.Enabled,
-		"kvBuckets", a.config.KV.Buckets)
+	// Get subscription count
+	subMgr := app.broker.GetSubscriptionManager()
+	subCount := subMgr.GetSubscriptionCount()
 
-	go func() {
-		if err := a.router.Run(ctx); err != nil {
-			a.logger.Error("router stopped with error", "error", err)
-		}
-	}()
+	app.logger.Info("starting rule-router with NATS JetStream",
+		"natsUrls", app.config.NATS.URLs,
+		"subscriptionCount", subCount,
+		"metricsEnabled", app.config.Metrics.Enabled,
+		"kvEnabled", app.config.KV.Enabled,
+		"kvBuckets", app.config.KV.Buckets)
 
-	// Wait for router to be ready
-	<-a.router.Running()
-	a.logger.Info("Watermill router is running and ready to process messages")
+	// Start subscription manager
+	if err := subMgr.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start subscription manager: %w", err)
+	}
+
+	app.logger.Info("all subscriptions active and processing messages")
 
 	// Update metrics
-	if a.metrics != nil {
-		subjects := a.processor.GetSubjects()
-		a.metrics.SetRulesActive(float64(len(subjects)))
-		// Note: Removed worker pool metrics since we don't use pools anymore
+	if app.metrics != nil {
+		subjects := app.processor.GetSubjects()
+		app.metrics.SetRulesActive(float64(len(subjects)))
 	}
 
 	// Wait for shutdown signal
 	<-ctx.Done()
-	a.logger.Info("shutting down gracefully...")
+	app.logger.Info("shutting down gracefully...")
 
-	// Close the router
-	if err := a.router.Close(); err != nil {
-		a.logger.Error("failed to close router", "error", err)
+	// Stop subscription manager
+	if err := subMgr.Stop(); err != nil {
+		app.logger.Error("failed to stop subscription manager", "error", err)
 		return err
 	}
 
-	a.logger.Info("shutdown complete")
+	app.logger.Info("shutdown complete")
 	return nil
 }
 
 // Close gracefully shuts down all application components
-func (a *App) Close() error {
-	a.logger.Info("closing application components")
+func (app *App) Close() error {
+	app.logger.Info("closing application components")
 
 	var errors []error
 
 	// Stop metrics collector
-	if a.metricsCollector != nil {
-		a.metricsCollector.Stop()
+	if app.metricsCollector != nil {
+		app.metricsCollector.Stop()
 	}
 
 	// Shutdown HTTP server
-	if a.httpServer != nil {
+	if app.httpServer != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := a.httpServer.Shutdown(shutdownCtx); err != nil {
+		if err := app.httpServer.Shutdown(shutdownCtx); err != nil {
 			errors = append(errors, fmt.Errorf("failed to shutdown metrics server: %w", err))
 		}
 	}
 
-	// Close router (if not already closed in Run())
-	if a.router != nil {
-		if err := a.router.Close(); err != nil {
-			errors = append(errors, fmt.Errorf("failed to close router: %w", err))
-		}
-	}
-
-	// Close NATS broker (this will also clean up KV stores)
-	if a.broker != nil {
-		if err := a.broker.Close(); err != nil {
+	// Close NATS broker (this will stop subscriptions and clean up)
+	if app.broker != nil {
+		if err := app.broker.Close(); err != nil {
 			errors = append(errors, fmt.Errorf("failed to close NATS broker: %w", err))
 		}
 	}
 
-	// Close processor (simplified - no workers to wait for)
-	if a.processor != nil {
-		a.processor.Close()
+	// Close processor
+	if app.processor != nil {
+		app.processor.Close()
 	}
 
 	// Sync logger
-	if a.logger != nil {
-		if err := a.logger.Sync(); err != nil {
-			// Don't add sync errors to the error list as they're often benign
-			a.logger.Debug("logger sync completed", "error", err)
+	if app.logger != nil {
+		if err := app.logger.Sync(); err != nil {
+			app.logger.Debug("logger sync completed", "error", err)
 		}
 	}
 
@@ -162,12 +155,4 @@ func (a *App) Close() error {
 	}
 
 	return nil
-}
-
-// getNATSBrokerInfo returns NATS connection info for logging
-func (a *App) getNATSBrokerInfo() string {
-	if len(a.config.NATS.URLs) > 0 {
-		return a.config.NATS.URLs[0]
-	}
-	return "nats://localhost:4222"
 }

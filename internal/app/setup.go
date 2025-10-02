@@ -104,11 +104,11 @@ func (a *App) setupRules() error {
 		return fmt.Errorf("failed to load rules: %w", err)
 	}
 
-	// Create KV context if enabled - now with local cache support
+	// Create KV context if enabled
 	var kvContext *rule.KVContext
 	if a.config.KV.Enabled && a.broker != nil {
 		kvStores := a.broker.GetKVStores()
-		localKVCache := a.broker.GetLocalKVCache() // Get local cache from broker
+		localKVCache := a.broker.GetLocalKVCache()
 		
 		kvContext = rule.NewKVContext(kvStores, a.logger, localKVCache)
 		
@@ -162,12 +162,9 @@ func (a *App) setupNATSBroker() error {
 			"localCacheEnabled", a.config.KV.LocalCache.Enabled)
 		
 		if err := a.broker.InitializeKVCache(); err != nil {
-			// Don't fail startup for KV cache issues - log error and continue
-			// This allows the system to operate with degraded performance rather than failing
 			a.logger.Error("failed to initialize local KV cache", "error", err)
 			a.logger.Info("continuing with direct NATS KV access (degraded performance)")
 		} else {
-			// Log successful cache initialization with stats
 			localCache := a.broker.GetLocalKVCache()
 			if localCache != nil && localCache.IsEnabled() {
 				stats := localCache.GetStats()
@@ -192,20 +189,34 @@ func (a *App) setupNATSBroker() error {
 	return nil
 }
 
-// setupRouter configures the Watermill router with middleware and handlers
-func (a *App) setupRouter() error {
-	// Get router from broker
-	a.router = a.broker.GetRouter()
+// setupSubscriptions configures pull subscriptions for all rule subjects
+func (a *App) setupSubscriptions() error {
+	subjects := a.processor.GetSubjects()
+	a.logger.Info("setting up subscriptions for rule subjects", "subjectCount", len(subjects))
 
-	// Setup middleware stack
-	a.setupMiddleware()
+	// Validate all subjects can be mapped to streams
+	if err := a.broker.ValidateSubjects(subjects); err != nil {
+		return fmt.Errorf("stream validation failed: %w", err)
+	}
 
-	// Setup message handlers - now they do the real work
-	a.setupHandlers()
+	// Create consumers and subscriptions for each subject
+	for _, subject := range subjects {
+		a.logger.Debug("setting up subscription for subject", "subject", subject)
 
-	a.logger.Info("router configured successfully",
-		"middlewareCount", "operational stack",
-		"handlerCount", len(a.processor.GetSubjects()))
+		// Create durable consumer for this subject
+		if err := a.broker.CreateConsumerForSubject(subject); err != nil {
+			return fmt.Errorf("failed to create consumer for subject '%s': %w", subject, err)
+		}
 
+		// Add pull subscription
+		if err := a.broker.AddSubscription(subject); err != nil {
+			return fmt.Errorf("failed to add subscription for subject '%s': %w", subject, err)
+		}
+
+		a.logger.Info("subscription configured",
+			"subject", subject)
+	}
+
+	a.logger.Info("all subscriptions configured successfully", "subscriptionCount", len(subjects))
 	return nil
 }
