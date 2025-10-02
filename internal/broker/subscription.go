@@ -16,6 +16,7 @@ import (
 )
 
 // SubscriptionManager manages direct NATS pull subscriptions for rule subjects
+// with parallel batch processing and synchronous action publishing
 type SubscriptionManager struct {
 	jsCtx         watermillNats.JetStreamContext
 	logger        *logger.Logger
@@ -27,7 +28,7 @@ type SubscriptionManager struct {
 	mu            sync.RWMutex
 }
 
-// Subscription represents a single NATS pull subscription
+// Subscription represents a single NATS pull subscription with parallel processing
 type Subscription struct {
 	Subject       string
 	ConsumerName  string
@@ -136,7 +137,7 @@ func (sm *SubscriptionManager) Start(ctx context.Context) error {
 	return nil
 }
 
-// worker processes messages from a pull subscription
+// worker processes messages from a pull subscription with parallel batch processing
 func (sm *SubscriptionManager) worker(ctx context.Context, sub *Subscription, workerID int) {
 	defer sm.wg.Done()
 
@@ -172,34 +173,86 @@ func (sm *SubscriptionManager) worker(ctx context.Context, sub *Subscription, wo
 				continue
 			}
 
-			// Process each message in the batch
-			for _, msg := range msgs {
-				if err := sm.processMessage(ctx, sub, msg); err != nil {
-					sub.logger.Error("failed to process message",
-						"subject", sub.Subject,
-						"workerID", workerID,
-						"error", err)
-					
-					// Negative ack on processing failure
-					msg.Nak()
-					
-					if sm.metrics != nil {
-						sm.metrics.IncMessagesTotal("error")
-					}
-				} else {
-					// Ack successful processing
-					msg.Ack()
-					
-					if sm.metrics != nil {
-						sm.metrics.IncMessagesTotal("processed")
-					}
-				}
-			}
+			// Process batch in parallel
+			sm.processBatchParallel(ctx, sub, msgs, workerID)
 		}
 	}
 }
 
+// processBatchParallel processes a batch of messages concurrently
+// Each goroutine handles: rule evaluation + action publishing + message ACK
+func (sm *SubscriptionManager) processBatchParallel(ctx context.Context, sub *Subscription, msgs []*watermillNats.Msg, workerID int) {
+	if len(msgs) == 0 {
+		return
+	}
+
+	batchStart := time.Now()
+	
+	sub.logger.Debug("processing batch in parallel",
+		"subject", sub.Subject,
+		"workerID", workerID,
+		"batchSize", len(msgs))
+
+	// Calculate parallelism: min(batchSize, fetchBatchSize)
+	// This prevents oversubscription with small batches
+	parallelism := len(msgs)
+	if parallelism > sub.config.FetchBatchSize {
+		parallelism = sub.config.FetchBatchSize
+	}
+
+	// Create semaphore to limit concurrent goroutines
+	sem := make(chan struct{}, parallelism)
+	var wg sync.WaitGroup
+
+	// Process each message in the batch concurrently
+	for _, msg := range msgs {
+		wg.Add(1)
+		sem <- struct{}{} // Acquire semaphore slot
+
+		go func(m *watermillNats.Msg) {
+			defer wg.Done()
+			defer func() { <-sem }() // Release semaphore slot
+
+			// Process single message (includes action publishing)
+			if err := sm.processMessage(ctx, sub, m); err != nil {
+				sub.logger.Error("failed to process message",
+					"subject", sub.Subject,
+					"workerID", workerID,
+					"error", err)
+				
+				// Negative ack on processing failure
+				m.Nak()
+				
+				if sm.metrics != nil {
+					sm.metrics.IncMessagesTotal("error")
+				}
+			} else {
+				// Ack successful processing (after actions published)
+				m.Ack()
+				
+				if sm.metrics != nil {
+					sm.metrics.IncMessagesTotal("processed")
+				}
+			}
+		}(msg)
+	}
+
+	// Wait for all messages in batch to complete
+	wg.Wait()
+
+	batchDuration := time.Since(batchStart)
+	throughput := float64(len(msgs)) / batchDuration.Seconds()
+	
+	sub.logger.Debug("batch processing complete",
+		"subject", sub.Subject,
+		"workerID", workerID,
+		"batchSize", len(msgs),
+		"duration", batchDuration,
+		"throughput", fmt.Sprintf("%.0f msg/sec", throughput))
+}
+
 // processMessage handles a single message through the rule engine
+// and publishes actions synchronously before returning
 func (sm *SubscriptionManager) processMessage(ctx context.Context, sub *Subscription, msg *watermillNats.Msg) error {
 	start := time.Now()
 
@@ -218,12 +271,20 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, sub *Subscrip
 		return fmt.Errorf("rule processing failed: %w", err)
 	}
 
-	// Publish actions with retry logic
+	// Publish all actions synchronously (with retry)
 	for _, action := range actions {
 		if err := sm.publishActionWithRetry(ctx, action); err != nil {
 			sub.logger.Error("failed to publish action after retries",
 				"actionSubject", action.Subject,
+				"sourceSubject", msg.Subject,
 				"error", err)
+			
+			if sm.metrics != nil {
+				sm.metrics.IncActionsTotal("error")
+			}
+			
+			// Continue processing other actions, but mark message as failed
+			// This ensures we don't ACK the message if any action fails
 			return fmt.Errorf("failed to publish action: %w", err)
 		}
 
@@ -231,6 +292,10 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, sub *Subscrip
 			sm.metrics.IncActionsTotal("success")
 			sm.metrics.IncRuleMatches()
 		}
+		
+		sub.logger.Debug("action published",
+			"actionSubject", action.Subject,
+			"sourceSubject", msg.Subject)
 	}
 
 	duration := time.Since(start)
@@ -245,7 +310,7 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, sub *Subscrip
 // publishActionWithRetry publishes an action with exponential backoff retry
 func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, action *rule.Action) error {
 	maxRetries := 3
-	baseDelay := 100 * time.Millisecond
+	baseDelay := 50 * time.Millisecond
 	
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -293,7 +358,7 @@ func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, actio
 			break
 		}
 		
-		// Exponential backoff: 100ms, 200ms, 400ms
+		// Exponential backoff: 50ms, 100ms, 200ms
 		delay := baseDelay * time.Duration(1<<attempt)
 		
 		sm.logger.Debug("backing off before retry",
@@ -319,14 +384,16 @@ func (sm *SubscriptionManager) Stop() error {
 
 	sm.logger.Info("stopping all subscriptions", "count", len(sm.subscriptions))
 
-	// Cancel all subscription contexts
+	// Cancel all subscription contexts (stops workers from fetching new messages)
 	for _, sub := range sm.subscriptions {
 		if sub.cancel != nil {
 			sub.cancel()
 		}
 	}
 
-	// Wait for all workers to finish
+	// Wait for all workers to finish processing in-flight messages
+	// This ensures all messages are fully processed (including action publishing) before shutdown
+	sm.logger.Info("waiting for workers to complete in-flight messages")
 	sm.wg.Wait()
 
 	// Unsubscribe from NATS

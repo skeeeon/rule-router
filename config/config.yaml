@@ -35,9 +35,9 @@ nats:
   # JetStream Consumer Configuration
   consumers:
     # Performance Tuning
-    subscriberCount: 8                   # Concurrent workers per subscription (recommend: 2x CPU cores)
-    fetchBatchSize: 1                    # Messages to fetch per pull request (1 = low latency, 10+ = high throughput)
-    fetchTimeout: 5s                     # Max wait time when fetching messages (lower = more aggressive)
+    subscriberCount: 8                   # Concurrent workers per subscription (recommend: 2-4x CPU cores)
+    fetchBatchSize: 64                    # Messages to fetch per pull request (1 = low latency, 10+ = high throughput)
+    fetchTimeout: 1s                     # Max wait time when fetching messages (lower = more aggressive)
     maxAckPending: 1000                  # Max unacknowledged messages per consumer (backpressure control)
     
     # Reliability Settings
@@ -84,21 +84,3 @@ metrics:
   path: /metrics
   updateInterval: 15s
 
-# Performance Tuning Notes:
-# 
-# For High Throughput (> 5000 msg/sec):
-# - Increase subscriberCount to match CPU cores (8-16)
-# - Increase fetchBatchSize to 10-50 for better network efficiency
-# - Reduce fetchTimeout to 1-2s for more aggressive fetching
-# - Increase maxAckPending to 2000-5000 for larger buffers
-# 
-# For Low Latency (< 10ms per message):
-# - Keep fetchBatchSize at 1 for immediate processing
-# - Keep subscriberCount moderate (2-4)
-# - Use fetchTimeout of 5s (current default)
-# 
-# For Memory-Constrained Environments:
-# - Reduce maxAckPending to 100-500
-# - Reduce subscriberCount to 1-2
-# - Keep fetchBatchSize at 1
-# - Consider disabling localCache if memory is critical
