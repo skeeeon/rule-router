@@ -32,7 +32,7 @@ A high-performance NATS JetStream message router that evaluates JSON messages ag
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
 │  │ Subscription │  │ Rule Engine  │  │ Local Cache  │     │
 │  │ Manager      │──│ + Templates  │──│ (KV Mirror)  │     │
-│  │ (8 workers)  │  │ + Conditions │  │ (Real-time)  │     │
+│  │ (workers)    │  │ + Conditions │  │ (Real-time)  │     │
 │  └──────┬───────┘  └──────┬───────┘  └──────────────┘     │
 │         │                  │                              │
 │         └──────────────────┴─► Publish Actions            │
@@ -49,7 +49,7 @@ A high-performance NATS JetStream message router that evaluates JSON messages ag
 
 1. **Stream Discovery** - At startup, discovers all JetStream streams and validates rule subjects can be routed
 2. **Consumer Creation** - Creates durable pull consumers for each rule subject (survives restarts)
-3. **Worker Pool** - Launches configurable worker goroutines per subscription (default: 2-8 workers)
+3. **Worker Pool** - Launches configurable worker goroutines per subscription 
 4. **Message Processing** - Workers fetch messages in batches, evaluate rules, publish actions
 5. **KV Cache** - Loads all KV data into memory, subscribes to `$KV.{bucket}.>` for real-time updates
 6. **Action Publishing** - Publishes to NATS with exponential backoff retry (3 attempts)
@@ -166,7 +166,7 @@ nats:
   
   # JetStream Consumers
   consumers:
-    subscriberCount: 8           # Workers per subscription (2x CPU cores)
+    subscriberCount: 8           # Workers per subscription (2-4x CPU cores)
     fetchBatchSize: 1            # Messages per fetch (1=low latency, 10+=throughput)
     fetchTimeout: 5s             # Fetch wait time
     maxAckPending: 1000          # Unacked message limit
@@ -206,9 +206,9 @@ metrics:
 ```yaml
 consumers:
   subscriberCount: 16      # More workers
-  fetchBatchSize: 20       # Batch fetching
-  fetchTimeout: 1s         # Aggressive fetching
-  maxAckPending: 5000      # Larger buffer
+  fetchBatchSize: 512       # Batch fetching
+  fetchTimeout: 256ms         # Aggressive fetching
+  maxAckPending: 4096      # Larger buffer
 ```
 
 **Low Latency (<10ms)**:
@@ -287,46 +287,143 @@ nats:
 
 ### System Fields
 
-**Time Fields**:
+System fields provide access to time, subject metadata, and KV store values. All system fields are prefixed with `@`.
+
+#### Time Fields
+
+Access current time information for schedule-aware rules:
+
+| Field | Type | Description | Example Value |
+|-------|------|-------------|---------------|
+| `@time.hour` | int | Hour of day (0-23) | `14` |
+| `@time.minute` | int | Minute of hour (0-59) | `30` |
+| `@day.name` | string | Day of week (lowercase) | `monday` |
+| `@day.number` | int | Day of week (1-7, Sunday=7) | `1` |
+| `@date.year` | int | Current year | `2024` |
+| `@date.month` | int | Month (1-12) | `10` |
+| `@date.day` | int | Day of month (1-31) | `15` |
+| `@date.iso` | string | ISO date format | `2024-10-15` |
+| `@timestamp.unix` | int | Unix timestamp (seconds) | `1697385600` |
+| `@timestamp.iso` | string | ISO8601 timestamp | `2024-10-15T14:30:00Z` |
+
+**Example - Business Hours Rule:**
 ```yaml
-- field: "@time.hour"         # 0-23
-  operator: gte
-  value: 9
-
-- field: "@day.name"          # monday, tuesday, etc.
-  operator: eq
-  value: "friday"
-
-- field: "@date.iso"          # YYYY-MM-DD
+- subject: api.requests
+  conditions:
+    operator: and
+    items:
+      - field: "@time.hour"
+        operator: gte
+        value: 9              # After 9 AM
+      - field: "@time.hour"
+        operator: lt
+        value: 17             # Before 5 PM
+      - field: "@day.number"
+        operator: lte
+        value: 5              # Weekdays only (Mon-Fri)
+  action:
+    subject: processing.business-hours
+    payload: |
+      {
+        "request_id": {request_id},
+        "received_at": "{@timestamp.iso}",
+        "day": "{@day.name}",
+        "hour": "{@time.hour}"
+      }
 ```
 
-**Subject Fields** (for wildcard patterns):
+#### Subject Fields
+
+Access tokens from the NATS subject for pattern-based routing:
+
+| Field | Type | Description | Example (subject: `sensors.temp-001.reading`) |
+|-------|------|-------------|-----------------------------------------------|
+| `@subject` | string | Full subject string | `sensors.temp-001.reading` |
+| `@subject.count` | int | Number of tokens | `3` |
+| `@subject.first` | string | First token | `sensors` |
+| `@subject.last` | string | Last token | `reading` |
+| `@subject.0` | string | First token (indexed) | `sensors` |
+| `@subject.1` | string | Second token | `temp-001` |
+| `@subject.2` | string | Third token | `reading` |
+| `@subject.N` | string | Nth token (0-based) | *(out of bounds = empty)* |
+
+**Example - Wildcard Pattern with Token Access:**
 ```yaml
-# Subject: sensors.temp-sensor-001.reading
-- field: "@subject"           # Full: "sensors.temp-sensor-001.reading"
-- field: "@subject.0"         # First token: "sensors"
-- field: "@subject.1"         # Second token: "temp-sensor-001"
-- field: "@subject.last"      # Last token: "reading"
-- field: "@subject.count"     # Token count: 3
+- subject: sensors.*.temperature
+  conditions:
+    operator: and
+    items:
+      - field: value
+        operator: gt
+        value: 30
+      - field: "@subject.1"      # Device ID from subject
+        operator: neq
+        value: "test-device"
+  action:
+    subject: alerts.{@subject.1}.temperature
+    payload: |
+      {
+        "device_id": "{@subject.1}",
+        "sensor_type": "{@subject.2}",
+        "full_subject": "{@subject}",
+        "temperature": {value},
+        "alert_id": "{@uuid7()}"
+      }
 ```
 
-**KV Lookups**:
+#### KV Fields
+
+Access NATS Key-Value stores with JSON path traversal:
+
+| Format | Description | Example |
+|--------|-------------|---------|
+| `@kv.{bucket}.{key}` | Simple KV lookup | `@kv.device_status.sensor-001` |
+| `@kv.{bucket}.{key}.{path}` | JSON path traversal | `@kv.customer_data.cust-123.tier` |
+| `@kv.{bucket}.{key}.{path}.N` | Array index access | `@kv.config.app-1.servers.0.host` |
+| `@kv.{bucket}.{var}.{path}` | Variable substitution | `@kv.device_config.{device_id}.max` |
+
+**Supports:**
+- **Variable substitution** in keys: `{device_id}`, `{customer_id}`, `{@subject.1}`
+- **Nested JSON paths**: `profile.name`, `billing.credits`
+- **Array indexing**: `addresses.0.city`, `readings.2.value`
+- **Deep nesting**: `config.thresholds.sensors.0.limits.max`
+
+**Example - KV Enrichment with JSON Paths:**
 ```yaml
-# Simple lookup
-- field: "@kv.device_status.{device_id}"
-  operator: eq
-  value: "active"
+# KV: customer_data["cust-123"] = {
+#   "tier": "premium",
+#   "profile": {"name": "Acme Corp"},
+#   "billing": {"credits": 1500}
+# }
 
-# JSON path traversal
-- field: "@kv.customer_data.{customer_id}.tier"
-  operator: eq
-  value: "premium"
-
-# Deep nesting
-- field: "@kv.config.{device_id}.thresholds.max"
-  operator: gt
-  value: 100
+- subject: orders.created
+  conditions:
+    operator: and
+    items:
+      - field: "@kv.customer_data.{customer_id}.tier"
+        operator: eq
+        value: "premium"
+      - field: "@kv.customer_data.{customer_id}.billing.credits"
+        operator: gt
+        value: 1000
+  action:
+    subject: fulfillment.premium
+    payload: |
+      {
+        "order_id": {order_id},
+        "customer": {
+          "name": "{@kv.customer_data.{customer_id}.profile.name}",
+          "tier": "{@kv.customer_data.{customer_id}.tier}",
+          "credits": "{@kv.customer_data.{customer_id}.billing.credits}"
+        }
+      }
 ```
+
+**Local Cache Performance:**
+- First lookup: ~50μs (NATS KV)
+- Subsequent lookups: ~2μs (local cache)
+- Real-time updates via `$KV.{bucket}.>` subscriptions
+- Enable with `kv.localCache.enabled: true` (default)
 
 ### Template Functions
 
@@ -633,7 +730,7 @@ process_memory_bytes / 1024 / 1024
 - **Rule Evaluation**: Microseconds per message (40-50k msg/sec per core in benchmarks)
 - **KV Cache Lookups**: ~2μs (cached), ~50μs (NATS KV fallback)
 - **Message Throughput**: Thousands of messages per second per instance
-- **Latency**: Sub-millisecond for co-located NATS, 1-5ms for remote
+- **Latency**: Sub-millisecond for co-located NATS
 
 ### Scaling Strategy
 
