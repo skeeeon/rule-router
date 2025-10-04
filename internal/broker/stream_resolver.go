@@ -1,18 +1,20 @@
-//file: internal/broker/stream_resolver.go
+// file: internal/broker/stream_resolver.go
 
 package broker
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
-	watermillNats "github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"rule-router/internal/logger"
 )
 
 // StreamResolver discovers JetStream streams and maps subjects to streams
 type StreamResolver struct {
-	jsCtx      watermillNats.JetStreamContext
+	jetStream  jetstream.JetStream
 	streams    []StreamInfo
 	logger     *logger.Logger
 	discovered bool
@@ -25,9 +27,9 @@ type StreamInfo struct {
 }
 
 // NewStreamResolver creates a new stream resolver
-func NewStreamResolver(jsCtx watermillNats.JetStreamContext, logger *logger.Logger) *StreamResolver {
+func NewStreamResolver(js jetstream.JetStream, logger *logger.Logger) *StreamResolver {
 	return &StreamResolver{
-		jsCtx:      jsCtx,
+		jetStream:  js,
 		streams:    make([]StreamInfo, 0),
 		logger:     logger,
 		discovered: false,
@@ -35,27 +37,37 @@ func NewStreamResolver(jsCtx watermillNats.JetStreamContext, logger *logger.Logg
 }
 
 // Discover queries NATS JetStream for all available streams
-func (sr *StreamResolver) Discover() error {
+func (sr *StreamResolver) Discover(ctx context.Context) error {
 	sr.logger.Info("discovering JetStream streams")
 
-	// Get list of all streams
+	// Use context with timeout for discovery
+	discoverCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	// Get stream lister using the new API
+	streamLister := sr.jetStream.ListStreams(discoverCtx)
+	
 	streamNames := make([]string, 0)
-	for streamInfo := range sr.jsCtx.StreamsInfo() {
-		if streamInfo == nil {
-			break
-		}
-		streamNames = append(streamNames, streamInfo.Config.Name)
+	
+	// Iterate over stream info
+	for info := range streamLister.Info() {
+		streamNames = append(streamNames, info.Config.Name)
 		
 		// Store stream information
 		sr.streams = append(sr.streams, StreamInfo{
-			Name:     streamInfo.Config.Name,
-			Subjects: streamInfo.Config.Subjects,
+			Name:     info.Config.Name,
+			Subjects: info.Config.Subjects,
 		})
 
 		sr.logger.Debug("discovered stream",
-			"name", streamInfo.Config.Name,
-			"subjects", streamInfo.Config.Subjects,
-			"messages", streamInfo.State.Msgs)
+			"name", info.Config.Name,
+			"subjects", info.Config.Subjects,
+			"messages", info.State.Msgs)
+	}
+	
+	// Check for errors during iteration
+	if streamLister.Err() != nil {
+		return fmt.Errorf("error during stream discovery: %w", streamLister.Err())
 	}
 
 	if len(sr.streams) == 0 {
@@ -93,10 +105,10 @@ func (sr *StreamResolver) FindStreamForSubject(subject string) (string, error) {
 
 	// Collect all matching streams with their specificity score
 	type streamMatch struct {
-		streamName string
-		filter     string
-		specificity int // Higher = more specific
-		isSystem   bool // System streams start with $
+		streamName  string
+		filter      string
+		specificity int  // Higher = more specific
+		isSystem    bool // System streams start with $
 	}
 	
 	var matches []streamMatch

@@ -1,8 +1,9 @@
-//file: internal/app/setup.go
+// file: internal/app/setup.go
 
 package app
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
@@ -199,6 +200,10 @@ func (a *App) setupSubscriptions() error {
 		return fmt.Errorf("stream validation failed: %w", err)
 	}
 
+	// Create context with timeout for consumer creation
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
 	// Create consumers and subscriptions for each subject
 	for _, subject := range subjects {
 		a.logger.Debug("setting up subscription for subject", "subject", subject)
@@ -215,6 +220,14 @@ func (a *App) setupSubscriptions() error {
 
 		a.logger.Info("subscription configured",
 			"subject", subject)
+		
+		// Check for context timeout
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout during subscription setup")
+		default:
+			// Continue
+		}
 	}
 
 	a.logger.Info("all subscriptions configured successfully", "subscriptionCount", len(subjects))

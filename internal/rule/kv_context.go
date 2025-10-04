@@ -1,15 +1,17 @@
-//file: internal/rule/kv_context.go
+// file: internal/rule/kv_context.go
 
 package rule
 
 import (
 	json "github.com/goccy/go-json"
+	"context"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
-	watermillNats "github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"rule-router/internal/logger"
 )
 
@@ -21,21 +23,21 @@ var (
 // KVContext provides access to NATS Key-Value stores for rule evaluation and templating
 // Now includes local cache support for improved performance
 type KVContext struct {
-	stores     map[string]watermillNats.KeyValue
+	stores     map[string]jetstream.KeyValue
 	logger     *logger.Logger
 	localCache *LocalKVCache  // Local cache for performance optimization
 	traverser  *JSONPathTraverser // Shared JSON path traversal
 }
 
 // NewKVContext creates a new KV context with the provided KV stores and optional local cache
-func NewKVContext(stores map[string]watermillNats.KeyValue, logger *logger.Logger, localCache *LocalKVCache) *KVContext {
+func NewKVContext(stores map[string]jetstream.KeyValue, logger *logger.Logger, localCache *LocalKVCache) *KVContext {
 	if logger == nil {
 		// This should never happen in practice, but be defensive
 		panic("KVContext requires a logger")
 	}
 
 	ctx := &KVContext{
-		stores:     make(map[string]watermillNats.KeyValue),
+		stores:     make(map[string]jetstream.KeyValue),
 		logger:     logger,
 		localCache: localCache,
 		traverser:  NewJSONPathTraverser(), // Use shared traverser
@@ -143,11 +145,15 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
 		return nil, false
 	}
 
+	// Create context with timeout for KV operations
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	// Perform the KV lookup
-	entry, err := store.Get(key)
+	entry, err := store.Get(ctx, key)
 	if err != nil {
 		// UPDATED: Differentiate between key not found (WARN) and other errors (ERROR)
-		if err == watermillNats.ErrKeyNotFound {
+		if err == jetstream.ErrKeyNotFound {
 			kv.logger.Warn("KV key does not exist in bucket",
 				"bucket", bucket,
 				"key", key,

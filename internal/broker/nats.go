@@ -1,14 +1,17 @@
-//file: internal/broker/nats.go
+// file: internal/broker/nats.go
 
 package broker
 
 import (
 	json "github.com/goccy/go-json"
+	"context"
 	"crypto/tls"
 	"fmt"
 	"strings"
+	"time"
 
-	watermillNats "github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"rule-router/config"
 	"rule-router/internal/logger"
 	"rule-router/internal/metrics"
@@ -21,56 +24,65 @@ type NATSBroker struct {
 	metrics         *metrics.Metrics
 	config          *config.Config
 	
-	// NATS connection and JetStream context
-	natsConn        *watermillNats.Conn
-	jetStreamCtx    watermillNats.JetStreamContext
-	kvStores        map[string]watermillNats.KeyValue
-	
-	// NATS options for authentication
-	natsOptions     []watermillNats.Option
+	// NATS connection and JetStream interface (NEW)
+	natsConn        *nats.Conn
+	jetStream       jetstream.JetStream
+	kvStores        map[string]jetstream.KeyValue
 	
 	// Local KV cache for performance optimization
 	localKVCache    *rule.LocalKVCache
-	kvSubscriptions []*watermillNats.Subscription
+	kvWatchers      []jetstream.KeyWatcher  // NEW: Watchers instead of subscriptions
 	
 	// Stream resolver for JetStream stream discovery
 	streamResolver  *StreamResolver
 	
-	// Subscription manager for direct NATS subscriptions
+	// Subscription manager for message processing
 	subscriptionMgr *SubscriptionManager
 	
 	// Consumer management - track created consumers
 	consumers       map[string]string  // subject -> consumer name
+	
+	// Context for managing watchers and long-running operations
+	ctx             context.Context
+	cancel          context.CancelFunc
 }
 
 // NewNATSBroker creates a new NATS broker that connects to external NATS servers
 func NewNATSBroker(cfg *config.Config, log *logger.Logger, metrics *metrics.Metrics) (*NATSBroker, error) {
+	// Create cancellable context for broker lifecycle management
+	ctx, cancel := context.WithCancel(context.Background())
+	
 	broker := &NATSBroker{
 		logger:          log,
 		metrics:         metrics,
 		config:          cfg,
-		kvStores:        make(map[string]watermillNats.KeyValue),
+		kvStores:        make(map[string]jetstream.KeyValue),
 		localKVCache:    rule.NewLocalKVCache(log),
-		kvSubscriptions: make([]*watermillNats.Subscription, 0),
+		kvWatchers:      make([]jetstream.KeyWatcher, 0),
 		consumers:       make(map[string]string),
+		ctx:             ctx,
+		cancel:          cancel,
 	}
 
 	// Initialize NATS connection
 	if err := broker.initializeNATSConnection(); err != nil {
+		cancel()
 		return nil, fmt.Errorf("failed to initialize NATS connection: %w", err)
 	}
 
 	// Initialize stream resolver for JetStream stream discovery
-	broker.streamResolver = NewStreamResolver(broker.jetStreamCtx, log)
+	broker.streamResolver = NewStreamResolver(broker.jetStream, log)
 	
 	// Discover streams immediately
-	if err := broker.streamResolver.Discover(); err != nil {
+	if err := broker.streamResolver.Discover(ctx); err != nil {
+		cancel()
 		return nil, fmt.Errorf("failed to discover JetStream streams: %w", err)
 	}
 
 	// Initialize KV stores if enabled
 	if cfg.KV.Enabled {
-		if err := broker.initializeKVStores(); err != nil {
+		if err := broker.initializeKVStores(ctx); err != nil {
+			cancel()
 			return nil, fmt.Errorf("failed to initialize KV stores: %w", err)
 		}
 	}
@@ -82,7 +94,7 @@ func NewNATSBroker(cfg *config.Config, log *logger.Logger, metrics *metrics.Metr
 // Must be called after rule processor is initialized
 func (b *NATSBroker) InitializeSubscriptionManager(processor *rule.Processor) {
 	b.subscriptionMgr = NewSubscriptionManager(
-		b.jetStreamCtx,
+		b.jetStream,
 		processor,
 		b.logger,
 		b.metrics,
@@ -115,23 +127,23 @@ func (b *NATSBroker) CreateConsumerForSubject(subject string) error {
 	// Generate a valid consumer name
 	consumerName := b.generateConsumerName(subject)
 
-	// Map deliver policy from config string to NATS constant
+	// Map deliver policy from config string to JetStream constant
 	deliverPolicy, err := b.parseDeliverPolicy(b.config.NATS.Consumers.DeliverPolicy)
 	if err != nil {
 		return fmt.Errorf("invalid deliver policy: %w", err)
 	}
 
-	// Map replay policy from config string to NATS constant
+	// Map replay policy from config string to JetStream constant
 	replayPolicy, err := b.parseReplayPolicy(b.config.NATS.Consumers.ReplayPolicy)
 	if err != nil {
 		return fmt.Errorf("invalid replay policy: %w", err)
 	}
 
 	// Create consumer configuration
-	consumerConfig := &watermillNats.ConsumerConfig{
+	consumerConfig := jetstream.ConsumerConfig{
 		Durable:       consumerName,
 		FilterSubject: subject,
-		AckPolicy:     watermillNats.AckExplicitPolicy,
+		AckPolicy:     jetstream.AckExplicitPolicy,
 		AckWait:       b.config.NATS.Consumers.AckWaitTimeout,
 		MaxDeliver:    b.config.NATS.Consumers.MaxDeliver,
 		MaxAckPending: b.config.NATS.Consumers.MaxAckPending,
@@ -139,23 +151,11 @@ func (b *NATSBroker) CreateConsumerForSubject(subject string) error {
 		ReplayPolicy:  replayPolicy,
 	}
 
-	// Check if consumer already exists in NATS
-	existingConsumer, err := b.jetStreamCtx.ConsumerInfo(streamName, consumerName)
-	if err == nil && existingConsumer != nil {
-		b.logger.Info("reusing existing durable consumer",
-			"stream", streamName,
-			"consumer", consumerName,
-			"subject", subject,
-			"pending", existingConsumer.NumPending,
-			"delivered", existingConsumer.Delivered.Stream,
-			"deliverPolicy", b.config.NATS.Consumers.DeliverPolicy,
-			"maxAckPending", b.config.NATS.Consumers.MaxAckPending)
-		b.consumers[subject] = consumerName
-		return nil
-	}
-
-	// Create the consumer
-	consumerInfo, err := b.jetStreamCtx.AddConsumer(streamName, consumerConfig)
+	// Use CreateOrUpdateConsumer for idempotent behavior
+	ctx, cancel := context.WithTimeout(b.ctx, 10*time.Second)
+	defer cancel()
+	
+	consumer, err := b.jetStream.CreateOrUpdateConsumer(ctx, streamName, consumerConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create consumer '%s' on stream '%s' for subject '%s': %w",
 			consumerName, streamName, subject, err)
@@ -164,47 +164,51 @@ func (b *NATSBroker) CreateConsumerForSubject(subject string) error {
 	// Track the consumer
 	b.consumers[subject] = consumerName
 
-	b.logger.Info("created durable consumer",
-		"stream", streamName,
-		"consumer", consumerName,
-		"subject", subject,
-		"filterSubject", consumerInfo.Config.FilterSubject,
-		"ackWait", consumerInfo.Config.AckWait,
-		"maxDeliver", consumerInfo.Config.MaxDeliver,
-		"maxAckPending", consumerInfo.Config.MaxAckPending,
-		"deliverPolicy", b.config.NATS.Consumers.DeliverPolicy,
-		"replayPolicy", b.config.NATS.Consumers.ReplayPolicy)
+	// Get consumer info for logging
+	info, _ := consumer.Info(ctx)
+	if info != nil {
+		b.logger.Info("created/updated durable consumer",
+			"stream", streamName,
+			"consumer", consumerName,
+			"subject", subject,
+			"pending", info.NumPending,
+			"ackWait", info.Config.AckWait,
+			"maxDeliver", info.Config.MaxDeliver,
+			"maxAckPending", info.Config.MaxAckPending,
+			"deliverPolicy", b.config.NATS.Consumers.DeliverPolicy,
+			"replayPolicy", b.config.NATS.Consumers.ReplayPolicy)
+	}
 
 	return nil
 }
 
-// parseDeliverPolicy converts config string to NATS DeliverPolicy constant
-func (b *NATSBroker) parseDeliverPolicy(policy string) (watermillNats.DeliverPolicy, error) {
+// parseDeliverPolicy converts config string to JetStream DeliverPolicy constant
+func (b *NATSBroker) parseDeliverPolicy(policy string) (jetstream.DeliverPolicy, error) {
 	switch policy {
 	case "all":
-		return watermillNats.DeliverAllPolicy, nil
+		return jetstream.DeliverAllPolicy, nil
 	case "new":
-		return watermillNats.DeliverNewPolicy, nil
+		return jetstream.DeliverNewPolicy, nil
 	case "last":
-		return watermillNats.DeliverLastPolicy, nil
+		return jetstream.DeliverLastPolicy, nil
 	case "by_start_time":
-		return watermillNats.DeliverByStartTimePolicy, nil
+		return jetstream.DeliverByStartTimePolicy, nil
 	case "by_start_sequence":
-		return watermillNats.DeliverByStartSequencePolicy, nil
+		return jetstream.DeliverByStartSequencePolicy, nil
 	default:
-		return watermillNats.DeliverAllPolicy, fmt.Errorf("unknown deliver policy: %s", policy)
+		return jetstream.DeliverAllPolicy, fmt.Errorf("unknown deliver policy: %s", policy)
 	}
 }
 
-// parseReplayPolicy converts config string to NATS ReplayPolicy constant
-func (b *NATSBroker) parseReplayPolicy(policy string) (watermillNats.ReplayPolicy, error) {
+// parseReplayPolicy converts config string to JetStream ReplayPolicy constant
+func (b *NATSBroker) parseReplayPolicy(policy string) (jetstream.ReplayPolicy, error) {
 	switch policy {
 	case "instant":
-		return watermillNats.ReplayInstantPolicy, nil
+		return jetstream.ReplayInstantPolicy, nil
 	case "original":
-		return watermillNats.ReplayOriginalPolicy, nil
+		return jetstream.ReplayOriginalPolicy, nil
 	default:
-		return watermillNats.ReplayInstantPolicy, fmt.Errorf("unknown replay policy: %s", policy)
+		return jetstream.ReplayInstantPolicy, fmt.Errorf("unknown replay policy: %s", policy)
 	}
 }
 
@@ -261,7 +265,7 @@ func (b *NATSBroker) GetSubscriptionManager() *SubscriptionManager {
 	return b.subscriptionMgr
 }
 
-// InitializeKVCache populates the local cache and subscribes to changes
+// InitializeKVCache populates the local cache and subscribes to changes using Watch API
 func (b *NATSBroker) InitializeKVCache() error {
 	if !b.config.KV.Enabled {
 		b.logger.Info("KV not enabled, skipping cache initialization")
@@ -283,7 +287,7 @@ func (b *NATSBroker) InitializeKVCache() error {
 		return nil
 	}
 
-	// Subscribe to KV changes for real-time updates
+	// Subscribe to KV changes using the new Watch API
 	if err := b.subscribeToKVChanges(); err != nil {
 		b.logger.Error("failed to subscribe to KV changes", "error", err)
 		return nil
@@ -300,9 +304,12 @@ func (b *NATSBroker) InitializeKVCache() error {
 func (b *NATSBroker) populateKVCache() error {
 	b.logger.Info("populating local KV cache", "buckets", b.config.KV.Buckets)
 	
+	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
+	defer cancel()
+	
 	totalLoaded := 0
 	for _, bucketName := range b.config.KV.Buckets {
-		loaded, err := b.loadBucketIntoCache(bucketName)
+		loaded, err := b.loadBucketIntoCache(ctx, bucketName)
 		if err != nil {
 			b.logger.Warn("failed to load bucket into cache", "bucket", bucketName, "error", err)
 			continue
@@ -318,24 +325,21 @@ func (b *NATSBroker) populateKVCache() error {
 }
 
 // loadBucketIntoCache loads all keys from a specific bucket into the cache
-func (b *NATSBroker) loadBucketIntoCache(bucketName string) (int, error) {
+func (b *NATSBroker) loadBucketIntoCache(ctx context.Context, bucketName string) (int, error) {
 	store, exists := b.kvStores[bucketName]
 	if !exists {
 		return 0, fmt.Errorf("bucket not found: %s", bucketName)
 	}
 
-	keys, err := store.Keys()
+	// Use ListKeys to get all keys in the bucket
+	lister, err := store.ListKeys(ctx)
 	if err != nil {
-		if err == watermillNats.ErrNoKeysFound {
-			b.logger.Debug("no keys found in bucket", "bucket", bucketName)
-			return 0, nil
-		}
-		return 0, fmt.Errorf("failed to get keys from bucket %s: %w", bucketName, err)
+		return 0, fmt.Errorf("failed to list keys in bucket %s: %w", bucketName, err)
 	}
 
 	loadedCount := 0
-	for _, key := range keys {
-		entry, err := store.Get(key)
+	for key := range lister.Keys() {
+		entry, err := store.Get(ctx, key)
 		if err != nil {
 			b.logger.Debug("failed to get key during cache population", 
 				"bucket", bucketName, "key", key, "error", err)
@@ -359,73 +363,97 @@ func (b *NATSBroker) loadBucketIntoCache(bucketName string) (int, error) {
 
 		if loadedCount%100 == 0 {
 			b.logger.Debug("cache loading progress", 
-				"bucket", bucketName, "loaded", loadedCount, "total", len(keys))
+				"bucket", bucketName, "loaded", loadedCount)
 		}
 	}
 
 	b.logger.Info("loaded bucket into cache", 
 		"bucket", bucketName, 
-		"totalKeys", len(keys),
 		"loadedKeys", loadedCount)
 	
 	return loadedCount, nil
 }
 
-// subscribeToKVChanges subscribes to KV change streams for real-time cache updates
+// subscribeToKVChanges subscribes to KV change streams using the new Watch API
 func (b *NATSBroker) subscribeToKVChanges() error {
+	b.logger.Info("subscribing to KV changes using Watch API", "buckets", len(b.config.KV.Buckets))
+	
 	for _, bucketName := range b.config.KV.Buckets {
-		if err := b.subscribeToKVBucket(bucketName); err != nil {
-			b.logger.Error("failed to subscribe to KV bucket", "bucket", bucketName, "error", err)
+		if err := b.watchKVBucket(bucketName); err != nil {
+			b.logger.Error("failed to watch KV bucket", "bucket", bucketName, "error", err)
+			// Continue with other buckets
 		}
 	}
 	
-	b.logger.Info("KV change subscriptions established", "buckets", len(b.kvSubscriptions))
+	b.logger.Info("KV watch subscriptions established", "watchers", len(b.kvWatchers))
 	return nil
 }
 
-// subscribeToKVBucket subscribes to changes for a specific KV bucket
-func (b *NATSBroker) subscribeToKVBucket(bucketName string) error {
-	subject := fmt.Sprintf("$KV.%s.>", bucketName)
-	
-	sub, err := b.jetStreamCtx.Subscribe(subject, b.handleKVChange, 
-		watermillNats.DeliverAll(),
-		watermillNats.Durable(fmt.Sprintf("rule-router-kv-cache-%s", bucketName)),
-		watermillNats.ManualAck(),
-	)
-	
-	if err != nil {
-		return fmt.Errorf("failed to subscribe to KV changes for bucket %s: %w", bucketName, err)
+// watchKVBucket creates a watcher for a specific KV bucket using the new Watch API
+func (b *NATSBroker) watchKVBucket(bucketName string) error {
+	store, exists := b.kvStores[bucketName]
+	if !exists {
+		return fmt.Errorf("bucket not found: %s", bucketName)
 	}
 	
-	b.kvSubscriptions = append(b.kvSubscriptions, sub)
+	// Watch all keys in the bucket using ">" pattern
+	// Context from broker ensures watcher stops when broker closes
+	watcher, err := store.Watch(b.ctx, ">")
+	if err != nil {
+		return fmt.Errorf("failed to create watcher for bucket %s: %w", bucketName, err)
+	}
 	
-	b.logger.Info("subscribed to KV changes", 
-		"bucket", bucketName, 
-		"subject", subject,
-		"durable", fmt.Sprintf("rule-router-kv-cache-%s", bucketName))
+	b.kvWatchers = append(b.kvWatchers, watcher)
+	
+	// Start goroutine to process watch updates
+	go b.processKVWatchUpdates(bucketName, watcher)
+	
+	b.logger.Info("created KV watcher", 
+		"bucket", bucketName)
 	
 	return nil
 }
 
-// handleKVChange processes KV change notifications and updates the local cache
-func (b *NATSBroker) handleKVChange(msg *watermillNats.Msg) {
-	parts := strings.Split(msg.Subject, ".")
-	if len(parts) < 3 {
-		b.logger.Debug("invalid KV change subject format", "subject", msg.Subject)
-		msg.Ack()
+// processKVWatchUpdates processes updates from a KV watcher
+func (b *NATSBroker) processKVWatchUpdates(bucketName string, watcher jetstream.KeyWatcher) {
+	b.logger.Debug("starting KV watch processor", "bucket", bucketName)
+	
+	for {
+		select {
+		case <-b.ctx.Done():
+			b.logger.Debug("stopping KV watch processor", "bucket", bucketName)
+			return
+			
+		case entry := <-watcher.Updates():
+			if entry == nil {
+				// Initial values sent, now receiving updates
+				b.logger.Debug("KV watcher initial sync complete", "bucket", bucketName)
+				continue
+			}
+			
+			b.handleKVUpdate(bucketName, entry)
+		}
+	}
+}
+
+// handleKVUpdate processes a single KV update from the watcher
+func (b *NATSBroker) handleKVUpdate(bucketName string, entry jetstream.KeyValueEntry) {
+	key := entry.Key()
+	
+	// Check for delete operation
+	if entry.Operation() == jetstream.KeyValueDelete || entry.Operation() == jetstream.KeyValuePurge {
+		b.localKVCache.Delete(bucketName, key)
+		b.logger.Debug("deleted from KV cache", "bucket", bucketName, "key", key, "operation", entry.Operation())
 		return
 	}
 	
-	bucketName := parts[1]
-	key := strings.Join(parts[2:], ".")
-	
-	b.logger.Debug("processing KV change", 
-		"bucket", bucketName, "key", key, "dataLen", len(msg.Data))
-	
+	// Process normal update/create
 	var parsedValue interface{}
-	if len(msg.Data) > 0 {
-		if err := json.Unmarshal(msg.Data, &parsedValue); err != nil {
-			parsedValue = string(msg.Data)
+	rawValue := entry.Value()
+	
+	if len(rawValue) > 0 {
+		if err := json.Unmarshal(rawValue, &parsedValue); err != nil {
+			parsedValue = string(rawValue)
 			b.logger.Debug("stored non-JSON KV update as string", 
 				"bucket", bucketName, "key", key, "error", err)
 		}
@@ -433,15 +461,11 @@ func (b *NATSBroker) handleKVChange(msg *watermillNats.Msg) {
 		parsedValue = nil
 	}
 	
-	if parsedValue != nil {
-		b.localKVCache.Set(bucketName, key, parsedValue)
-		b.logger.Debug("updated KV cache from stream", "bucket", bucketName, "key", key)
-	} else {
-		b.localKVCache.Delete(bucketName, key)
-		b.logger.Debug("deleted from KV cache from stream", "bucket", bucketName, "key", key)
-	}
-	
-	msg.Ack()
+	b.localKVCache.Set(bucketName, key, parsedValue)
+	b.logger.Debug("updated KV cache from watcher", 
+		"bucket", bucketName, 
+		"key", key, 
+		"revision", entry.Revision())
 }
 
 // GetLocalKVCache returns the local KV cache instance
@@ -458,16 +482,15 @@ func (b *NATSBroker) initializeNATSConnection() error {
 		return fmt.Errorf("failed to build NATS options: %w", err)
 	}
 
-	b.natsOptions = natsOptions
-
-	b.natsConn, err = watermillNats.Connect(b.getFirstNATSURL(), natsOptions...)
+	b.natsConn, err = nats.Connect(b.getFirstNATSURL(), natsOptions...)
 	if err != nil {
 		return fmt.Errorf("failed to connect to NATS: %w", err)
 	}
 
-	b.jetStreamCtx, err = b.natsConn.JetStream()
+	// Create JetStream interface using the new API
+	b.jetStream, err = jetstream.New(b.natsConn)
 	if err != nil {
-		return fmt.Errorf("failed to create JetStream context: %w", err)
+		return fmt.Errorf("failed to create JetStream interface: %w", err)
 	}
 
 	b.logger.Info("NATS connection established successfully")
@@ -475,24 +498,29 @@ func (b *NATSBroker) initializeNATSConnection() error {
 }
 
 // initializeKVStores connects to configured KV buckets
-func (b *NATSBroker) initializeKVStores() error {
+func (b *NATSBroker) initializeKVStores(ctx context.Context) error {
 	b.logger.Info("initializing KV stores", "buckets", b.config.KV.Buckets)
 
 	for _, bucketName := range b.config.KV.Buckets {
 		b.logger.Debug("connecting to KV bucket", "bucket", bucketName)
 		
-		kv, err := b.jetStreamCtx.KeyValue(bucketName)
+		// Use context with timeout for KV operations
+		kvCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		
+		kv, err := b.jetStream.KeyValue(kvCtx, bucketName)
+		cancel()
+		
 		if err != nil {
-			if err == watermillNats.ErrBucketNotFound {
+			if err == jetstream.ErrBucketNotFound {
 				b.logger.Info("KV bucket not found, creating", "bucket", bucketName)
 				
-				kv, err = b.jetStreamCtx.CreateKeyValue(&watermillNats.KeyValueConfig{
+				createCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				kv, err = b.jetStream.CreateKeyValue(createCtx, jetstream.KeyValueConfig{
 					Bucket:      bucketName,
 					Description: fmt.Sprintf("Rule-router KV bucket: %s", bucketName),
-					MaxBytes:    1024 * 1024,
-					TTL:         0,
-					MaxValueSize: 1024,
 				})
+				cancel()
+				
 				if err != nil {
 					return fmt.Errorf("failed to create KV bucket '%s': %w", bucketName, err)
 				}
@@ -512,26 +540,26 @@ func (b *NATSBroker) initializeKVStores() error {
 }
 
 // buildNATSOptions creates NATS connection options with proper authentication and TLS
-func (b *NATSBroker) buildNATSOptions() ([]watermillNats.Option, error) {
-	var natsOptions []watermillNats.Option
+func (b *NATSBroker) buildNATSOptions() ([]nats.Option, error) {
+	var natsOptions []nats.Option
 
 	natsOptions = append(natsOptions,
-		watermillNats.ReconnectWait(b.config.NATS.Connection.ReconnectWait),
-		watermillNats.MaxReconnects(b.config.NATS.Connection.MaxReconnects),
+		nats.ReconnectWait(b.config.NATS.Connection.ReconnectWait),
+		nats.MaxReconnects(b.config.NATS.Connection.MaxReconnects),
 	)
 
 	if b.config.NATS.CredsFile != "" {
 		b.logger.Info("using NATS JWT authentication with creds file", "credsFile", b.config.NATS.CredsFile)
-		natsOptions = append(natsOptions, watermillNats.UserCredentials(b.config.NATS.CredsFile))
+		natsOptions = append(natsOptions, nats.UserCredentials(b.config.NATS.CredsFile))
 	} else if b.config.NATS.NKey != "" {
 		b.logger.Info("using NATS NKey authentication")
-		natsOptions = append(natsOptions, watermillNats.Nkey(b.config.NATS.NKey, nil))
+		natsOptions = append(natsOptions, nats.Nkey(b.config.NATS.NKey, nil))
 	} else if b.config.NATS.Token != "" {
 		b.logger.Info("using NATS token authentication")
-		natsOptions = append(natsOptions, watermillNats.Token(b.config.NATS.Token))
+		natsOptions = append(natsOptions, nats.Token(b.config.NATS.Token))
 	} else if b.config.NATS.Username != "" {
 		b.logger.Info("using NATS username/password authentication", "username", b.config.NATS.Username)
-		natsOptions = append(natsOptions, watermillNats.UserInfo(b.config.NATS.Username, b.config.NATS.Password))
+		natsOptions = append(natsOptions, nats.UserInfo(b.config.NATS.Username, b.config.NATS.Password))
 	}
 
 	if b.config.NATS.TLS.Enable {
@@ -551,19 +579,19 @@ func (b *NATSBroker) buildNATSOptions() ([]watermillNats.Option, error) {
 		}
 
 		if b.config.NATS.TLS.CAFile != "" {
-			natsOptions = append(natsOptions, watermillNats.RootCAs(b.config.NATS.TLS.CAFile))
+			natsOptions = append(natsOptions, nats.RootCAs(b.config.NATS.TLS.CAFile))
 			b.logger.Info("loaded NATS TLS CA certificate", "caFile", b.config.NATS.TLS.CAFile)
 		}
 
-		natsOptions = append(natsOptions, watermillNats.Secure(tlsConfig))
+		natsOptions = append(natsOptions, nats.Secure(tlsConfig))
 	}
 
 	return natsOptions, nil
 }
 
 // GetKVStores returns a copy of the KV stores map
-func (b *NATSBroker) GetKVStores() map[string]watermillNats.KeyValue {
-	stores := make(map[string]watermillNats.KeyValue)
+func (b *NATSBroker) GetKVStores() map[string]jetstream.KeyValue {
+	stores := make(map[string]jetstream.KeyValue)
 	for name, store := range b.kvStores {
 		stores[name] = store
 	}
@@ -576,6 +604,9 @@ func (b *NATSBroker) Close() error {
 
 	var errors []error
 
+	// Cancel context to stop all watchers and long-running operations
+	b.cancel()
+
 	// Stop subscription manager
 	if b.subscriptionMgr != nil {
 		if err := b.subscriptionMgr.Stop(); err != nil {
@@ -583,10 +614,10 @@ func (b *NATSBroker) Close() error {
 		}
 	}
 
-	// Close KV change subscriptions
-	for i, sub := range b.kvSubscriptions {
-		if err := sub.Unsubscribe(); err != nil {
-			errors = append(errors, fmt.Errorf("failed to unsubscribe from KV changes %d: %w", i, err))
+	// Stop all KV watchers (they should stop via context, but ensure cleanup)
+	for i, watcher := range b.kvWatchers {
+		if err := watcher.Stop(); err != nil {
+			errors = append(errors, fmt.Errorf("failed to stop KV watcher %d: %w", i, err))
 		}
 	}
 
@@ -611,5 +642,5 @@ func (b *NATSBroker) getFirstNATSURL() string {
 	if len(b.config.NATS.URLs) > 0 {
 		return b.config.NATS.URLs[0]
 	}
-	return "nats://localhost:4222"
+	return nats.DefaultURL
 }
