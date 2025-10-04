@@ -4,7 +4,7 @@
 
 # NATS Server Connection and JetStream Configuration
 nats:
-  # Connection URLs
+  # Connection URLs - supports multiple servers for high availability
   urls:
     - nats://nats-server-1:4222
     - nats://nats-server-2:4222
@@ -22,7 +22,7 @@ nats:
   # nkey: "your-nkey-here"
   
   # Option 4: JWT with .creds file (recommended for production)
-  # credsFile: "/etc/nats/creds/rule-engine.creds"
+  # credsFile: "/etc/nats/creds/rule-router.creds"
   
   # TLS Configuration
   tls:
@@ -30,57 +30,92 @@ nats:
     certFile: "/etc/ssl/nats/client-cert.pem"
     keyFile: "/etc/ssl/nats/client-key.pem"
     caFile: "/etc/ssl/nats/ca.pem"
-    insecure: false                      # Skip certificate verification (NOT recommended for production)
+    insecure: false  # Skip certificate verification (NOT recommended for production)
   
   # JetStream Consumer Configuration
   consumers:
     # Performance Tuning
-    subscriberCount: 8                   # Concurrent workers per subscription (recommend: 2-4x CPU cores)
-    fetchBatchSize: 64                    # Messages to fetch per pull request (1 = low latency, 10+ = high throughput)
-    fetchTimeout: 1s                     # Max wait time when fetching messages (lower = more aggressive)
-    maxAckPending: 1000                  # Max unacknowledged messages per consumer (backpressure control)
+    subscriberCount: 8        # Concurrent workers per subscription (recommend: 2-4x CPU cores)
+    fetchBatchSize: 64        # Messages to fetch per pull request
+                              # - 1 = lowest latency, immediate processing
+                              # - 10-100 = balanced throughput and latency
+                              # - 100+ = maximum throughput, higher latency
+    
+    fetchTimeout: 5s          # Max wait time when fetching messages
+                              # - Lower (1s) = more aggressive, higher CPU
+                              # - Higher (5s+) = more efficient, allows heartbeat
+                              # Note: For fetchTimeout > 1.5s, automatic heartbeat is enabled
+                              #       For fetchTimeout <= 1.5s, heartbeat is omitted (conflicts with NATS constraints)
+    
+    maxAckPending: 1000       # Max unacknowledged messages per consumer
+                              # Controls backpressure and memory usage
+                              # Increase for high throughput scenarios
     
     # Reliability Settings
-    ackWaitTimeout: 30s                  # Time to wait for ack before redelivery
-    maxDeliver: 3                        # Max redelivery attempts before giving up
+    ackWaitTimeout: 30s       # Time to wait for ack before redelivery
+                              # Increase if message processing takes longer
+    
+    maxDeliver: 3             # Max redelivery attempts before giving up
+                              # Failed messages move to dead letter after this
     
     # Delivery Behavior
-    deliverPolicy: all                   # Options: all (process everything), new (only new messages), last (start from most recent)
-    replayPolicy: instant                # Options: instant (deliver ASAP), original (replay at original timing)
+    deliverPolicy: all        # Options:
+                              # - all: Process all messages (including historical)
+                              # - new: Only process new messages (ignore backlog)
+                              # - last: Start from most recent message
+                              # - by_start_time: Start from specific timestamp
+                              # - by_start_sequence: Start from specific sequence number
+    
+    replayPolicy: instant     # Options:
+                              # - instant: Deliver messages as fast as possible
+                              # - original: Replay messages at original timing intervals
   
   # NATS Connection Behavior
   connection:
-    maxReconnects: -1                    # -1 = unlimited reconnection attempts
-    reconnectWait: 50ms                  # Wait time between reconnection attempts
+    maxReconnects: -1         # -1 = unlimited reconnection attempts
+                              # 0 = no reconnects, >0 = specific number of attempts
+    reconnectWait: 50ms       # Wait time between reconnection attempts
 
 # NATS Key-Value Store Configuration with Local Cache
 kv:
   enabled: true
   buckets:
-    - "device_status"                    # Device operational status
-    - "device_last_seen"                 # Last seen timestamps
-    - "user_preferences"                 # User configuration data
-    - "system_config"                    # System configuration values
+    - "device_status"         # Device operational status
+    - "device_config"         # Device configuration and thresholds
+    - "customer_data"         # Customer metadata for enrichment
+    - "feature_flags"         # Feature toggles and A/B testing
+    - "system_config"         # System-wide configuration
   
-  # Local Cache Configuration (NEW FEATURE - High Performance)
+  # Local Cache Configuration - High Performance In-Memory KV Cache
   localCache:
-    enabled: true                        # Enable in-memory KV caching (default: true)
+    enabled: true             # Enable in-memory KV caching (default: true)
     # When enabled:
     # - All KV data loaded into memory at startup (~25x faster lookups: 50μs → 2μs)
-    # - Subscribe to KV change streams for real-time updates
-    # - Significant CPU reduction (10-15 percentage points)
-    # - Set to false to disable caching for troubleshooting
+    # - Real-time updates via KV Watch API
+    # - Significant CPU reduction (10-15 percentage points at high throughput)
+    # - Memory usage: ~1MB per 1000 KV entries
+    # 
+    # Set to false to disable caching (useful for troubleshooting or memory constraints)
 
 # Logging Configuration
 logging:
-  level: info                            # Options: debug, info, warn, error
-  outputPath: stdout                     # stdout or file path
-  encoding: json                         # json or console
+  level: info                 # Options: debug, info, warn, error
+                              # debug: Verbose logging for development/troubleshooting
+                              # info: Standard operational logging
+                              # warn: Only warnings and errors
+                              # error: Only errors
+  
+  outputPath: stdout          # Output destination: stdout, stderr, or file path
+                              # Examples: stdout, /var/log/rule-router.log
+  
+  encoding: json              # Log format: json or console
+                              # json: Structured logging for log aggregation
+                              # console: Human-readable for development
 
 # Prometheus Metrics Configuration
 metrics:
   enabled: true
-  address: :2112
-  path: /metrics
-  updateInterval: 15s
+  address: :2112              # HTTP server address for metrics endpoint
+  path: /metrics              # Metrics endpoint path
+  updateInterval: 15s         # How often to update gauge metrics
 
