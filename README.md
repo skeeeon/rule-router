@@ -47,7 +47,7 @@ A high-performance NATS JetStream message router that evaluates JSON messages ag
 ### Installation
 
 ```bash
-go install github.com/yourusername/rule-router/cmd/rule-router@latest
+go install github.com/skeeeon/rule-router/cmd/rule-router@latest
 ```
 
 ### Setup
