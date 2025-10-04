@@ -146,11 +146,53 @@ func (sm *SubscriptionManager) worker(ctx context.Context, sub *Subscription, wo
 
 	// Create Messages() iterator for continuous message retrieval
 	// This provides optimized pull consumer behavior with pre-buffering
-	iter, err := sub.Consumer.Messages(
+	// 
+	// Heartbeat configuration:
+	// - NATS minimum: 500ms
+	// - JetStream rule: heartbeat must be < 50% of expiry
+	// - For timeouts <= 1s, these constraints conflict, so we omit heartbeat
+	//   (the timeout itself provides liveness detection)
+	var messagesOpts []jetstream.PullMessagesOpt
+	messagesOpts = append(messagesOpts,
 		jetstream.PullMaxMessages(sub.config.FetchBatchSize),
 		jetstream.PullExpiry(sub.config.FetchTimeout),
-		jetstream.PullHeartbeat(10*time.Second),
 	)
+	
+	// Only add heartbeat if fetchTimeout is long enough to satisfy both constraints
+	// Minimum fetchTimeout for heartbeat: 500ms / 0.5 = 1s, but must be > 1s to have heartbeat < 50%
+	// So we require at least 1.5s to safely use heartbeat
+	if sub.config.FetchTimeout > 1500*time.Millisecond {
+		// Calculate heartbeat as 40% of timeout (safely under 50% requirement)
+		heartbeat := time.Duration(float64(sub.config.FetchTimeout) * 0.4)
+		
+		// Ensure NATS minimum of 500ms
+		if heartbeat < 500*time.Millisecond {
+			heartbeat = 500 * time.Millisecond
+		}
+		
+		// Final safety check: ensure still under 50% of timeout
+		maxHeartbeat := sub.config.FetchTimeout / 2
+		if heartbeat >= maxHeartbeat {
+			// This shouldn't happen with our 40% calculation, but be defensive
+			heartbeat = time.Duration(float64(maxHeartbeat) * 0.95) // 95% of the 50% limit
+		}
+		
+		messagesOpts = append(messagesOpts, jetstream.PullHeartbeat(heartbeat))
+		
+		sub.logger.Debug("configured heartbeat for message iterator",
+			"subject", sub.Subject,
+			"workerID", workerID,
+			"heartbeat", heartbeat,
+			"fetchTimeout", sub.config.FetchTimeout)
+	} else {
+		sub.logger.Debug("omitting heartbeat due to short fetch timeout",
+			"subject", sub.Subject,
+			"workerID", workerID,
+			"fetchTimeout", sub.config.FetchTimeout,
+			"reason", "timeout too short to satisfy NATS minimum (500ms) and JetStream rule (< 50% of expiry)")
+	}
+	
+	iter, err := sub.Consumer.Messages(messagesOpts...)
 	if err != nil {
 		sub.logger.Error("failed to create message iterator",
 			"subject", sub.Subject,
@@ -160,53 +202,55 @@ func (sm *SubscriptionManager) worker(ctx context.Context, sub *Subscription, wo
 	}
 	defer iter.Stop()
 
-	for {
-		select {
-		case <-ctx.Done():
-			sub.logger.Debug("worker stopping",
-				"subject", sub.Subject,
-				"workerID", workerID)
-			return
-		default:
-			// Fetch next message with timeout
-			msg, err := iter.Next()
-			if err != nil {
-				// Check for context cancellation
-				if ctx.Err() != nil {
-					return
-				}
-				
-				// Log other errors but continue processing
-				sub.logger.Debug("iterator error",
-					"subject", sub.Subject,
-					"workerID", workerID,
-					"error", err)
-				
-				// Small backoff on error
-				time.Sleep(100 * time.Millisecond)
-				continue
-			}
+	// Start a goroutine to stop the iterator when context is cancelled
+	// This unblocks any pending iter.Next() calls
+	go func() {
+		<-ctx.Done()
+		iter.Stop()
+	}()
 
-			// Process message (includes rule evaluation + action publishing)
-			if err := sm.processMessage(ctx, sub, msg); err != nil {
-				sub.logger.Error("failed to process message",
+	for {
+		// Fetch next message - this will unblock when iter.Stop() is called
+		msg, err := iter.Next()
+		if err != nil {
+			// Check for context cancellation
+			if ctx.Err() != nil {
+				sub.logger.Debug("worker stopping due to context cancellation",
 					"subject", sub.Subject,
-					"workerID", workerID,
-					"error", err)
-				
-				// Negative ack on processing failure
-				msg.Nak()
-				
-				if sm.metrics != nil {
-					sm.metrics.IncMessagesTotal("error")
-				}
-			} else {
-				// Ack successful processing (after actions published)
-				msg.Ack()
-				
-				if sm.metrics != nil {
-					sm.metrics.IncMessagesTotal("processed")
-				}
+					"workerID", workerID)
+				return
+			}
+			
+			// Log other errors but continue processing
+			sub.logger.Debug("iterator error",
+				"subject", sub.Subject,
+				"workerID", workerID,
+				"error", err)
+			
+			// Small backoff on error
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		// Process message (includes rule evaluation + action publishing)
+		if err := sm.processMessage(ctx, sub, msg); err != nil {
+			sub.logger.Error("failed to process message",
+				"subject", sub.Subject,
+				"workerID", workerID,
+				"error", err)
+			
+			// Negative ack on processing failure
+			msg.Nak()
+			
+			if sm.metrics != nil {
+				sm.metrics.IncMessagesTotal("error")
+			}
+		} else {
+			// Ack successful processing (after actions published)
+			msg.Ack()
+			
+			if sm.metrics != nil {
+				sm.metrics.IncMessagesTotal("processed")
 			}
 		}
 	}
