@@ -4,6 +4,7 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -37,7 +38,7 @@ type Subscription struct {
 	ConsumerName  string
 	StreamName    string
 	Consumer      jetstream.Consumer
-	Workers       int                      // Number of concurrent workers
+	Workers       int // Number of concurrent workers
 	cancel        context.CancelFunc
 	logger        *logger.Logger
 	consumerCfg   *config.ConsumerConfig
@@ -84,7 +85,7 @@ func (sm *SubscriptionManager) AddSubscription(
 	// Get consumer handle using the new API
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	
+
 	consumer, err := sm.jetStream.Consumer(ctx, streamName, consumerName)
 	if err != nil {
 		return fmt.Errorf("failed to get consumer handle for %s: %w", subject, err)
@@ -153,7 +154,7 @@ func (sm *SubscriptionManager) worker(ctx context.Context, sub *Subscription, wo
 
 	// Create Messages() iterator for continuous message retrieval
 	// This provides optimized pull consumer behavior with pre-buffering
-	// 
+	//
 	// Heartbeat configuration:
 	// - NATS minimum: 500ms
 	// - JetStream rule: heartbeat must be < 50% of expiry
@@ -164,28 +165,28 @@ func (sm *SubscriptionManager) worker(ctx context.Context, sub *Subscription, wo
 		jetstream.PullMaxMessages(sub.consumerCfg.FetchBatchSize),
 		jetstream.PullExpiry(sub.consumerCfg.FetchTimeout),
 	)
-	
+
 	// Only add heartbeat if fetchTimeout is long enough to satisfy both constraints
 	// Minimum fetchTimeout for heartbeat: 500ms / 0.5 = 1s, but must be > 1s to have heartbeat < 50%
 	// So we require at least 1.5s to safely use heartbeat
 	if sub.consumerCfg.FetchTimeout > 1500*time.Millisecond {
 		// Calculate heartbeat as 40% of timeout (safely under 50% requirement)
 		heartbeat := time.Duration(float64(sub.consumerCfg.FetchTimeout) * 0.4)
-		
+
 		// Ensure NATS minimum of 500ms
 		if heartbeat < 500*time.Millisecond {
 			heartbeat = 500 * time.Millisecond
 		}
-		
+
 		// Final safety check: ensure still under 50% of timeout
 		maxHeartbeat := sub.consumerCfg.FetchTimeout / 2
 		if heartbeat >= maxHeartbeat {
 			// This shouldn't happen with our 40% calculation, but be defensive
 			heartbeat = time.Duration(float64(maxHeartbeat) * 0.95) // 95% of the 50% limit
 		}
-		
+
 		messagesOpts = append(messagesOpts, jetstream.PullHeartbeat(heartbeat))
-		
+
 		sub.logger.Debug("configured heartbeat for message iterator",
 			"subject", sub.Subject,
 			"workerID", workerID,
@@ -198,7 +199,7 @@ func (sm *SubscriptionManager) worker(ctx context.Context, sub *Subscription, wo
 			"fetchTimeout", sub.consumerCfg.FetchTimeout,
 			"reason", "timeout too short to satisfy NATS minimum (500ms) and JetStream rule (< 50% of expiry)")
 	}
-	
+
 	iter, err := sub.Consumer.Messages(messagesOpts...)
 	if err != nil {
 		sub.logger.Error("failed to create message iterator",
@@ -227,13 +228,13 @@ func (sm *SubscriptionManager) worker(ctx context.Context, sub *Subscription, wo
 					"workerID", workerID)
 				return
 			}
-			
+
 			// Log other errors but continue processing
 			sub.logger.Debug("iterator error",
 				"subject", sub.Subject,
 				"workerID", workerID,
 				"error", err)
-			
+
 			// Small backoff on error
 			time.Sleep(100 * time.Millisecond)
 			continue
@@ -245,17 +246,17 @@ func (sm *SubscriptionManager) worker(ctx context.Context, sub *Subscription, wo
 				"subject", sub.Subject,
 				"workerID", workerID,
 				"error", err)
-			
+
 			// Negative ack on processing failure
 			msg.Nak()
-			
+
 			if sm.metrics != nil {
 				sm.metrics.IncMessagesTotal("error")
 			}
 		} else {
 			// Ack successful processing (after actions published)
 			msg.Ack()
-			
+
 			if sm.metrics != nil {
 				sm.metrics.IncMessagesTotal("processed")
 			}
@@ -290,11 +291,11 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, sub *Subscrip
 				"actionSubject", action.Subject,
 				"sourceSubject", msg.Subject(),
 				"error", err)
-			
+
 			if sm.metrics != nil {
 				sm.metrics.IncActionsTotal("error")
 			}
-			
+
 			// Continue processing other actions, but mark message as failed
 			// This ensures we don't ACK the message if any action fails
 			return fmt.Errorf("failed to publish action: %w", err)
@@ -304,7 +305,7 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, sub *Subscrip
 			sm.metrics.IncActionsTotal("success")
 			sm.metrics.IncRuleMatches()
 		}
-		
+
 		sub.logger.Debug("action published",
 			"actionSubject", action.Subject,
 			"sourceSubject", msg.Subject())
@@ -325,14 +326,14 @@ func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, actio
 	maxRetries := sm.publishCfg.MaxRetries
 	baseDelay := sm.publishCfg.RetryBaseDelay
 	publishMode := sm.publishCfg.Mode
-	
+
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		// Check context cancellation
 		if ctx.Err() != nil {
 			return fmt.Errorf("context cancelled: %w", ctx.Err())
 		}
-		
+
 		// Attempt to publish using configured mode
 		var err error
 		if publishMode == "core" {
@@ -340,7 +341,7 @@ func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, actio
 		} else {
 			err = sm.publishJetStream(ctx, action)
 		}
-		
+
 		if err == nil {
 			// Success
 			if attempt > 0 {
@@ -356,9 +357,9 @@ func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, actio
 			}
 			return nil
 		}
-		
+
 		lastErr = err
-		
+
 		// Log the failure
 		sm.logger.Warn("action publish failed, will retry",
 			"attempt", attempt+1,
@@ -366,12 +367,12 @@ func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, actio
 			"subject", action.Subject,
 			"mode", publishMode,
 			"error", err)
-		
+
 		// Update failure metrics
 		if sm.metrics != nil {
 			sm.metrics.IncActionPublishFailures()
 		}
-		
+
 		// Last attempt - don't sleep
 		if attempt == maxRetries-1 {
 			sm.logger.Error("action publish failed after all retries",
@@ -381,22 +382,22 @@ func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, actio
 				"error", lastErr)
 			break
 		}
-		
+
 		// Exponential backoff: 50ms, 100ms, 200ms (default)
 		delay := baseDelay * time.Duration(1<<attempt)
-		
+
 		sm.logger.Debug("backing off before retry",
 			"attempt", attempt+1,
 			"delay", delay)
-		
+
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("context cancelled during retry backoff: %w", ctx.Err())
 		case <-time.After(delay):
-			// Continue to next retry
+		// Continue to next retry
 		}
 	}
-	
+
 	// All retries exhausted
 	return fmt.Errorf("failed to publish after %d attempts (mode: %s): %w", maxRetries, publishMode, lastErr)
 }
@@ -405,42 +406,38 @@ func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, actio
 func (sm *SubscriptionManager) publishJetStream(ctx context.Context, action *rule.Action) error {
 	pubCtx, cancel := context.WithTimeout(ctx, sm.publishCfg.AckTimeout)
 	defer cancel()
-	
+
 	_, err := sm.jetStream.Publish(pubCtx, action.Subject, []byte(action.Payload))
 	if err != nil {
+		// **FIX**: Check for a more specific error to detect a missing stream.
+		// This provides a much clearer error message than a generic timeout.
+		if errors.Is(err, nats.ErrNoResponders) {
+			return fmt.Errorf("jetstream publish failed: no stream is configured for action subject '%s'", action.Subject)
+		}
 		return fmt.Errorf("jetstream publish failed: %w", err)
 	}
-	
+
 	return nil
 }
 
 // publishCore publishes to core NATS (fire-and-forget, no ack)
 func (sm *SubscriptionManager) publishCore(ctx context.Context, action *rule.Action) error {
-	// Core NATS publish is synchronous but doesn't wait for ack
-	// We still use a timeout context to prevent hangs on network issues
-	
-	// Create a channel to signal completion
-	done := make(chan error, 1)
-	
-	go func() {
-		err := sm.natsConn.Publish(action.Subject, []byte(action.Payload))
-		done <- err
-	}()
-	
-	// Wait for publish to complete or timeout
-	select {
-	case err := <-done:
-		if err != nil {
-			return fmt.Errorf("core nats publish failed: %w", err)
-		}
-		return nil
-		
-	case <-ctx.Done():
-		return fmt.Errorf("core nats publish timeout: %w", ctx.Err())
-		
-	case <-time.After(sm.publishCfg.AckTimeout):
-		return fmt.Errorf("core nats publish timeout after %v", sm.publishCfg.AckTimeout)
+	// **FIX**: The previous implementation incorrectly wrapped this in a timeout.
+	// A core NATS publish is a fast, local buffer operation and should not
+	// be timed out with the JetStream ackTimeout.
+	if err := sm.natsConn.Publish(action.Subject, []byte(action.Payload)); err != nil {
+		return fmt.Errorf("core nats publish failed: %w", err)
 	}
+
+	// Optional: You could flush the buffer here to ensure the message is sent
+	// immediately, but for a true "fire-and-forget" approach, this is not strictly
+	// necessary as the client will flush automatically.
+	//
+	// if err := sm.natsConn.FlushTimeout(2 * time.Second); err != nil {
+	// 	 return fmt.Errorf("core nats flush failed: %w", err)
+	// }
+
+	return nil
 }
 
 // Stop gracefully shuts down all subscriptions
