@@ -177,6 +177,12 @@ func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{
 		result = value != nil
 	case "contains":
 		result = p.compareContains(value, cond.Value)
+	case "not_contains":
+		result = !p.compareContains(value, cond.Value)
+	case "in":
+		result = p.compareIn(value, cond.Value)
+	case "not_in":
+		result = !p.compareIn(value, cond.Value)
 	default:
 		p.logger.Error("unknown operator", "operator", cond.Operator)
 		return false
@@ -254,12 +260,75 @@ func (p *Processor) compareValues(a, b interface{}, op string) bool {
 	}
 }
 
-// NEW: compareContains handles string contains operations
-func (p *Processor) compareContains(a, b interface{}) bool {
-	aStr := p.convertToString(a)
-	bStr := p.convertToString(b)
+// ENHANCED: compareContains handles both string substring AND array membership
+func (p *Processor) compareContains(fieldValue, searchValue interface{}) bool {
+	// Check if field is an array
+	if arr, isArray := fieldValue.([]interface{}); isArray {
+		// Array membership check - does array contain searchValue?
+		p.logger.Debug("checking array membership",
+			"arrayLength", len(arr),
+			"searchValue", searchValue)
+		
+		for i, item := range arr {
+			if p.compareValues(item, searchValue, "eq") {
+				p.logger.Debug("found match in array",
+					"index", i,
+					"item", item,
+					"searchValue", searchValue)
+				return true
+			}
+		}
+		
+		p.logger.Debug("value not found in array",
+			"arrayLength", len(arr),
+			"searchValue", searchValue)
+		return false
+	}
+	
+	// Not an array - fall back to string substring check
+	fieldStr := p.convertToString(fieldValue)
+	searchStr := p.convertToString(searchValue)
+	
+	result := strings.Contains(fieldStr, searchStr)
+	
+	p.logger.Debug("string contains check",
+		"fieldValue", fieldStr,
+		"searchValue", searchStr,
+		"result", result)
+	
+	return result
+}
 
-	return strings.Contains(aStr, bStr)
+// NEW: compareIn checks if fieldValue is IN the array of allowed values
+func (p *Processor) compareIn(fieldValue, allowedValues interface{}) bool {
+	// allowedValues must be an array
+	arr, isArray := allowedValues.([]interface{})
+	if !isArray {
+		p.logger.Debug("'in' operator requires value to be an array",
+			"actualType", fmt.Sprintf("%T", allowedValues),
+			"actualValue", allowedValues)
+		return false
+	}
+	
+	p.logger.Debug("checking if value is in array",
+		"fieldValue", fieldValue,
+		"arrayLength", len(arr))
+	
+	// Check if fieldValue matches any item in the array
+	for i, item := range arr {
+		if p.compareValues(fieldValue, item, "eq") {
+			p.logger.Debug("value found in allowed array",
+				"index", i,
+				"fieldValue", fieldValue,
+				"matchedItem", item)
+			return true
+		}
+	}
+	
+	p.logger.Debug("value not found in allowed array",
+		"fieldValue", fieldValue,
+		"arrayLength", len(arr))
+	return false
 }
 
 func (p *Processor) compareNumeric(a, b interface{}, op string) bool {

@@ -274,6 +274,7 @@ func (l *RulesLoader) validateSubjectField(field string) error {
 // isValidOperator checks if the operator is supported
 func (l *RulesLoader) isValidOperator(op string) bool {
     validOperators := map[string]bool{
+        // Comparison operators
         "eq":       true,
         "neq":      true,
         "gt":       true,
@@ -281,7 +282,14 @@ func (l *RulesLoader) isValidOperator(op string) bool {
         "gte":      true,
         "lte":      true,
         "exists":   true,
-        "contains": true,
+        
+        // String/Array operators
+        "contains":     true,
+        "not_contains": true,
+        
+        // Array membership operators
+        "in":     true,
+        "not_in": true,
     }
     return validOperators[op]
 }

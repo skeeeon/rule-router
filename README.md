@@ -132,6 +132,20 @@ metrics:
     subject: output.subject
     payload: "JSON template"
 ```
+### Condition Operators
+
+**Comparison:**
+- `eq`, `neq` - Equality/Inequality
+- `gt`, `lt`, `gte`, `lte` - Numeric comparisons
+- `exists` - Field presence check
+
+**String/Array:**
+- `contains` - String substring OR array membership
+- `not_contains` - Inverse of contains
+
+**Array Membership:**
+- `in` - Field value is IN array of allowed values
+- `not_in` - Field value is NOT IN array of forbidden values
 
 ### System Fields
 
