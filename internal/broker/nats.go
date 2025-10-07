@@ -24,14 +24,14 @@ type NATSBroker struct {
 	metrics         *metrics.Metrics
 	config          *config.Config
 	
-	// NATS connection and JetStream interface (NEW)
+	// NATS connection and JetStream interface
 	natsConn        *nats.Conn
 	jetStream       jetstream.JetStream
 	kvStores        map[string]jetstream.KeyValue
 	
 	// Local KV cache for performance optimization
 	localKVCache    *rule.LocalKVCache
-	kvWatchers      []jetstream.KeyWatcher  // NEW: Watchers instead of subscriptions
+	kvWatchers      []jetstream.KeyWatcher
 	
 	// Stream resolver for JetStream stream discovery
 	streamResolver  *StreamResolver
@@ -94,16 +94,19 @@ func NewNATSBroker(cfg *config.Config, log *logger.Logger, metrics *metrics.Metr
 // Must be called after rule processor is initialized
 func (b *NATSBroker) InitializeSubscriptionManager(processor *rule.Processor) {
 	b.subscriptionMgr = NewSubscriptionManager(
+		b.natsConn,
 		b.jetStream,
 		processor,
 		b.logger,
 		b.metrics,
 		&b.config.NATS.Consumers,
+		&b.config.NATS.Publish,
 	)
 	b.logger.Info("subscription manager initialized",
 		"subscriberCount", b.config.NATS.Consumers.SubscriberCount,
 		"fetchBatchSize", b.config.NATS.Consumers.FetchBatchSize,
-		"fetchTimeout", b.config.NATS.Consumers.FetchTimeout)
+		"fetchTimeout", b.config.NATS.Consumers.FetchTimeout,
+		"publishMode", b.config.NATS.Publish.Mode)
 }
 
 // CreateConsumerForSubject creates a durable consumer for the given subject

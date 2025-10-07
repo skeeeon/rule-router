@@ -76,6 +76,34 @@ nats:
                               # 0 = no reconnects, >0 = specific number of attempts
     reconnectWait: 50ms       # Wait time between reconnection attempts
 
+  # Action Publish Configuration
+  publish:
+    # Mode determines how rule actions are published:
+    # - "jetstream": Publish to JetStream with ack confirmation (default)
+    #   * Reliable: Actions persisted to stream before ack
+    #   * Slower: ~50-100μs per publish (depends on stream config)
+    #   * Requires: Stream must exist for action subject
+    #   * Best for: Critical actions that must not be lost
+    #
+    # - "core": Publish to core NATS (fire-and-forget)
+    #   * Fast: ~10-20μs per publish
+    #   * No persistence: Actions lost if no subscribers listening
+    #   * No requirements: Works with any subject
+    #   * Best for: High-throughput scenarios, non-critical actions
+    mode: jetstream
+    
+    # Ack timeout for JetStream publishes (only used in jetstream mode)
+    # How long to wait for stream ack before considering publish failed
+    ackTimeout: 5s
+    
+    # Max retries for failed publish operations (applies to both modes)
+    # Failed publishes will be retried with exponential backoff
+    maxRetries: 3
+    
+    # Base delay for retry exponential backoff (applies to both modes)
+    # Actual delays: 50ms, 100ms, 200ms (for 3 retries)
+    retryBaseDelay: 50ms
+
 # NATS Key-Value Store Configuration with Local Cache
 kv:
   enabled: true
@@ -118,4 +146,3 @@ metrics:
   address: :2112              # HTTP server address for metrics endpoint
   path: /metrics              # Metrics endpoint path
   updateInterval: 15s         # How often to update gauge metrics
-

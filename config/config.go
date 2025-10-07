@@ -43,6 +43,9 @@ type NATSConfig struct {
 	
 	// NATS connection behavior
 	Connection ConnectionConfig `json:"connection" yaml:"connection"`
+	
+	// Action publish configuration
+	Publish PublishConfig `json:"publish" yaml:"publish"`
 }
 
 // ConsumerConfig defines JetStream consumer behavior and performance settings
@@ -66,6 +69,23 @@ type ConsumerConfig struct {
 type ConnectionConfig struct {
 	MaxReconnects int           `json:"maxReconnects" yaml:"maxReconnects"` // -1 for unlimited
 	ReconnectWait time.Duration `json:"reconnectWait" yaml:"reconnectWait"` // Wait time between reconnect attempts
+}
+
+// PublishConfig defines how actions are published to NATS
+type PublishConfig struct {
+	// Mode determines publish strategy: "jetstream" or "core"
+	// - jetstream: Publishes to JetStream with ack confirmation (default, reliable)
+	// - core: Publishes to core NATS (faster, fire-and-forget, no persistence guarantee)
+	Mode string `json:"mode" yaml:"mode"`
+	
+	// AckTimeout for JetStream publishes (only used in jetstream mode)
+	AckTimeout time.Duration `json:"ackTimeout" yaml:"ackTimeout"`
+	
+	// MaxRetries for publish operations (applies to both modes)
+	MaxRetries int `json:"maxRetries" yaml:"maxRetries"`
+	
+	// RetryBaseDelay for exponential backoff (applies to both modes)
+	RetryBaseDelay time.Duration `json:"retryBaseDelay" yaml:"retryBaseDelay"`
 }
 
 // KVConfig configures NATS Key-Value store access with local caching support
@@ -200,6 +220,20 @@ func setDefaults(cfg *Config) {
 		cfg.NATS.Consumers.ReplayPolicy = "instant"
 	}
 
+	// Publish defaults
+	if cfg.NATS.Publish.Mode == "" {
+		cfg.NATS.Publish.Mode = "jetstream" // Default to JetStream for reliability
+	}
+	if cfg.NATS.Publish.AckTimeout == 0 {
+		cfg.NATS.Publish.AckTimeout = 5 * time.Second
+	}
+	if cfg.NATS.Publish.MaxRetries == 0 {
+		cfg.NATS.Publish.MaxRetries = 3
+	}
+	if cfg.NATS.Publish.RetryBaseDelay == 0 {
+		cfg.NATS.Publish.RetryBaseDelay = 50 * time.Millisecond
+	}
+
 	// KV defaults - disabled by default, no buckets
 	// KV Local Cache defaults - enabled by default when KV is enabled
 	// Validation will handle setting the default to true if KV is enabled
@@ -288,6 +322,24 @@ func validateConfig(cfg *Config) error {
 	if !validReplayPolicies[cfg.NATS.Consumers.ReplayPolicy] {
 		return fmt.Errorf("invalid replay policy: %s (valid options: instant, original)", 
 			cfg.NATS.Consumers.ReplayPolicy)
+	}
+
+	// Validate publish configuration
+	validPublishModes := map[string]bool{
+		"jetstream": true,
+		"core":      true,
+	}
+	if !validPublishModes[cfg.NATS.Publish.Mode] {
+		return fmt.Errorf("invalid publish mode: %s (valid options: jetstream, core)", cfg.NATS.Publish.Mode)
+	}
+	if cfg.NATS.Publish.AckTimeout <= 0 {
+		return fmt.Errorf("publish ack timeout must be positive")
+	}
+	if cfg.NATS.Publish.MaxRetries < 1 {
+		return fmt.Errorf("publish max retries must be at least 1")
+	}
+	if cfg.NATS.Publish.RetryBaseDelay <= 0 {
+		return fmt.Errorf("publish retry base delay must be positive")
 	}
 
 	// Validate logging config
