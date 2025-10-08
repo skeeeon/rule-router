@@ -1,0 +1,369 @@
+# Array Operators Examples
+# Demonstrates: contains, not_contains, in, not_in
+
+# ============================================================================
+# OPERATOR: contains
+# Usage: Check if array contains a specific value
+# Also works for string substring matching
+# ============================================================================
+
+# Example 1: Array Contains Value (Tag-based routing)
+# Message: {"user_id": "user-123", "tags": ["premium", "vip", "active"]}
+- subject: user.profile-updated
+  conditions:
+    operator: and
+    items:
+      - field: tags
+        operator: contains
+        value: "premium"  # ✅ Does tags array contain "premium"?
+  action:
+    subject: analytics.premium-user-activity
+    payload: |
+      {
+        "user_id": {user_id},
+        "tags": {tags},
+        "event": "premium_user_detected",
+        "timestamp": "{@timestamp()}"
+      }
+
+# Example 2: Array Does NOT Contain Value (Filter banned users)
+# Message: {"user_id": "user-456", "flags": ["verified", "active"]}
+- subject: user.action
+  conditions:
+    operator: and
+    items:
+      - field: flags
+        operator: not_contains
+        value: "banned"  # ✅ Ensure flags array does NOT contain "banned"
+      
+      - field: flags
+        operator: not_contains
+        value: "suspended"  # ✅ Also not suspended
+  action:
+    subject: user.allowed-action
+    payload: |
+      {
+        "user_id": {user_id},
+        "flags": {flags},
+        "action": "proceed",
+        "timestamp": "{@timestamp()}"
+      }
+
+# Example 3: String Contains (Backward compatible)
+# Message: {"name": "John Smith", "email": "john.smith@example.com"}
+- subject: user.search
+  conditions:
+    operator: or
+    items:
+      - field: name
+        operator: contains
+        value: "Smith"  # ✅ String substring match still works
+      
+      - field: email
+        operator: contains
+        value: "@example.com"  # ✅ Email domain check
+  action:
+    subject: search.results
+    payload: |
+      {
+        "name": {name},
+        "email": {email},
+        "match_type": "contains",
+        "timestamp": "{@timestamp()}"
+      }
+
+# ============================================================================
+# OPERATOR: in
+# Usage: Check if field value is IN array of allowed values
+# Perfect for whitelisting/allowlisting
+# ============================================================================
+
+# Example 4: Status Allowlist (Order processing)
+# Message: {"order_id": "ord-789", "status": "confirmed"}
+- subject: orders.process
+  conditions:
+    operator: and
+    items:
+      - field: status
+        operator: in
+        value: ["confirmed", "processing", "shipped"]  # ✅ Allowed statuses
+  action:
+    subject: fulfillment.order-ready
+    payload: |
+      {
+        "order_id": {order_id},
+        "status": {status},
+        "action": "process_order",
+        "timestamp": "{@timestamp()}"
+      }
+
+# Example 5: Multi-tenant Filtering
+# Message: {"tenant_id": "tenant-b", "action": "create_resource"}
+- subject: api.request
+  conditions:
+    operator: and
+    items:
+      - field: tenant_id
+        operator: in
+        value: ["tenant-a", "tenant-b", "tenant-c"]  # ✅ Allowed tenants
+      
+      - field: action
+        operator: not_in
+        value: ["delete", "purge", "destroy"]  # ✅ Forbidden actions
+  action:
+    subject: api.authorized
+    payload: |
+      {
+        "tenant_id": {tenant_id},
+        "action": {action},
+        "authorization": "granted",
+        "request_id": "{@uuid7()}",
+        "timestamp": "{@timestamp()}"
+      }
+
+# Example 6: Priority Levels with Numbers
+# Message: {"task_id": "task-123", "priority": 1}
+- subject: tasks.new
+  conditions:
+    operator: and
+    items:
+      - field: priority
+        operator: in
+        value: [1, 2, 3]  # ✅ High priority tasks (works with numbers!)
+  action:
+    subject: tasks.high-priority
+    payload: |
+      {
+        "task_id": {task_id},
+        "priority": {priority},
+        "queue": "urgent",
+        "assigned_at": "{@timestamp()}"
+      }
+
+# ============================================================================
+# OPERATOR: not_in
+# Usage: Check if field value is NOT IN array of forbidden values
+# Perfect for blacklisting
+# ============================================================================
+
+# Example 7: Security Filtering (Block suspicious actions)
+# Message: {"user_id": "user-999", "action": "view_profile", "ip": "10.0.0.5"}
+- subject: security.event
+  conditions:
+    operator: and
+    items:
+      - field: action
+        operator: not_in
+        value: ["admin_access", "sudo", "root_login"]  # ✅ Blocked actions
+      
+      - field: user_id
+        operator: not_in
+        value: ["banned-001", "banned-002", "banned-003"]  # ✅ Banned users
+  action:
+    subject: security.allowed
+    payload: |
+      {
+        "user_id": {user_id},
+        "action": {action},
+        "ip": {ip},
+        "security_status": "cleared",
+        "check_id": "{@uuid7()}",
+        "timestamp": "{@timestamp()}"
+      }
+
+# ============================================================================
+# COMBINED: Real-World Complex Examples
+# ============================================================================
+
+# Example 8: Feature Flag System with Array Operators
+# Message: {"feature": "new_dashboard", "user_id": "user-555", "user_roles": ["developer", "beta_tester"]}
+- subject: features.check-access
+  conditions:
+    operator: and
+    items:
+      - field: feature
+        operator: in
+        value: ["new_dashboard", "advanced_analytics", "api_v2"]  # Enabled features
+      
+      - field: user_roles
+        operator: contains
+        value: "beta_tester"  # Must have beta_tester role in array
+      
+      - field: user_roles
+        operator: not_contains
+        value: "restricted"  # Must NOT have restricted flag
+  action:
+    subject: features.access-granted
+    payload: |
+      {
+        "user_id": {user_id},
+        "feature": {feature},
+        "user_roles": {user_roles},
+        "access": "granted",
+        "session_id": "{@uuid7()}",
+        "granted_at": "{@timestamp()}"
+      }
+
+# Example 9: IoT Device Validation with KV Enrichment
+# Message: {"device_id": "sensor-042", "event_type": "temperature_reading"}
+# KV: device_config["sensor-042"] = {"allowed_events": ["temperature_reading", "humidity_reading", "status_update"]}
+- subject: iot.device-event
+  conditions:
+    operator: and
+    items:
+      - field: device_id
+        operator: exists
+      
+      - field: event_type
+        operator: in
+        value: ["temperature_reading", "humidity_reading", "battery_status"]
+      
+      # Advanced: Check if device is in allowed list from KV
+      # (This would require KV value to be an array, or use separate conditions)
+  action:
+    subject: iot.validated-event
+    payload: |
+      {
+        "device_id": {device_id},
+        "event_type": {event_type},
+        "validation": "passed",
+        "event_id": "{@uuid7()}",
+        "timestamp": "{@timestamp()}"
+      }
+
+# Example 10: Time-based Access Control with Arrays
+# Message: {"user_id": "admin-001", "operation": "backup", "criticality": "high"}
+- subject: admin.operation
+  conditions:
+    operator: and
+    items:
+      - field: "@time.hour"
+        operator: gte
+        value: 22  # After 10 PM
+      
+      - field: operation
+        operator: in
+        value: ["backup", "maintenance", "cleanup"]  # Allowed off-hours operations
+      
+      - field: criticality
+        operator: not_in
+        value: ["low", "trivial"]  # Only important operations off-hours
+  action:
+    subject: admin.scheduled-operation
+    payload: |
+      {
+        "user_id": {user_id},
+        "operation": {operation},
+        "criticality": {criticality},
+        "scheduled_hour": "{@time.hour}",
+        "operation_id": "{@uuid7()}",
+        "timestamp": "{@timestamp()}"
+      }
+
+# Example 11: E-commerce Order Routing
+# Message: {"order_id": "ord-999", "payment_method": "credit_card", "shipping_country": "US", "items_tags": ["electronics", "fragile"]}
+- subject: orders.new
+  conditions:
+    operator: and
+    items:
+      - field: payment_method
+        operator: in
+        value: ["credit_card", "debit_card", "paypal"]  # Accepted payment methods
+      
+      - field: shipping_country
+        operator: in
+        value: ["US", "CA", "GB", "DE", "FR"]  # Supported countries
+      
+      - field: items_tags
+        operator: contains
+        value: "fragile"  # Has fragile items
+      
+      - field: items_tags
+        operator: not_contains
+        value: "hazmat"  # No hazardous materials
+  action:
+    subject: fulfillment.special-handling
+    payload: |
+      {
+        "order_id": {order_id},
+        "payment_method": {payment_method},
+        "shipping_country": {shipping_country},
+        "items_tags": {items_tags},
+        "handling": "fragile_shipping",
+        "fulfillment_id": "{@uuid7()}",
+        "timestamp": "{@timestamp()}"
+      }
+
+# Example 12: Content Moderation Pipeline
+# Message: {"post_id": "post-777", "content_flags": ["user_reported", "pending_review"], "author_status": "verified"}
+- subject: content.moderation-queue
+  conditions:
+    operator: and
+    items:
+      - field: content_flags
+        operator: contains
+        value: "user_reported"  # Has been reported
+      
+      - field: content_flags
+        operator: not_contains
+        value: "auto_approved"  # Not auto-approved
+      
+      - field: author_status
+        operator: not_in
+        value: ["banned", "suspended", "deleted"]  # Author account is valid
+  action:
+    subject: moderation.manual-review
+    payload: |
+      {
+        "post_id": {post_id},
+        "content_flags": {content_flags},
+        "author_status": {author_status},
+        "review_priority": "standard",
+        "review_id": "{@uuid7()}",
+        "queued_at": "{@timestamp()}"
+      }
+
+# ============================================================================
+# EDGE CASES AND BEST PRACTICES
+# ============================================================================
+
+# Example 13: Empty Arrays and Null Values
+# Message: {"item_id": "item-111", "tags": [], "categories": null}
+- subject: items.validate
+  conditions:
+    operator: and
+    items:
+      # ✅ Empty array: [] contains "something" → false
+      - field: tags
+        operator: contains
+        value: "important"  # False if tags is empty array
+      
+      # ✅ Null handling: null will not match arrays
+      # The condition will evaluate to false
+  action:
+    subject: items.needs-tags
+    payload: |
+      {
+        "item_id": {item_id},
+        "issue": "missing_tags",
+        "timestamp": "{@timestamp()}"
+      }
+
+# Example 14: Type Coercion in Arrays
+# Message: {"config_id": "cfg-555", "port": 8080, "allowed_ports": [80, 443, 8080, 8443]}
+- subject: config.validate
+  conditions:
+    operator: and
+    items:
+      - field: port
+        operator: in
+        value: [80, 443, 8080, 8443]  # ✅ Number comparison with type coercion
+  action:
+    subject: config.port-allowed
+    payload: |
+      {
+        "config_id": {config_id},
+        "port": {port},
+        "validation": "passed",
+        "timestamp": "{@timestamp()}"
+      }

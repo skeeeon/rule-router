@@ -168,22 +168,27 @@ metrics:
 - field: "@subject.count"     # Count: 3
 ```
 
-**KV Lookups** (with JSON path traversal):
+**KV Lookups** (with JSON path traversal using colon delimiter):
 ```yaml
 # Simple lookup
-- field: "@kv.device_status.{device_id}"
+- field: "@kv.device_status.{device_id}:status"
   operator: eq
   value: "active"
 
 # JSON path traversal
-- field: "@kv.customer_data.{customer_id}.tier"
+- field: "@kv.customer_data.{customer_id}:tier"
   operator: eq
   value: "premium"
 
 # Array access
-- field: "@kv.config.{device_id}.thresholds.0.max"
+- field: "@kv.config.{device_id}:thresholds.0.max"
   operator: gt
   value: 100
+
+# Keys with dots (this is why we use the colon!)
+- field: "@kv.device_config.sensor.temp.001:threshold"
+  operator: gt
+  value: 30
 ```
 
 **Template Functions:**
@@ -203,7 +208,7 @@ metrics:
       - field: value
         operator: gt
         value: 30
-      - field: "@kv.device_config.{@subject.1}.enabled"
+      - field: "@kv.device_config.{@subject.1}:enabled"
         operator: eq
         value: true
   action:
@@ -212,13 +217,42 @@ metrics:
       {
         "device_id": "{@subject.1}",
         "temperature": {value},
-        "threshold": "{@kv.device_config.{@subject.1}.thresholds.max}",
+        "threshold": "{@kv.device_config.{@subject.1}:thresholds.max}",
         "alert_id": "{@uuid7()}",
         "timestamp": "{@timestamp()}"
       }
 ```
 
 ## Key-Value Store Integration
+
+### KV Field Syntax
+
+**Format**: `@kv.bucket.key:json.path`
+
+The colon (`:`) delimiter separates the key name from the JSON path. This eliminates ambiguity since NATS KV allows dots in key names.
+
+**Examples**:
+```yaml
+# Simple lookup
+- field: "@kv.device_status.{device_id}:status"
+  operator: eq
+  value: "active"
+
+# Nested JSON path
+- field: "@kv.customer_data.{customer_id}:profile.tier"
+  operator: eq
+  value: "premium"
+
+# Array access
+- field: "@kv.config.{device_id}:thresholds.0.max"
+  operator: gt
+  value: 100
+
+# Key with dots (this is why we need the colon!)
+- field: "@kv.device_config.sensor.temp.001:threshold"
+  operator: gt
+  value: 30
+```
 
 ### Setup
 
@@ -227,8 +261,9 @@ metrics:
 nats kv add device_status
 nats kv add customer_data
 
-# Add data
+# Add data (keys can contain dots!)
 nats kv put device_status device-001 '{"status": "active", "battery": 85}'
+nats kv put device_status sensor.temp.001 '{"threshold": 35, "location": "room-A"}'
 nats kv put customer_data cust-123 '{"tier": "premium", "credits": 1500}'
 ```
 
@@ -253,7 +288,7 @@ kv:
 
 ### JSON Path Traversal
 
-Access nested JSON data in KV values:
+Access nested JSON data in KV values using dot notation after the colon:
 
 ```yaml
 # KV bucket "customer_data" with key "cust123":
@@ -267,17 +302,55 @@ Access nested JSON data in KV values:
 # }
 
 # Access in conditions:
-- field: "@kv.customer_data.{customer_id}.profile.tier"
+- field: "@kv.customer_data.{customer_id}:profile.tier"
   operator: eq
   value: "premium"
 
 # Access in templates:
 payload: |
   {
-    "customer_name": "{@kv.customer_data.{customer_id}.profile.name}",
-    "credits": "{@kv.customer_data.{customer_id}.billing.credits}",
-    "primary_city": "{@kv.customer_data.{customer_id}.addresses.0.city}"
+    "customer_name": "{@kv.customer_data.{customer_id}:profile.name}",
+    "credits": "{@kv.customer_data.{customer_id}:billing.credits}",
+    "primary_city": "{@kv.customer_data.{customer_id}:addresses.0.city}"
   }
+```
+
+### Template Usage
+
+```yaml
+payload: |
+  {
+    "device_id": "{@subject.1}",
+    "customer_name": "{@kv.customer_data.{customer_id}:profile.name}",
+    "threshold": "{@kv.device_config.{device_id}:thresholds.max}",
+    "primary_city": "{@kv.customer_data.{customer_id}:addresses.0.city}"
+  }
+```
+
+### Complete Example
+
+```yaml
+- subject: sensors.*.temperature
+  conditions:
+    operator: and
+    items:
+      - field: value
+        operator: gt
+        value: "@kv.device_config.{@subject.1}:threshold"
+      - field: "@kv.customer_data.{customer_id}:tier"
+        operator: eq
+        value: "premium"
+  action:
+    subject: alerts.{@kv.customer_data.{customer_id}:tier}.temperature
+    payload: |
+      {
+        "device_id": "{@subject.1}",
+        "customer": "{@kv.customer_data.{customer_id}:profile.name}",
+        "temperature": {value},
+        "threshold": "{@kv.device_config.{@subject.1}:threshold}",
+        "alert_id": "{@uuid7()}",
+        "timestamp": "{@timestamp()}"
+      }
 ```
 
 ## Deployment
@@ -421,6 +494,15 @@ nats consumer ls '$KV_{bucket}'
 
 # Check cache stats in logs
 grep "KV cache initialized" /var/log/rule-router.log
+```
+
+**"KV field must use ':' delimiter" errors**
+```
+# Old syntax (incorrect):
+@kv.bucket.key.path
+
+# New syntax (correct):
+@kv.bucket.key:path
 ```
 
 ## Examples

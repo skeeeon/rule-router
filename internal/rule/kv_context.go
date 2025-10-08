@@ -53,25 +53,27 @@ func NewKVContext(stores map[string]jetstream.KeyValue, logger *logger.Logger, l
 		cacheStatus = "enabled"
 	}
 
-	logger.Info("KV context initialized with JSON path support", 
+	logger.Info("KV context initialized with colon delimiter syntax", 
 		"bucketCount", len(ctx.stores), 
 		"buckets", ctx.getBucketNames(),
-		"localCache", cacheStatus)
+		"localCache", cacheStatus,
+		"syntax", "@kv.bucket.key:json.path")
 	return ctx
 }
 
 // GetField retrieves a value from KV store (cache first, then NATS KV fallback)
-// Supports format: "@kv.bucket_name.key_name[.json.path.to.field]"
+// Supports format: "@kv.bucket_name.key_name:json.path.to.field"
+// The colon (:) delimiter separates key from JSON path
 // Returns the value and whether it was found successfully
 func (kv *KVContext) GetField(field string) (interface{}, bool) {
-	// Parse the KV field specification (now with JSON path support)
+	// Parse the KV field specification with colon delimiter
 	bucket, key, jsonPath, err := kv.parseKVFieldWithPath(field)
 	if err != nil {
 		kv.logger.Debug("invalid KV field format", "field", field, "error", err)
 		return nil, false
 	}
 
-	kv.logger.Debug("looking up KV field with JSON path", 
+	kv.logger.Debug("looking up KV field with colon syntax", 
 		"field", field, 
 		"bucket", bucket, 
 		"key", key,
@@ -82,19 +84,14 @@ func (kv *KVContext) GetField(field string) (interface{}, bool) {
 		if cachedValue, found := kv.localCache.Get(bucket, key); found {
 			kv.logger.Debug("KV cache hit", "bucket", bucket, "key", key)
 			
-			// Process JSON path if needed using shared traverser
-			if len(jsonPath) > 0 {
-				finalValue, err := kv.traverser.TraversePath(cachedValue, jsonPath)
-				if err != nil {
-					kv.logger.Debug("JSON path traversal failed on cached value", 
-						"bucket", bucket, "key", key, "jsonPath", jsonPath, "error", err)
-					return nil, false
-				}
-				return finalValue, true
+			// Process JSON path using shared traverser
+			finalValue, err := kv.traverser.TraversePath(cachedValue, jsonPath)
+			if err != nil {
+				kv.logger.Debug("JSON path traversal failed on cached value", 
+					"bucket", bucket, "key", key, "jsonPath", jsonPath, "error", err)
+				return nil, false
 			}
-			
-			// No JSON path needed, return cached value directly
-			return cachedValue, true
+			return finalValue, true
 		}
 		
 		kv.logger.Debug("KV cache miss", "bucket", bucket, "key", key)
@@ -117,7 +114,10 @@ func (kv *KVContext) GetFieldWithContext(field string, msgData map[string]interf
 	
 	// If variables couldn't be resolved, return empty string
 	if hasUnresolvedVars {
-		kv.logger.Debug("KV field has unresolved variables, returning empty", "original", field, "resolved", resolvedField)
+		kv.logger.Warn("KV field has unresolved variables, returning empty", 
+			"original", field, 
+			"resolved", resolvedField,
+			"impact", "Template will use empty value")
 		return "", false
 	}
 
@@ -128,7 +128,10 @@ func (kv *KVContext) GetFieldWithContext(field string, msgData map[string]interf
 	
 	// If KV lookup fails, return empty string (not nil)
 	if !found {
-		kv.logger.Debug("KV lookup failed after variable resolution", "resolvedField", resolvedField)
+		kv.logger.Warn("KV lookup failed after variable resolution",
+			"resolvedField", resolvedField,
+			"originalField", field,
+			"impact", "Template will use empty value")
 		return "", false
 	}
 	
@@ -136,12 +139,15 @@ func (kv *KVContext) GetFieldWithContext(field string, msgData map[string]interf
 }
 
 // getFromNATSKV performs direct NATS KV lookup (fallback when cache misses)
-// UPDATED: Enhanced error handling with WARN for missing keys, ERROR for infrastructure issues
 func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (interface{}, bool) {
 	// Check if the bucket exists in our configured stores
 	store, exists := kv.stores[bucket]
 	if !exists {
-		kv.logger.Debug("KV bucket not configured", "bucket", bucket, "availableBuckets", kv.getBucketNames())
+		kv.logger.Warn("KV bucket not configured", 
+			"bucket", bucket, 
+			"key", key,
+			"availableBuckets", kv.getBucketNames(),
+			"impact", "KV lookup will fail")
 		return nil, false
 	}
 
@@ -152,17 +158,16 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
 	// Perform the KV lookup
 	entry, err := store.Get(ctx, key)
 	if err != nil {
-		// UPDATED: Differentiate between key not found (WARN) and other errors (ERROR)
 		if err == jetstream.ErrKeyNotFound {
 			kv.logger.Warn("KV key does not exist in bucket",
 				"bucket", bucket,
 				"key", key,
-				"hasJSONPath", len(jsonPath) > 0,
+				"jsonPath", jsonPath,
 				"impact", "Rule will use empty value")
 			return nil, false
 		}
 
-		// All other errors are infrastructure problems (network, permissions, etc.)
+		// All other errors are infrastructure problems
 		kv.logger.Error("NATS KV lookup failed - infrastructure issue",
 			"bucket", bucket,
 			"key", key,
@@ -174,31 +179,26 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
 
 	// Get the raw value
 	rawValue := entry.Value()
-	
-	// If no JSON path, return the converted raw value
-	if len(jsonPath) == 0 {
-		value := kv.convertValue(rawValue)
-		kv.logger.Debug("NATS KV lookup successful (no JSON path)", "bucket", bucket, "key", key, "value", value)
-		return value, true
-	}
 
 	// Parse as JSON and traverse the path using shared traverser
 	var jsonObj interface{}
 	if err := json.Unmarshal(rawValue, &jsonObj); err != nil {
-		kv.logger.Debug("failed to parse JSON from KV", 
+		kv.logger.Warn("failed to parse JSON from KV value", 
 			"bucket", bucket, 
 			"key", key, 
-			"error", err)
+			"error", err,
+			"impact", "KV lookup will fail")
 		return nil, false
 	}
 
 	value, err := kv.traverser.TraversePath(jsonObj, jsonPath)
 	if err != nil {
-		kv.logger.Debug("JSON path traversal failed on NATS value", 
+		kv.logger.Warn("JSON path traversal failed on NATS value", 
 			"bucket", bucket, 
 			"key", key, 
 			"jsonPath", jsonPath, 
-			"error", err)
+			"error", err,
+			"impact", "KV lookup will fail")
 		return nil, false
 	}
 
@@ -210,8 +210,15 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
 	return value, true
 }
 
-// parseKVFieldWithPath parses a KV field specification with optional JSON path
-// Format: "@kv.bucket.key[.json.path.to.field]"
+// parseKVFieldWithPath parses a KV field specification with mandatory colon delimiter
+// Format: "@kv.bucket.key:json.path.to.field"
+// The colon (:) separates the key from the JSON path
+// This eliminates ambiguity since NATS allows dots in key names
+// 
+// Examples:
+//   @kv.customer_data.cust-123:tier
+//   @kv.device_config.sensor.temp.001:thresholds.max  (key contains dots!)
+//
 // Returns bucket, key, jsonPath (as slice), and error
 func (kv *KVContext) parseKVFieldWithPath(field string) (bucket, key string, jsonPath []string, err error) {
 	// Field must start with "@kv."
@@ -222,20 +229,37 @@ func (kv *KVContext) parseKVFieldWithPath(field string) (bucket, key string, jso
 	// Remove "@kv." prefix
 	remainder := field[4:]
 	
-	// Split by dots
-	parts := strings.Split(remainder, ".")
-	if len(parts) < 2 {
-		return "", "", nil, fmt.Errorf("KV field must have at least bucket.key format, got: %s", field)
+	// Check for colon delimiter (REQUIRED)
+	if !strings.Contains(remainder, ":") {
+		return "", "", nil, fmt.Errorf("KV field must use ':' to separate key from JSON path (format: @kv.bucket.key:path), got: %s", field)
 	}
-
-	bucket = parts[0]
-	key = parts[1]
 	
-	// Everything after bucket.key is the JSON path (including array indices)
-	if len(parts) > 2 {
-		jsonPath = parts[2:]
+	// Check for multiple colons (invalid)
+	if strings.Count(remainder, ":") > 1 {
+		return "", "", nil, fmt.Errorf("KV field must contain exactly one ':' delimiter, got: %s", field)
 	}
-
+	
+	// Split on first colon
+	colonIndex := strings.Index(remainder, ":")
+	
+	// Left side of colon: bucket.key
+	bucketKeyPart := remainder[:colonIndex]
+	
+	// Right side of colon: json.path (REQUIRED - must not be empty)
+	jsonPathPart := remainder[colonIndex+1:]
+	if jsonPathPart == "" {
+		return "", "", nil, fmt.Errorf("JSON path after ':' cannot be empty in field: %s (format: @kv.bucket.key:path)", field)
+	}
+	
+	// Parse bucket.key (must have exactly one dot between them)
+	bucketKeyParts := strings.SplitN(bucketKeyPart, ".", 2)
+	if len(bucketKeyParts) != 2 {
+		return "", "", nil, fmt.Errorf("KV field must have 'bucket.key' before ':', got: %s", bucketKeyPart)
+	}
+	
+	bucket = bucketKeyParts[0]
+	key = bucketKeyParts[1]
+	
 	// Validate bucket and key are not empty
 	if bucket == "" {
 		return "", "", nil, fmt.Errorf("KV bucket name cannot be empty in field: %s", field)
@@ -243,6 +267,22 @@ func (kv *KVContext) parseKVFieldWithPath(field string) (bucket, key string, jso
 	if key == "" {
 		return "", "", nil, fmt.Errorf("KV key name cannot be empty in field: %s", field)
 	}
+	
+	// Parse JSON path (right side of colon) - guaranteed non-empty by earlier check
+	jsonPath = strings.Split(jsonPathPart, ".")
+	
+	// Validate no empty segments in JSON path
+	for i, segment := range jsonPath {
+		if segment == "" {
+			return "", "", nil, fmt.Errorf("empty JSON path segment at position %d in field: %s", i, field)
+		}
+	}
+	
+	kv.logger.Debug("parsed KV field with colon delimiter",
+		"field", field,
+		"bucket", bucket,
+		"key", key,
+		"jsonPath", jsonPath)
 
 	return bucket, key, jsonPath, nil
 }
@@ -302,48 +342,6 @@ func (kv *KVContext) resolveVariable(varName string, msgData map[string]interfac
 	return value, true
 }
 
-// convertValue converts raw KV store bytes to appropriate Go types
-// Only used when there's no JSON path (backwards compatibility for NATS KV fallback)
-func (kv *KVContext) convertValue(data []byte) interface{} {
-	if len(data) == 0 {
-		return ""
-	}
-
-	str := string(data)
-
-	// Try JSON parsing first for structured data
-	var jsonValue interface{}
-	if err := json.Unmarshal(data, &jsonValue); err == nil {
-		// Successfully parsed as JSON, return the structured data
-		return jsonValue
-	}
-
-	// Fall back to primitive type parsing
-	// Try boolean conversion first (true/false)
-	if lowerStr := strings.ToLower(str); lowerStr == "true" || lowerStr == "false" {
-		if val, err := strconv.ParseBool(lowerStr); err == nil {
-			return val
-		}
-	}
-
-	// Try integer conversion
-	if val, err := strconv.ParseInt(str, 10, 64); err == nil {
-		// Check if it fits in a regular int
-		if val >= -2147483648 && val <= 2147483647 {
-			return int(val)
-		}
-		return val
-	}
-
-	// Try float conversion
-	if val, err := strconv.ParseFloat(str, 64); err == nil {
-		return val
-	}
-
-	// Default to string
-	return str
-}
-
 // convertToString with better handling of edge cases
 func (kv *KVContext) convertToString(value interface{}) string {
 	switch v := value.(type) {
@@ -395,8 +393,9 @@ func (kv *KVContext) GetStats() map[string]interface{} {
 		"bucket_count":         len(kv.stores),
 		"bucket_names":         kv.getBucketNames(),
 		"initialized":          true,
+		"syntax":               "colon_delimiter",
 		"json_path_support":    true,
-		"array_access_support": true, // NEW: Now supports array access
+		"array_access_support": true,
 		"variable_resolution":  "enhanced",
 	}
 

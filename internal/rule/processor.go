@@ -22,7 +22,9 @@ var (
     // Combined pattern: captures optional @ prefix and variable content
     // {@time.hour} -> groups: ["@", "time.hour"]  
     // {temperature} -> groups: ["", "temperature"]
-    combinedVariablePattern = regexp.MustCompile(`\{(@?)([a-zA-Z0-9_.()]+)\}`)
+    // {@kv.bucket.key:path} -> groups: ["@", "kv.bucket.key:path"]
+    // Note: Includes colon (:) to support KV syntax with colon delimiter
+    combinedVariablePattern = regexp.MustCompile(`\{(@?)([a-zA-Z0-9_.:()]+)\}`)
 )
 
 type Processor struct {
@@ -234,16 +236,16 @@ func (p *Processor) processTemplate(template string, data map[string]interface{}
             "content", varContent)
 
         if isSystemVar {
-            // System variable: @time.hour, @subject.1, @kv.bucket.key, @uuid7()
+            // System variable: @time.hour, @subject.1, @kv.bucket.key:path, @uuid7()
             if strings.HasSuffix(varContent, "()") {
                 // System function: timestamp(), uuid7()
                 return p.processSystemFunction(varContent)
             } else {
-                // System field: time.hour, subject.1, kv.bucket.key
+                // System field: time.hour, subject.1, kv.bucket.key:path
                 return p.processSystemField("@"+varContent, data, timeCtx, subjectCtx, kvCtx)
             }
         } else {
-            // Message variable: temperature, sensor.location, readings.0.value (NOW WITH ARRAYS!)
+            // Message variable: temperature, sensor.location, readings.0.value
             return p.processMessageVariable(varContent, data)
         }
     })
@@ -278,7 +280,7 @@ func (p *Processor) processSystemFunction(function string) string {
 
 // ENHANCED: processSystemField with consistent empty string handling and WARN logging
 func (p *Processor) processSystemField(systemField string, msgData map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext, kvCtx *KVContext) string {
-    // Try KV context first (for @kv.bucket.key fields) - WITH VARIABLE RESOLUTION!
+    // Try KV context first (for @kv.bucket.key:path fields) - WITH VARIABLE RESOLUTION!
     if strings.HasPrefix(systemField, "@kv") && kvCtx != nil {
         if value, exists := kvCtx.GetFieldWithContext(systemField, msgData, timeCtx, subjectCtx); exists {
             strValue := p.convertToString(value)
@@ -292,7 +294,8 @@ func (p *Processor) processSystemField(systemField string, msgData map[string]in
             "bucket", bucket,
             "key", key,
             "availableBuckets", kvCtx.GetAllBuckets(),
-            "impact", "Template variable will be empty in output")
+            "impact", "Template variable will be empty in output",
+            "syntax", "Ensure format is @kv.bucket.key:path with colon delimiter")
         return ""
     }
     
@@ -336,27 +339,9 @@ func (p *Processor) processMessageVariable(fieldPath string, data map[string]int
     return strValue
 }
 
-// extractBucketAndKey is a helper to parse KV field for better logging (same as in evaluator)
-func (p *Processor) extractBucketAndKey(kvField string) (bucket string, key string) {
-    // Format: @kv.bucket.key or @kv.bucket.{var}.path
-    if !strings.HasPrefix(kvField, "@kv.") {
-        return "unknown", "unknown"
-    }
-    
-    parts := strings.Split(kvField[4:], ".") // Remove "@kv."
-    if len(parts) < 2 {
-        return "unknown", "unknown"
-    }
-    
-    bucket = parts[0]
-    // Key might have variables or paths, just return the next part
-    key = parts[1]
-    if len(parts) > 2 {
-        key = key + "..." // Indicate there's more
-    }
-    
-    return bucket, key
-}
+// Note: extractBucketAndKey helper method is defined in evaluator.go
+// It's shared between processor.go and evaluator.go since both operate
+// on the *Processor type and are in the same package
 
 // ENHANCED: convertToString with better nil handling for templates
 func (p *Processor) convertToString(value interface{}) string {
@@ -389,8 +374,6 @@ func (p *Processor) convertToString(value interface{}) string {
         return fmt.Sprintf("%v", v)
     }
 }
-
-// REMOVED getValueFromPath - now using shared traverser.TraversePath
 
 func (p *Processor) GetStats() ProcessorStats {
     stats := ProcessorStats{

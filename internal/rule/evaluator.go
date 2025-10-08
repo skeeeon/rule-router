@@ -73,7 +73,7 @@ func (p *Processor) evaluateConditions(conditions *Conditions, msg map[string]in
 	return finalResult
 }
 
-// ENHANCED: evaluateCondition with better KV handling and error logging
+// ENHANCED: evaluateCondition with better KV handling and WARN logging
 func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext, kvCtx *KVContext) bool {
 	var value interface{}
 	var ok bool
@@ -97,7 +97,8 @@ func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{
 					"bucket", bucket,
 					"key", key,
 					"availableBuckets", kvCtx.GetAllBuckets(),
-					"impact", "Rule condition evaluates to false")
+					"impact", "Rule condition evaluates to false",
+					"syntax", "Ensure format is @kv.bucket.key:path with colon delimiter")
 				// For conditions, missing KV values should cause condition to fail
 				return false
 			}
@@ -393,12 +394,44 @@ func (p *Processor) compareNumeric(a, b interface{}, op string) bool {
 	}
 }
 
-// REMOVED getValueFromPath - now using shared TraverseJSONPath from json_traversal.go
-
 func getMapKeys(m map[string]interface{}) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// extractBucketAndKey is a helper to parse KV field for better logging (same as in processor)
+// UPDATED: Now works with colon delimiter syntax
+func (p *Processor) extractBucketAndKey(kvField string) (bucket string, key string) {
+	// Format: @kv.bucket.key:path
+	if !strings.HasPrefix(kvField, "@kv.") {
+		return "unknown", "unknown"
+	}
+	
+	remainder := kvField[4:] // Remove "@kv."
+	
+	// Find colon
+	colonIndex := strings.Index(remainder, ":")
+	if colonIndex == -1 {
+		return "unknown", "unknown"
+	}
+	
+	// Parse bucket.key before colon
+	bucketKeyPart := remainder[:colonIndex]
+	parts := strings.SplitN(bucketKeyPart, ".", 2)
+	if len(parts) != 2 {
+		return "unknown", "unknown"
+	}
+	
+	bucket = parts[0]
+	key = parts[1]
+	
+	// Indicate if there's a JSON path
+	if colonIndex < len(remainder)-1 && remainder[colonIndex+1:] != "" {
+		key = key + ":..." // Indicate path exists
+	}
+	
+	return bucket, key
 }
