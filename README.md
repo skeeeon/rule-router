@@ -6,6 +6,7 @@ A high-performance NATS JetStream message router that evaluates JSON messages ag
 
 - **High Performance** - Microsecond rule evaluation, thousands of messages per second
 - **NATS JetStream Native** - Pull consumers with durable subscriptions
+- **Intelligent Stream Selection** - Automatically prefers memory streams and optimal subject filters
 - **Key-Value Store** - Dynamic lookups with JSON path traversal and local caching (~25x faster)
 - **Time-Based Rules** - Schedule-aware evaluation without external schedulers
 - **Pattern Matching** - NATS wildcards (`*` and `>`) with subject token access
@@ -30,9 +31,9 @@ A high-performance NATS JetStream message router that evaluates JSON messages ag
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
 │  │ Subscription │  │ Rule Engine  │  │ Local Cache  │     │
 │  │ Manager      │──│ + Templates  │──│ (KV Mirror)  │     │
-│  │ (8 workers)  │  │ + Conditions │  │ (Real-time)  │     │
+│  │              │  │ + Conditions │  │ (Real-time)  │     │
 │  └──────┬───────┘  └──────┬───────┘  └──────────────┘     │
-│         └──────────────────┴─► Publish Actions            │
+│         └─────────────────┴─► Publish Actions             │
 └───────────────────────────────────────────────────────────┘
 ```
 
@@ -43,6 +44,14 @@ A high-performance NATS JetStream message router that evaluates JSON messages ag
 - Go 1.23+
 - NATS Server with JetStream enabled
 - **JetStream streams must exist before starting rule-router**
+
+### Understanding Stream Requirements
+
+Rule-router requires JetStream streams for both:
+1. **Consuming messages** - Streams that match rule subjects (input)
+2. **Publishing actions** - Streams that match action subjects (output)
+
+Before starting rule-router, ensure streams exist for both your rule subjects and action subjects. If a rule input subject cannot be mapped to a stream, rule-router will fail to start with a clear error message listing available streams. It will not fail to start if you do not have publish streams, but you will never receive an ACK for your publish causing a retry storm. If you do not care about publish ACK's, use the core publish mode instead.
 
 ### Installation
 
@@ -56,8 +65,11 @@ go install github.com/skeeeon/rule-router/cmd/rule-router@latest
 # Start NATS with JetStream
 docker run -d --name nats-js -p 4222:4222 nats:latest -js
 
-# Create streams for your subjects
+# Create streams for rule subjects (input) and action subjects (output)
+# Rule subject: sensors.temperature
 nats stream add SENSORS --subjects "sensors.>"
+
+# Action subject: alerts.high-temperature
 nats stream add ALERTS --subjects "alerts.>"
 
 # Create a rule
@@ -80,11 +92,14 @@ cat > rules/temperature.yaml <<EOF
       }
 EOF
 
-# Run rule-router
+# Run rule-router (will validate streams exist for both subjects)
 rule-router -config config/config.yaml -rules rules/
 
-# Test
+# Test - publish to input stream
 nats pub sensors.temperature '{"temperature": 35}'
+
+# Verify - check output stream
+nats sub alerts.high-temperature
 ```
 
 ## Configuration
@@ -315,44 +330,6 @@ payload: |
   }
 ```
 
-### Template Usage
-
-```yaml
-payload: |
-  {
-    "device_id": "{@subject.1}",
-    "customer_name": "{@kv.customer_data.{customer_id}:profile.name}",
-    "threshold": "{@kv.device_config.{device_id}:thresholds.max}",
-    "primary_city": "{@kv.customer_data.{customer_id}:addresses.0.city}"
-  }
-```
-
-### Complete Example
-
-```yaml
-- subject: sensors.*.temperature
-  conditions:
-    operator: and
-    items:
-      - field: value
-        operator: gt
-        value: "@kv.device_config.{@subject.1}:threshold"
-      - field: "@kv.customer_data.{customer_id}:tier"
-        operator: eq
-        value: "premium"
-  action:
-    subject: alerts.{@kv.customer_data.{customer_id}:tier}.temperature
-    payload: |
-      {
-        "device_id": "{@subject.1}",
-        "customer": "{@kv.customer_data.{customer_id}:profile.name}",
-        "temperature": {value},
-        "threshold": "{@kv.device_config.{@subject.1}:threshold}",
-        "alert_id": "{@uuid7()}",
-        "timestamp": "{@timestamp()}"
-      }
-```
-
 ## Deployment
 
 ### Docker
@@ -437,12 +414,30 @@ watch 'curl -s http://localhost:2112/metrics | grep action_publish_failures'
 
 ## Performance
 
+### Stream Selection
+
+Rule-router intelligently selects the optimal JetStream stream for each rule subject, supporting primary streams, mirrors, and sourced streams.
+
+#### Selection Criteria (Priority Order)
+
+1. **Subject Specificity** - More specific patterns score higher
+2. **Storage Type** - Memory streams preferred (2x multiplier) over file
+3. **Stream Type** - Primary streams slightly preferred over mirrors (0.95x penalty)
+4. **System Streams** - KV/system streams de-prioritized (0.1x penalty)
+
+**Benefits:**
+- Rules automatically consume from optimal streams
+- Memory streams provide ~5x lower latency
+- Filtered mirrors improve consumer distribution
+- File mirrors preserve history without impacting performance
+
 ### Characteristics
 
 - **Rule Evaluation**: Microseconds per message
 - **KV Cache Lookups**: ~2μs (cached), ~50μs (NATS KV fallback)
 - **Message Throughput**: Thousands of messages per second per instance
 - **Latency**: Sub-millisecond for co-located NATS
+- **Stream Selection**: ~1-5μs per lookup
 
 ### Scaling Strategy
 
@@ -450,6 +445,7 @@ watch 'curl -s http://localhost:2112/metrics | grep action_publish_failures'
 - Increase `subscriberCount` (workers)
 - Increase `fetchBatchSize` for throughput
 - Enable KV cache for performance
+- Use memory streams for hot paths
 
 **Horizontal Scaling** (multiple instances):
 - Deploy multiple rule-router instances
@@ -469,6 +465,9 @@ watch 'curl -s http://localhost:2112/metrics | grep action_publish_failures'
 ```bash
 # Create required streams
 nats stream add STREAM_NAME --subjects "your.subject.>"
+
+# Or create a mirror with filter
+nats stream add STREAM_MIRROR --mirror SOURCE --mirror-filter "your.subject.>"
 ```
 
 **"Consumer already exists with different config"**
@@ -503,6 +502,16 @@ grep "KV cache initialized" /var/log/rule-router.log
 
 # New syntax (correct):
 @kv.bucket.key:path
+```
+
+**Stream selection debugging**
+```bash
+# Enable debug logging
+logging:
+  level: debug
+
+# Check which stream was selected
+grep "selected optimal stream" rule-router.log | jq .
 ```
 
 ## Examples
