@@ -34,6 +34,7 @@ func main() {
 	test := flag.Bool("test", false, "Run in Batch Test mode. Requires --rules.")
 	rulePath := flag.String("rule", "", "Path to a single rule file for Quick Check mode.")
 	messagePath := flag.String("message", "", "Path to a single message file for Quick Check mode.")
+	subjectOverride := flag.String("subject", "", "Manually specify a subject for Quick Check mode, overriding the rule's subject.")
 	rulesDir := flag.String("rules", "", "Path to the root directory for rules (used for --lint and --test).")
 	flag.Parse()
 
@@ -44,13 +45,13 @@ func main() {
 	} else if *test && *rulesDir != "" {
 		runBatchTest(*rulesDir)
 	} else if *rulePath != "" && *messagePath != "" {
-		runQuickCheck(*rulePath, *messagePath)
+		runQuickCheck(*rulePath, *messagePath, *subjectOverride)
 	} else {
 		fmt.Println("Invalid usage. Please use one of the following modes:")
-		fmt.Println("  --lint --rules <dir>       : Validate syntax of all rules in a directory.")
-		fmt.Println("  --scaffold <rule_file>   : Create a test directory and placeholder files for a rule.")
-		fmt.Println("  --test --rules <dir>       : Run all batch tests found in a directory.")
-		fmt.Println("  --rule <file> --message <file> : Run a single quick check.")
+		fmt.Println("  --lint --rules <dir>              : Validate syntax of all rules in a directory.")
+		fmt.Println("  --scaffold <rule_file>          : Create a test directory and placeholder files for a rule.")
+		fmt.Println("  --test --rules <dir>              : Run all batch tests found in a directory.")
+		fmt.Println("  --rule <file> --message <file> [--subject <subj>] : Run a single quick check.")
 		os.Exit(1)
 	}
 }
@@ -66,7 +67,6 @@ func runLinter(rulesDir string) {
 			return err
 		}
 		if !info.IsDir() && (strings.HasSuffix(path, ".yaml") || strings.HasSuffix(path, ".yml")) {
-			// In lint mode, we just need to validate the file itself, not its whole directory.
 			if _, err := loadSingleRuleFile(path); err != nil {
 				fmt.Printf("✖ FAIL: %s\n  Error: %v\n", path, err)
 				failed = true
@@ -83,7 +83,6 @@ func runLinter(rulesDir string) {
 	fmt.Println("\nLinting complete. All files are valid.")
 }
 
-
 func runScaffold(rulePath string) {
 	if !strings.HasSuffix(rulePath, ".yaml") && !strings.HasSuffix(rulePath, ".yml") {
 		fmt.Println("Error: --scaffold flag requires a path to a .yaml rule file.")
@@ -96,28 +95,31 @@ func runScaffold(rulePath string) {
 		os.Exit(1)
 	}
 
-	// --- Smart Scaffolding Logic ---
-	// Create _test_config.json with the rule's subject
 	rules, err := loadSingleRuleFile(rulePath)
 	if err != nil || len(rules) == 0 {
-		fmt.Printf("Warning: Could not read subject from rule file %s. A default will be used.\n", rulePath)
-	} else {
-		subject := rules[0].Subject
-		var content string
-		if strings.Contains(subject, "*") || strings.Contains(subject, ">") {
-			content = fmt.Sprintf("{\n  // IMPORTANT: Please replace this placeholder with a concrete subject for your test.\n  \"subject\": \"%s\"\n}\n", "subject")
-		} else {
-			content = fmt.Sprintf("{\n  \"subject\": \"%s\"\n}\n", subject)
-		}
-		ioutil.WriteFile(filepath.Join(testDir, "_test_config.json"), []byte(content), 0644)
+		fmt.Printf("Warning: Could not read subject from rule file %s. Using placeholder.\n", rulePath)
 	}
 
-	// Create placeholder message files
+	subject := "subject"
+	if err == nil && len(rules) > 0 {
+		ruleSubject := rules[0].Subject
+		if !strings.Contains(ruleSubject, "*") && !strings.Contains(ruleSubject, ">") {
+			subject = ruleSubject
+		}
+	}
+
+	testConfig := TestConfig{
+		Subject:  subject,
+		MockTime: time.Now().Format(time.RFC3339),
+	}
+	configBytes, _ := json.MarshalIndent(testConfig, "", "  ")
+	ioutil.WriteFile(filepath.Join(testDir, "_test_config.json"), configBytes, 0644)
+
 	ioutil.WriteFile(filepath.Join(testDir, "match_1.json"), []byte("{}\n"), 0644)
 	ioutil.WriteFile(filepath.Join(testDir, "not_match_1.json"), []byte("{}\n"), 0644)
 
 	fmt.Printf("✔ Scaffolded test directory at: %s\n", testDir)
-	fmt.Println("  - _test_config.json")
+	fmt.Println("  - _test_config.json (populated with subject and mock time)")
 	fmt.Println("  - match_1.json")
 	fmt.Println("  - not_match_1.json")
 	fmt.Println("\n💡 Tip:")
@@ -125,27 +127,49 @@ func runScaffold(rulePath string) {
 	fmt.Println("   - For dependencies, add 'mock_kv_data.json'.")
 }
 
+func runQuickCheck(rulePath, messagePath, subjectOverride string) {
+	var testSubject string
 
-func runQuickCheck(rulePath, messagePath string) {
-	// For a quick check, we use default mocks
-	testConfig := &TestConfig{Subject: "test.subject"}
+	if subjectOverride != "" {
+		// Priority 1: Use the manual override from the flag
+		testSubject = subjectOverride
+	} else {
+		// Priority 2: Try to infer from the rule file
+		rules, err := loadSingleRuleFile(rulePath)
+		if err != nil || len(rules) == 0 {
+			fmt.Printf("Error: Could not load or parse rule file %s: %v\n", rulePath, err)
+			os.Exit(1)
+		}
+		
+		ruleSubject := rules[0].Subject
+		if strings.Contains(ruleSubject, "*") || strings.Contains(ruleSubject, ">") {
+			testSubject = "subject" // Fallback to placeholder for wildcards
+			fmt.Printf("ℹ Warning: Rule subject '%s' contains a wildcard.\n", ruleSubject)
+			fmt.Println("  Using placeholder subject 'subject' for this test.")
+			fmt.Println("  Use the --subject flag to specify a concrete subject for testing wildcards.")
+			fmt.Println()
+		} else {
+			testSubject = ruleSubject // Use the concrete subject from the rule
+		}
+	}
+
+	testConfig := &TestConfig{Subject: testSubject}
 	processor := setupTestProcessor(rulePath, nil, testConfig)
 
-	// Load the message
 	msgBytes, err := ioutil.ReadFile(messagePath)
 	if err != nil {
 		fmt.Printf("Error reading message file %s: %v\n", messagePath, err)
 		os.Exit(1)
 	}
 
-	// Process
+	fmt.Printf("▶ Running Quick Check on subject: %s\n\n", testSubject)
+
 	actions, err := processor.ProcessWithSubject(testConfig.Subject, msgBytes)
 	if err != nil {
 		fmt.Printf("Error during processing: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Report
 	if len(actions) > 0 {
 		fmt.Println("Rule Matched: True")
 		for _, action := range actions {
@@ -164,24 +188,20 @@ func runBatchTest(rulesDir string) {
 	var total, passed, failed int
 
 	filepath.Walk(rulesDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
+		if err != nil { return err }
 		if !info.IsDir() && (strings.HasSuffix(path, ".yaml") || strings.HasSuffix(path, ".yml")) {
 			testDir := strings.TrimSuffix(path, filepath.Ext(path)) + "_test"
 			if _, err := os.Stat(testDir); !os.IsNotExist(err) {
 				fmt.Printf("=== RULE: %s ===\n", path)
-				// Load mocks for this suite
 				kvData := loadMockKV(filepath.Join(testDir, "mock_kv_data.json"))
 				testConfig := loadTestConfig(filepath.Join(testDir, "_test_config.json"))
 				processor := setupTestProcessor(path, kvData, testConfig)
 
-				// Find and run test cases
 				testFiles, _ := filepath.Glob(filepath.Join(testDir, "*.json"))
 				for _, testFile := range testFiles {
 					baseName := filepath.Base(testFile)
 					if strings.HasSuffix(baseName, "_output.json") || baseName == "mock_kv_data.json" || baseName == "_test_config.json" {
-						continue // Skip output, config and mock files
+						continue
 					}
 
 					total++
@@ -193,7 +213,6 @@ func runBatchTest(rulesDir string) {
 						fmt.Printf("  ✔ %s\n", baseName)
 						passed++
 					} else {
-						// This case should not be hit if runSingleTestCase always returns an error on failure
 						fmt.Printf("  ✖ %s\n    Error: Assertion failed without a specific error message.\n", baseName)
 						failed++
 					}
@@ -211,33 +230,27 @@ func runBatchTest(rulesDir string) {
 	}
 }
 
-
 // --- Helper Functions ---
 
 func runSingleTestCase(processor *rule.Processor, messagePath, subject string) (bool, error) {
 	baseName := filepath.Base(messagePath)
 	shouldMatch := strings.HasPrefix(baseName, "match_")
 
-	// Load message
 	msgBytes, err := ioutil.ReadFile(messagePath)
 	if err != nil {
 		return false, fmt.Errorf("could not read message file: %w", err)
 	}
 
-	// Process
 	actions, err := processor.ProcessWithSubject(subject, msgBytes)
 	if err != nil {
 		return false, fmt.Errorf("processing error: %w", err)
 	}
 
 	matched := len(actions) > 0
-
-	// Validate outcome
 	if matched != shouldMatch {
 		return false, fmt.Errorf("assertion failed: expected match result '%v', but got '%v'", shouldMatch, matched)
 	}
 
-	// If it matched and we expect an output, validate it
 	if matched {
 		outputFile := strings.TrimSuffix(messagePath, ".json") + "_output.json"
 		if _, err := os.Stat(outputFile); !os.IsNotExist(err) {
@@ -245,12 +258,10 @@ func runSingleTestCase(processor *rule.Processor, messagePath, subject string) (
 		}
 	}
 
-	return true, nil // Test passed
+	return true, nil
 }
 
-
 func validateOutput(action *rule.Action, outputFile string) (bool, error) {
-	// Read expected output file
 	expectedBytes, err := ioutil.ReadFile(outputFile)
 	if err != nil {
 		return false, fmt.Errorf("could not read expected output file: %w", err)
@@ -261,12 +272,10 @@ func validateOutput(action *rule.Action, outputFile string) (bool, error) {
 		return false, fmt.Errorf("could not parse expected output file: %w", err)
 	}
 
-	// Compare subject
 	if action.Subject != expected.Subject {
 		return false, fmt.Errorf("subject mismatch: got '%s', want '%s'", action.Subject, expected.Subject)
 	}
 
-	// Compare payload by unmarshalling to interface{} to ignore formatting differences
 	var actualPayload, expectedPayload interface{}
 	if err := json.Unmarshal([]byte(action.Payload), &actualPayload); err != nil {
 		return false, fmt.Errorf("could not parse actual action payload: %w", err)
@@ -275,7 +284,6 @@ func validateOutput(action *rule.Action, outputFile string) (bool, error) {
 		return false, fmt.Errorf("could not parse expected payload from output file: %w", err)
 	}
 
-	// Marshal back to canonical JSON for a reliable string comparison
 	actualCanon, _ := json.Marshal(actualPayload)
 	expectedCanon, _ := json.Marshal(expectedPayload)
 
@@ -289,14 +297,12 @@ func validateOutput(action *rule.Action, outputFile string) (bool, error) {
 func setupTestProcessor(rulePath string, kvData map[string]map[string]interface{}, testConfig *TestConfig) *rule.Processor {
 	log := logger.NewNopLogger()
 	
-	// Load only the specific rule file for the test
 	rules, err := loadSingleRuleFile(rulePath)
 	if err != nil {
 		fmt.Printf("Error loading rule file %s: %v\n", rulePath, err)
 		os.Exit(1)
 	}
 	
-	// Setup Mocks
 	var kvContext *rule.KVContext
 	if kvData != nil {
 		cache := rule.NewLocalKVCache(log)
@@ -325,7 +331,6 @@ func setupTestProcessor(rulePath string, kvData map[string]map[string]interface{
 	return processor
 }
 
-// loadSingleRuleFile reads and parses a single YAML rule file.
 func loadSingleRuleFile(path string) ([]rule.Rule, error) {
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
@@ -339,7 +344,6 @@ func loadSingleRuleFile(path string) ([]rule.Rule, error) {
 
 	return rules, nil
 }
-
 
 func loadMockKV(path string) map[string]map[string]interface{} {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -355,7 +359,7 @@ func loadMockKV(path string) map[string]map[string]interface{} {
 }
 
 func loadTestConfig(path string) *TestConfig {
-	config := &TestConfig{Subject: "test.subject"} // Default subject
+	config := &TestConfig{Subject: "test.subject"}
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return config
 	}

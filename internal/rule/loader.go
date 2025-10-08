@@ -3,13 +3,12 @@
 package rule
 
 import (
-    json "github.com/goccy/go-json"
     "fmt"
     "os"
     "path/filepath"
     "regexp"
     "strings"
-
+	json "github.com/goccy/go-json"
     "gopkg.in/yaml.v3"
     "rule-router/internal/logger"
 )
@@ -60,6 +59,14 @@ func (l *RulesLoader) LoadFromDirectory(path string) ([]Rule, error) {
         if err != nil {
             return fmt.Errorf("error accessing path %s: %w", filePath, err)
         }
+
+        // **FIX STARTS HERE**
+        // If the entry is a directory and ends with "_test", skip it entirely.
+        if info.IsDir() && strings.HasSuffix(info.Name(), "_test") {
+            l.logger.Debug("skipping test directory", "path", filePath)
+            return filepath.SkipDir
+        }
+        // **FIX ENDS HERE**
 
         if info.IsDir() {
             return nil

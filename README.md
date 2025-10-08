@@ -4,16 +4,16 @@ A high-performance NATS JetStream message router that evaluates JSON messages ag
 
 ## Features
 
-- **High Performance** - Microsecond rule evaluation, thousands of messages per second
-- **NATS JetStream Native** - Pull consumers with durable subscriptions
-- **Intelligent Stream Selection** - Automatically prefers memory streams and optimal subject filters
-- **Key-Value Store** - Dynamic lookups with JSON path traversal and local caching (~25x faster)
-- **Time-Based Rules** - Schedule-aware evaluation without external schedulers
-- **Pattern Matching** - NATS wildcards (`*` and `>`) with subject token access
-- **Template Engine** - Variable substitution with nested field support
-- **Full Authentication** - Username/password, token, NKey, and `.creds` files
-- **Production Ready** - Prometheus metrics, structured logging, graceful shutdown
-- **Auto-Retry** - Exponential backoff for action publishing
+  - **High Performance** - Microsecond rule evaluation, thousands of messages per second
+  - **NATS JetStream Native** - Pull consumers with durable subscriptions
+  - **Intelligent Stream Selection** - Automatically prefers memory streams and optimal subject filters
+  - **Key-Value Store** - Dynamic lookups with JSON path traversal and local caching (\~25x faster)
+  - **Time-Based Rules** - Schedule-aware evaluation without external schedulers
+  - **Pattern Matching** - NATS wildcards (`*` and `>`) with subject token access
+  - **Template Engine** - Variable substitution with nested field support
+  - **Full Authentication** - Username/password, token, NKey, and `.creds` files
+  - **Production Ready** - Prometheus metrics, structured logging, graceful shutdown
+  - **Auto-Retry** - Exponential backoff for action publishing
 
 ## Architecture
 
@@ -41,15 +41,16 @@ A high-performance NATS JetStream message router that evaluates JSON messages ag
 
 ### Prerequisites
 
-- Go 1.23+
-- NATS Server with JetStream enabled
-- **JetStream streams must exist before starting rule-router**
+  - Go 1.23+
+  - NATS Server with JetStream enabled
+  - **JetStream streams must exist before starting rule-router**
 
 ### Understanding Stream Requirements
 
 Rule-router requires JetStream streams for both:
-1. **Consuming messages** - Streams that match rule subjects (input)
-2. **Publishing actions** - Streams that match action subjects (output)
+
+1.  **Consuming messages** - Streams that match rule subjects (input)
+2.  **Publishing actions** - Streams that match action subjects (output)
 
 Before starting rule-router, ensure streams exist for both your rule subjects and action subjects. If a rule input subject cannot be mapped to a stream, rule-router will fail to start with a clear error message listing available streams. It will not fail to start if you do not have publish streams, but you will never receive an ACK for your publish causing a retry storm. If you do not care about publish ACK's, use the core publish mode instead.
 
@@ -147,24 +148,29 @@ metrics:
     subject: output.subject
     payload: "JSON template"
 ```
+
 ### Condition Operators
 
 **Comparison:**
-- `eq`, `neq` - Equality/Inequality
-- `gt`, `lt`, `gte`, `lte` - Numeric comparisons
-- `exists` - Field presence check
+
+  - `eq`, `neq` - Equality/Inequality
+  - `gt`, `lt`, `gte`, `lte` - Numeric comparisons
+  - `exists` - Field presence check
 
 **String/Array:**
-- `contains` - String substring OR array membership
-- `not_contains` - Inverse of contains
+
+  - `contains` - String substring OR array membership
+  - `not_contains` - Inverse of contains
 
 **Array Membership:**
-- `in` - Field value is IN array of allowed values
-- `not_in` - Field value is NOT IN array of forbidden values
+
+  - `in` - Field value is IN array of allowed values
+  - `not_in` - Field value is NOT IN array of forbidden values
 
 ### System Fields
 
 **Time Fields:**
+
 ```yaml
 - field: "@time.hour"         # 0-23
 - field: "@time.minute"       # 0-59
@@ -174,6 +180,7 @@ metrics:
 ```
 
 **Subject Fields** (for wildcard patterns):
+
 ```yaml
 # Subject: sensors.temp-001.reading
 - field: "@subject"           # Full: "sensors.temp-001.reading"
@@ -184,6 +191,7 @@ metrics:
 ```
 
 **KV Lookups** (with JSON path traversal using colon delimiter):
+
 ```yaml
 # Simple lookup
 - field: "@kv.device_status.{device_id}:status"
@@ -207,6 +215,7 @@ metrics:
 ```
 
 **Template Functions:**
+
 ```yaml
 {@timestamp()}   # Current ISO timestamp
 {@uuid7()}       # Time-ordered UUID
@@ -247,6 +256,7 @@ metrics:
 The colon (`:`) delimiter separates the key name from the JSON path. This eliminates ambiguity since NATS KV allows dots in key names.
 
 **Examples**:
+
 ```yaml
 # Simple lookup
 - field: "@kv.device_status.{device_id}:status"
@@ -296,10 +306,10 @@ kv:
 
 ### Local Cache Performance
 
-- **Lookup Speed**: 50μs (NATS KV) → 2μs (local cache) = **~25x faster**
-- **CPU Usage**: 10-15% reduction
-- **Updates**: Real-time via KV watch streams
-- **Memory**: ~1MB per 1000 entries
+  - **Lookup Speed**: 50μs (NATS KV) → 2μs (local cache) = **\~25x faster**
+  - **CPU Usage**: 10-15% reduction
+  - **Updates**: Real-time via KV watch streams
+  - **Memory**: \~1MB per 1000 entries
 
 ### JSON Path Traversal
 
@@ -380,24 +390,29 @@ services:
 Available at `http://localhost:2112/metrics`:
 
 **Message Processing:**
-- `messages_total{status="received|processed|error"}`
-- `message_processing_backlog`
+
+  - `messages_total{status="received|processed|error"}`
+  - `message_processing_backlog`
 
 **Rule Evaluation:**
-- `rule_matches_total`
-- `rules_active`
+
+  - `rule_matches_total`
+  - `rules_active`
 
 **Action Publishing:**
-- `actions_total{status="success|error"}`
-- `action_publish_failures_total`
+
+  - `actions_total{status="success|error"}`
+  - `action_publish_failures_total`
 
 **NATS Connection:**
-- `nats_connection_status`
-- `nats_reconnects_total`
+
+  - `nats_connection_status`
+  - `nats_reconnects_total`
 
 **System:**
-- `process_goroutines`
-- `process_memory_bytes`
+
+  - `process_goroutines`
+  - `process_memory_bytes`
 
 ### Health Checks
 
@@ -420,48 +435,79 @@ Rule-router intelligently selects the optimal JetStream stream for each rule sub
 
 #### Selection Criteria (Priority Order)
 
-1. **Subject Specificity** - More specific patterns score higher
-2. **Storage Type** - Memory streams preferred (2x multiplier) over file
-3. **Stream Type** - Primary streams slightly preferred over mirrors (0.95x penalty)
-4. **System Streams** - KV/system streams de-prioritized (0.1x penalty)
+1.  **Subject Specificity** - More specific patterns score higher
+2.  **Storage Type** - Memory streams preferred (2x multiplier) over file
+3.  **Stream Type** - Primary streams slightly preferred over mirrors (0.95x penalty)
+4.  **System Streams** - KV/system streams de-prioritized (0.1x penalty)
 
 **Benefits:**
-- Rules automatically consume from optimal streams
-- Memory streams provide ~5x lower latency
-- Filtered mirrors improve consumer distribution
-- File mirrors preserve history without impacting performance
+
+  - Rules automatically consume from optimal streams
+  - Memory streams provide \~5x lower latency
+  - Filtered mirrors improve consumer distribution
+  - File mirrors preserve history without impacting performance
 
 ### Characteristics
 
-- **Rule Evaluation**: Microseconds per message
-- **KV Cache Lookups**: ~2μs (cached), ~50μs (NATS KV fallback)
-- **Message Throughput**: Thousands of messages per second per instance
-- **Latency**: Sub-millisecond for co-located NATS
-- **Stream Selection**: ~1-5μs per lookup
+  - **Rule Evaluation**: Microseconds per message
+  - **KV Cache Lookups**: \~2μs (cached), \~50μs (NATS KV fallback)
+  - **Message Throughput**: Thousands of messages per second per instance
+  - **Latency**: Sub-millisecond for co-located NATS
+  - **Stream Selection**: \~1-5μs per lookup
 
 ### Scaling Strategy
 
 **Vertical Scaling** (single instance):
-- Increase `subscriberCount` (workers)
-- Increase `fetchBatchSize` for throughput
-- Enable KV cache for performance
-- Use memory streams for hot paths
+
+  - Increase `subscriberCount` (workers)
+  - Increase `fetchBatchSize` for throughput
+  - Enable KV cache for performance
+  - Use memory streams for hot paths
 
 **Horizontal Scaling** (multiple instances):
-- Deploy multiple rule-router instances
-- JetStream distributes messages across consumers
-- Linear scalability
+
+  - Deploy multiple rule-router instances
+  - JetStream distributes messages across consumers
+  - Linear scalability
 
 **Resource Requirements:**
-- **CPU**: 2+ cores for high throughput
-- **Memory**: 50-200MB base + ~1MB per 1000 KV entries
-- **Network**: Low bandwidth 
+
+  - **CPU**: 2+ cores for high throughput
+  - **Memory**: 50-200MB base + \~1MB per 1000 KV entries
+  - **Network**: Low bandwidth
+
+## Testing Rules
+
+This project includes a standalone `rule-tester` utility for offline validation of rule logic, which is essential for a robust CI/CD workflow.
+
+### Rule Tester Utility
+
+The tester allows you to validate rule syntax, test rule logic against sample messages, and mock dependencies like KV and time, all without needing a live NATS connection.
+
+**Key Features:**
+
+  - **Lint**: Quickly check all rule files for syntax errors.
+  - **Scaffold**: Automatically generate test directories and placeholder files.
+  - **Batch Test**: Run a full suite of tests against your ruleset.
+
+**Example Usage:**
+
+```bash
+# Scaffold tests for a new rule
+rule-tester --scaffold ./rules/my-new-rule.yaml
+
+# Run all tests in the rules directory
+rule-tester --test --rules ./rules
+```
+
+For a complete guide on writing tests, mocking dependencies, and validating outputs, please see the full documentation.
 
 ## Troubleshooting
 
 ### Common Issues
 
 **"No stream found for subject"**
+
 ```bash
 # Create required streams
 nats stream add STREAM_NAME --subjects "your.subject.>"
@@ -471,6 +517,7 @@ nats stream add STREAM_MIRROR --mirror SOURCE --mirror-filter "your.subject.>"
 ```
 
 **"Consumer already exists with different config"**
+
 ```bash
 # Delete and recreate consumer
 nats consumer rm STREAM_NAME rule-router-your-subject
@@ -478,6 +525,7 @@ nats consumer rm STREAM_NAME rule-router-your-subject
 ```
 
 **High action publish failures**
+
 ```bash
 # Check NATS connectivity
 nats pub test.subject "test"
@@ -487,6 +535,7 @@ curl http://localhost:2112/metrics | grep action_publish_failures_total
 ```
 
 **KV cache not updating**
+
 ```bash
 # Verify KV watch streams
 nats consumer ls '$KV_{bucket}'
@@ -496,6 +545,7 @@ grep "KV cache initialized" /var/log/rule-router.log
 ```
 
 **"KV field must use ':' delimiter" errors**
+
 ```
 # Old syntax (incorrect):
 @kv.bucket.key.path
@@ -505,7 +555,8 @@ grep "KV cache initialized" /var/log/rule-router.log
 ```
 
 **Stream selection debugging**
-```bash
+
+```
 # Enable debug logging
 logging:
   level: debug
@@ -516,13 +567,16 @@ grep "selected optimal stream" rule-router.log | jq .
 
 ## Examples
 
-Complete working examples in the [rules/](rules/) directory:
-- `basic.yaml` - Simple conditions and actions
-- `wildcard-examples.yaml` - Pattern matching
-- `time-based.yaml` - Schedule-aware rules
-- `kv-json-path.yaml` - KV enrichment with JSON paths
-- `nested-fields.yaml` - Deep object access
-- `advanced.yaml` - Complex nested condition groups
+Complete working examples in the [rules/](https://www.google.com/search?q=rules/) directory:
+
+  - `basic.yaml` - Simple conditions and actions
+  - `wildcard-examples.yaml` - Pattern matching
+  - `time-based.yaml` - Schedule-aware rules
+  - `kv-json-path.yaml` - KV enrichment with JSON paths
+  - `nested-fields.yaml` - Deep object access
+  - `advanced.yaml` - Complex nested condition groups
+
+The rule loader will recursively scan the `rules/` directory but will automatically ignore any subdirectories ending in `_test` to prevent test files from being loaded as active rules.
 
 ## CLI Options
 
@@ -544,4 +598,4 @@ Options:
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+MIT License - see [LICENSE](https://www.google.com/search?q=LICENSE) file for details.

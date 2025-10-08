@@ -9,7 +9,7 @@ This tool is essential for maintaining a high-quality, reliable ruleset and inte
 ## Features
 
   * **Linting**: Quickly validate the YAML syntax and structure of all rule files.
-  * **Scaffolding**: Automatically generate the directory structure and placeholder files for new tests.
+  * **Smart Scaffolding**: Automatically generate test directories and pre-populated configuration files to accelerate test writing.
   * **Quick Check**: Interactively test a single rule against a single message for immediate feedback during development.
   * **Batch Testing**: Run a full suite of tests for your entire ruleset, based on a simple, convention-over-configuration directory structure.
   * **Dependency Mocking**: Isolate your tests by providing mock data for NATS KV stores and mock timestamps for time-based rules.
@@ -23,7 +23,7 @@ The `rule-tester` is designed around a simple, convention-based workflow that is
 
 ### 1\. Scaffolding Your Tests
 
-The easiest way to start is by using the `--scaffold` command on your new rule file. This creates the necessary test directory and starter files.
+The easiest way to start is by using the `--scaffold` command on your new rule file. The tool will smartly inspect your rule and generate a pre-populated configuration to accelerate your test setup.
 
 **Command:**
 
@@ -32,17 +32,18 @@ rule-tester --scaffold ./rules/my-new-rule.yaml
 ```
 
 **Result:**
-The tool creates a `_test` directory alongside your rule and populates it with placeholders, guiding you to create both a matching and non-matching test case.
+The tool creates a `_test` directory alongside your rule and populates it with a configuration file and placeholders, guiding you to create both a matching and non-matching test case.
 
 ```
 rules/
 ├── my-new-rule.yaml
 └── my-new-rule_test/
-    ├── match_1.json      # Placeholder for a message that SHOULD match
-    └── not_match_1.json  # Placeholder for a message that SHOULD NOT match
+    ├── _test_config.json  # Pre-populated with subject and mock time
+    ├── match_1.json       # Placeholder for a message that SHOULD match
+    └── not_match_1.json   # Placeholder for a message that SHOULD NOT match
 ```
 
-The tool will also print a helpful tip to the console to remind you of the more advanced testing features.
+If your rule has a concrete subject (e.g., `sensors.data`), it will be automatically added to `_test_config.json`. If it uses a wildcard (e.g., `sensors.*`), a placeholder will be added with a comment instructing you to provide a concrete subject for your test.
 
 ### 2\. Writing a Basic Test
 
@@ -86,8 +87,6 @@ To ensure your templates are rendered correctly, you can provide an "expected ou
 
 The output file should contain a JSON object with the expected **subject** and **payload**.
 
-**Example:**
-
   * **`match_high_temp.json`** (Input):
     ```json
     {"temperature": 40, "region": "us-west"}
@@ -108,6 +107,20 @@ The tester will now perform a deep comparison. The test will only pass if the ru
 
 You can fully isolate your tests by mocking KV and time dependencies.
 
+#### **Mocking Time and Subject**
+
+The `_test_config.json` file, created during scaffolding, controls the simulated environment.
+
+  * **`_test_config.json`**:
+    ```json
+    {
+      "subject": "sensors.temp.room-101",
+      "mockTime": "2025-10-08T17:51:23-05:00"
+    }
+    ```
+  * `subject`: The NATS subject to simulate for the test run, which is crucial for rules using `@subject` tokens.
+  * `mockTime`: An RFC3339 timestamp. All time-based conditions (`@time.hour`, etc.) will be evaluated against this fixed time.
+
 #### **Mocking KV Data**
 
 Create a `mock_kv_data.json` file in your test directory. The top-level keys are the bucket names. The tester will load this data into an in-memory cache for your test run.
@@ -124,20 +137,6 @@ Create a `mock_kv_data.json` file in your test directory. The top-level keys are
     }
     ```
 
-#### **Mocking Time and Subject**
-
-Create a `_test_config.json` file to control the simulated environment.
-
-  * **`_test_config.json`**:
-    ```json
-    {
-      "subject": "sensors.temp.room-101",
-      "mockTime": "2025-10-08T15:00:00-05:00"
-    }
-    ```
-  * `subject`: The NATS subject to simulate for the test run, which is crucial for rules using `@subject` tokens.
-  * `mockTime`: An RFC3339 timestamp. All time-based conditions (`@time.hour`, etc.) will be evaluated against this fixed time.
-
 -----
 
 ## Full CLI Reference
@@ -152,7 +151,7 @@ rule-tester --lint --rules ./rules
 
 #### `scaffold`
 
-Creates a test directory and placeholder files for a given rule.
+Creates a test directory and pre-populated configuration files for a given rule.
 
 ```bash
 rule-tester --scaffold <path/to/rule.yaml>
@@ -168,8 +167,16 @@ rule-tester --test --rules ./rules
 
 #### Quick Check
 
-Runs a single rule against a single message for interactive development.
+Runs a single rule against a single message for interactive development. It will smartly infer the subject from the rule file.
 
 ```bash
 rule-tester --rule <path/to/rule.yaml> --message <path/to/message.json>
+```
+
+To override the subject, especially for testing wildcard rules, use the `--subject` flag.
+
+```bash
+rule-tester --rule <path/to/wildcard-rule.yaml> \
+            --message <path/to/message.json> \
+            --subject "sensors.specific.subject"
 ```
