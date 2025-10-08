@@ -211,43 +211,82 @@ func (p *Processor) processActionTemplate(action *Action, msg map[string]interfa
     return processedAction, nil
 }
 
-// ENHANCED: Single-pass template processing with improved error handling
+// ENHANCED: Multi-pass template processing with nested variable support
+// Pass 1: Resolve all NON-KV variables (message fields, subject, time, functions)
+// Pass 2: Resolve KV variables (which now have their nested variables already resolved)
 func (p *Processor) processTemplate(template string, data map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext, kvCtx *KVContext) (string, error) {
     if !strings.Contains(template, "{") {
         // No variables - return as-is
         return template, nil
     }
 
-    // SINGLE PASS: Process all variables (system and message) in one regex operation
+    // PASS 1: Resolve all NON-KV variables first
+    // This allows nested variables like {@kv.bucket.{key}:{path}.field} to work
     result := combinedVariablePattern.ReplaceAllStringFunc(template, func(match string) string {
         // Parse the match: {@time.hour} or {temperature}
         submatches := combinedVariablePattern.FindStringSubmatch(match)
         if len(submatches) != 3 {
-            p.logger.Debug("unexpected regex match format", "match", match)
-            return "" // ENHANCED: Return empty string instead of original match
+            p.logger.Debug("unexpected regex match format in pass 1", "match", match)
+            return match // Keep original if parse fails
         }
         
         isSystemVar := submatches[1] == "@"  // Group 1: optional @ prefix
         varContent := submatches[2]          // Group 2: variable content
         
-        p.logger.Debug("processing template variable",
+        // SKIP KV variables in pass 1 - they'll be resolved in pass 2
+        // This is critical: KV variables may contain nested variables that need resolving first
+        if isSystemVar && strings.HasPrefix(varContent, "kv.") {
+            p.logger.Debug("skipping KV variable in pass 1, will resolve in pass 2", "match", match)
+            return match // Keep KV variables unchanged for pass 2
+        }
+        
+        p.logger.Debug("processing non-KV variable in pass 1",
             "match", match,
             "isSystem", isSystemVar,
             "content", varContent)
 
+        // Resolve non-KV variables
         if isSystemVar {
-            // System variable: @time.hour, @subject.1, @kv.bucket.key:path, @uuid7()
+            // System variable: @time.hour, @subject.1, @uuid7() (but NOT @kv)
             if strings.HasSuffix(varContent, "()") {
                 // System function: timestamp(), uuid7()
                 return p.processSystemFunction(varContent)
             } else {
-                // System field: time.hour, subject.1, kv.bucket.key:path
+                // System field: time.hour, subject.1 (but NOT kv.bucket.key:path)
                 return p.processSystemField("@"+varContent, data, timeCtx, subjectCtx, kvCtx)
             }
         } else {
             // Message variable: temperature, sensor.location, readings.0.value
             return p.processMessageVariable(varContent, data)
         }
+    })
+
+    // PASS 2: Now resolve KV variables
+    // At this point, all nested variables in KV fields have been resolved
+    // Example: {@kv.bucket.{key}:{field}.path} → {@kv.bucket.sensor123:temperature.path}
+    result = combinedVariablePattern.ReplaceAllStringFunc(result, func(match string) string {
+        submatches := combinedVariablePattern.FindStringSubmatch(match)
+        if len(submatches) != 3 {
+            p.logger.Debug("unexpected regex match format in pass 2", "match", match)
+            return "" // Return empty string for malformed variables
+        }
+        
+        isSystemVar := submatches[1] == "@"
+        varContent := submatches[2]
+        
+        // Only process KV variables in pass 2
+        if isSystemVar && strings.HasPrefix(varContent, "kv.") {
+            p.logger.Debug("processing KV variable in pass 2",
+                "match", match,
+                "content", varContent)
+            // Now process the KV field with all nested variables already resolved
+            return p.processSystemField("@"+varContent, data, timeCtx, subjectCtx, kvCtx)
+        }
+        
+        // All non-KV variables should already be resolved in pass 1
+        // If we see any here, they're malformed or the regex failed
+        p.logger.Debug("unexpected non-KV variable in pass 2, returning empty", "match", match)
+        return ""
     })
 
     return result, nil
