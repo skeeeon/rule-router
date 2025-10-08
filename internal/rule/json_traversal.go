@@ -166,6 +166,71 @@ func (t *JSONPathTraverser) HasPath(data interface{}, path []string) bool {
 	return err == nil
 }
 
+// SplitPathRespectingBraces splits a path on dots while treating {...} as atomic tokens
+// This is critical for KV field parsing where variables can contain dots.
+//
+// Examples:
+//   - "profile.tier" → ["profile", "tier"]
+//   - "{user.name}" → ["{user.name}"]
+//   - "profile.{user.name}.tier" → ["profile", "{user.name}", "tier"]
+//   - "{outer.{inner}.x}" → ["{outer.{inner}.x}"] (nested braces preserved)
+//
+// Returns error for unmatched braces.
+func SplitPathRespectingBraces(path string) ([]string, error) {
+	if path == "" {
+		return []string{}, nil
+	}
+	
+	segments := []string{}
+	currentSegment := strings.Builder{}
+	braceDepth := 0
+	
+	for i, char := range path {
+		switch char {
+		case '{':
+			braceDepth++
+			currentSegment.WriteRune(char)
+		case '}':
+			braceDepth--
+			if braceDepth < 0 {
+				return nil, fmt.Errorf("unmatched '}' at position %d in path: %s", i, path)
+			}
+			currentSegment.WriteRune(char)
+		case '.':
+			if braceDepth == 0 {
+				// Split here - we're outside braces
+				if currentSegment.Len() > 0 {
+					segments = append(segments, currentSegment.String())
+					currentSegment.Reset()
+				} else {
+					// Empty segment (e.g., "a..b")
+					return nil, fmt.Errorf("empty path segment at position %d in path: %s", i, path)
+				}
+			} else {
+				// Inside braces - keep the dot as part of variable name
+				currentSegment.WriteRune(char)
+			}
+		default:
+			currentSegment.WriteRune(char)
+		}
+	}
+	
+	// Check for unclosed braces
+	if braceDepth > 0 {
+		return nil, fmt.Errorf("unmatched '{' in path (missing %d closing brace(s)): %s", braceDepth, path)
+	}
+	
+	// Add final segment
+	if currentSegment.Len() > 0 {
+		segments = append(segments, currentSegment.String())
+	} else if len(segments) > 0 {
+		// Path ends with dot (e.g., "a.b.")
+		return nil, fmt.Errorf("path cannot end with dot: %s", path)
+	}
+	
+	return segments, nil
+}
+
 // Global singleton instance for convenience
 var defaultTraverser = NewJSONPathTraverser()
 

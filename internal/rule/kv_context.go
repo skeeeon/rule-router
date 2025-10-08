@@ -215,9 +215,12 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
 // The colon (:) separates the key from the JSON path
 // This eliminates ambiguity since NATS allows dots in key names
 // 
+// FIXED: Now uses SplitPathRespectingBraces for JSON path to handle variables like {sensor.choice}
+//
 // Examples:
 //   @kv.customer_data.cust-123:tier
 //   @kv.device_config.sensor.temp.001:thresholds.max  (key contains dots!)
+//   @kv.device_config.{sensor.id}:{sensor.choice}      (variables with dots!)
 //
 // Returns bucket, key, jsonPath (as slice), and error
 func (kv *KVContext) parseKVFieldWithPath(field string) (bucket, key string, jsonPath []string, err error) {
@@ -268,14 +271,11 @@ func (kv *KVContext) parseKVFieldWithPath(field string) (bucket, key string, jso
 		return "", "", nil, fmt.Errorf("KV key name cannot be empty in field: %s", field)
 	}
 	
-	// Parse JSON path (right side of colon) - guaranteed non-empty by earlier check
-	jsonPath = strings.Split(jsonPathPart, ".")
-	
-	// Validate no empty segments in JSON path
-	for i, segment := range jsonPath {
-		if segment == "" {
-			return "", "", nil, fmt.Errorf("empty JSON path segment at position %d in field: %s", i, field)
-		}
+	// FIXED: Parse JSON path using brace-aware splitter
+	// This allows variables like {sensor.choice} to be treated as single tokens
+	jsonPath, err = SplitPathRespectingBraces(jsonPathPart)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("invalid JSON path syntax in field %s: %w", field, err)
 	}
 	
 	kv.logger.Debug("parsed KV field with colon delimiter",

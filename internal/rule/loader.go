@@ -16,10 +16,6 @@ import (
 
 // Enhanced regex patterns for KV field validation with colon delimiter
 var (
-    // Matches KV fields in templates: {@kv.bucket.key:path} or {@kv.bucket.{var}:path}
-    // Note: Now requires colon delimiter
-    templateKVPattern = regexp.MustCompile(`\{@kv\.[^:]+:[^}]+\}`)
-    
     // Matches variable placeholders: {variable_name}
     variablePattern = regexp.MustCompile(`\{([^}]+)\}`)
 )
@@ -299,16 +295,13 @@ func (l *RulesLoader) isValidOperator(op string) bool {
 
 // validateKVFieldsInTemplate validates all KV field references in a template string
 func (l *RulesLoader) validateKVFieldsInTemplate(template string) error {
-    // Find all {@kv.bucket.key:path} patterns in the template
-    matches := templateKVPattern.FindAllString(template, -1)
+    // Extract all {@kv...} fields using brace-aware parsing
+    kvFields := l.extractKVFieldsFromTemplate(template)
     
-    for _, match := range matches {
-        // Extract the field part (remove { and })
-        field := match[1 : len(match)-1] // Remove { and }
-        
+    for _, field := range kvFields {
         // Check for colon in the field
         if !strings.Contains(field, ":") {
-            return fmt.Errorf("KV field in template must use ':' delimiter (format: @kv.bucket.key:path), got: %s", match)
+            return fmt.Errorf("KV field in template must use ':' delimiter (format: @kv.bucket.key:path), got: {%s}", field)
         }
         
         if err := l.validateKVFieldWithVariables(field); err != nil {
@@ -319,9 +312,67 @@ func (l *RulesLoader) validateKVFieldsInTemplate(template string) error {
     return nil
 }
 
+// extractKVFieldsFromTemplate extracts all {@kv...} field references from a template
+// Uses brace-counting to handle nested variables like {@kv.bucket.{key}:{path}}
+func (l *RulesLoader) extractKVFieldsFromTemplate(template string) []string {
+    var fields []string
+    
+    i := 0
+    for i < len(template) {
+        // Look for "{@kv."
+        if i+5 <= len(template) && template[i:i+5] == "{@kv." {
+            // Found start of KV field - extract the complete field with brace counting
+            field, endPos := l.extractBracedContent(template, i)
+            if field != "" {
+                // Remove outer braces and the leading @
+                // field is like "{@kv.bucket.key:path}" - we want "@kv.bucket.key:path"
+                if len(field) > 2 {
+                    fields = append(fields, field[1:len(field)-1]) // Remove { and }
+                }
+            }
+            i = endPos
+        } else {
+            i++
+        }
+    }
+    
+    return fields
+}
+
+// extractBracedContent extracts content within braces starting at startPos
+// Returns the complete braced content and the position after the closing brace
+// Handles nested braces correctly
+func (l *RulesLoader) extractBracedContent(template string, startPos int) (string, int) {
+    if startPos >= len(template) || template[startPos] != '{' {
+        return "", startPos
+    }
+    
+    braceDepth := 0
+    i := startPos
+    
+    for i < len(template) {
+        switch template[i] {
+        case '{':
+            braceDepth++
+        case '}':
+            braceDepth--
+            if braceDepth == 0 {
+                // Found matching closing brace
+                return template[startPos : i+1], i + 1
+            }
+        }
+        i++
+    }
+    
+    // Unclosed brace - return empty
+    return "", startPos
+}
+
 // validateKVFieldWithVariables validates KV fields with colon delimiter syntax
 // Supports variable substitution in keys and paths
 // Format: @kv.bucket.key:json.path where key and path can contain {variables}
+//
+// FIXED: Now uses SplitPathRespectingBraces to handle variables with dots like {sensor.choice}
 func (l *RulesLoader) validateKVFieldWithVariables(field string) error {
     l.logger.Debug("validating KV field with colon delimiter", "field", field)
     
@@ -398,8 +449,14 @@ func (l *RulesLoader) validateKVFieldWithVariables(field string) error {
         l.logger.Debug("validated KV field with variables in key", "field", field, "bucket", bucket, "key", key)
     }
     
-    // Validate JSON path segments (can contain variables)
-    jsonPath := strings.Split(jsonPathPart, ".")
+    // FIXED: Validate JSON path segments using brace-aware splitting
+    // This allows variables like {sensor.choice} to be treated as single tokens
+    jsonPath, err := SplitPathRespectingBraces(jsonPathPart)
+    if err != nil {
+        return fmt.Errorf("invalid JSON path '%s' in field %s: %w", jsonPathPart, field, err)
+    }
+    
+    // Validate each path segment
     for i, segment := range jsonPath {
         if segment == "" {
             return fmt.Errorf("empty JSON path segment at position %d in field: %s", i, field)
@@ -418,7 +475,7 @@ func (l *RulesLoader) validateKVFieldWithVariables(field string) error {
         }
     }
     
-    l.logger.Debug("successfully validated KV field with colon delimiter", "field", field, "bucket", bucket)
+    l.logger.Debug("successfully validated KV field with colon delimiter", "field", field, "bucket", bucket, "jsonPath", jsonPath)
     return nil
 }
 
