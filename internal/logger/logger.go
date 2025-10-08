@@ -102,6 +102,11 @@ func (l *Logger) Sync() error {
 	return l.Logger.Sync()
 }
 
+// NewNopLogger creates a logger that discards all log output. Useful for tests.
+func NewNopLogger() *Logger {
+	return &Logger{Logger: zap.NewNop()}
+}
+
 // argsToFields converts variadic args to zap fields
 func argsToFields(args ...interface{}) []zap.Field {
 	fields := make([]zap.Field, 0, len(args)/2)

@@ -429,6 +429,13 @@ func (p *Processor) GetStats() ProcessorStats {
     return stats
 }
 
+// SetTimeProvider allows injecting a different time provider, primarily for testing.
+func (p *Processor) SetTimeProvider(tp TimeProvider) {
+	if tp != nil {
+		p.timeProvider = tp
+	}
+}
+
 func (p *Processor) Close() {
     p.logger.Info("shutting down processor")
 }
