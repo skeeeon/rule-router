@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v3"
 	"rule-router/internal/logger"
 	"rule-router/internal/rule"
 )
@@ -59,21 +60,14 @@ func main() {
 func runLinter(rulesDir string) {
 	fmt.Printf("▶ LINTING rules in %s\n\n", rulesDir)
 	var failed bool
-	log := logger.NewNopLogger() // Use a no-op logger
 
 	filepath.Walk(rulesDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if !info.IsDir() && (strings.HasSuffix(path, ".yaml") || strings.HasSuffix(path, ".yml")) {
-			// To lint a single file correctly, we tell the loader to load from its parent directory,
-			// but we only care about the result for our specific file path.
-			// A more advanced linter could load just one file, but this reuses existing logic well.
-			loader := rule.NewRulesLoader(log, []string{}) // No KV validation needed for linting
-			_, err := loader.LoadFromDirectory(filepath.Dir(path))
-			if err != nil {
-				// This is imperfect as it might flag an error in another file in the same directory.
-				// For this tool's purpose, we assume one rule per file or directory for simplicity.
+			// In lint mode, we just need to validate the file itself, not its whole directory.
+			if _, err := loadSingleRuleFile(path); err != nil {
 				fmt.Printf("✖ FAIL: %s\n  Error: %v\n", path, err)
 				failed = true
 			} else {
@@ -102,17 +96,35 @@ func runScaffold(rulePath string) {
 		os.Exit(1)
 	}
 
-	// Create placeholder files
+	// --- Smart Scaffolding Logic ---
+	// Create _test_config.json with the rule's subject
+	rules, err := loadSingleRuleFile(rulePath)
+	if err != nil || len(rules) == 0 {
+		fmt.Printf("Warning: Could not read subject from rule file %s. A default will be used.\n", rulePath)
+	} else {
+		subject := rules[0].Subject
+		var content string
+		if strings.Contains(subject, "*") || strings.Contains(subject, ">") {
+			content = fmt.Sprintf("{\n  // IMPORTANT: Please replace this placeholder with a concrete subject for your test.\n  \"subject\": \"%s\"\n}\n", "subject")
+		} else {
+			content = fmt.Sprintf("{\n  \"subject\": \"%s\"\n}\n", subject)
+		}
+		ioutil.WriteFile(filepath.Join(testDir, "_test_config.json"), []byte(content), 0644)
+	}
+
+	// Create placeholder message files
 	ioutil.WriteFile(filepath.Join(testDir, "match_1.json"), []byte("{}\n"), 0644)
 	ioutil.WriteFile(filepath.Join(testDir, "not_match_1.json"), []byte("{}\n"), 0644)
 
 	fmt.Printf("✔ Scaffolded test directory at: %s\n", testDir)
+	fmt.Println("  - _test_config.json")
 	fmt.Println("  - match_1.json")
 	fmt.Println("  - not_match_1.json")
 	fmt.Println("\n💡 Tip:")
 	fmt.Println("   - To validate the action's final output, create a corresponding 'match_1_output.json'.")
-	fmt.Println("   - For dependencies, add '_test_config.json' (for mockTime/subject) or 'mock_kv_data.json'.")
+	fmt.Println("   - For dependencies, add 'mock_kv_data.json'.")
 }
+
 
 func runQuickCheck(rulePath, messagePath string) {
 	// For a quick check, we use default mocks
@@ -181,7 +193,7 @@ func runBatchTest(rulesDir string) {
 						fmt.Printf("  ✔ %s\n", baseName)
 						passed++
 					} else {
-						// This case should ideally not be hit if runSingleTestCase always returns an error on failure
+						// This case should not be hit if runSingleTestCase always returns an error on failure
 						fmt.Printf("  ✖ %s\n    Error: Assertion failed without a specific error message.\n", baseName)
 						failed++
 					}
@@ -276,15 +288,14 @@ func validateOutput(action *rule.Action, outputFile string) (bool, error) {
 
 func setupTestProcessor(rulePath string, kvData map[string]map[string]interface{}, testConfig *TestConfig) *rule.Processor {
 	log := logger.NewNopLogger()
-	// Pass the bucket names to the loader for validation during loading
-	loader := rule.NewRulesLoader(log, getBucketKeys(kvData))
-	// We assume a single file contains the rule(s) we want to test
-	rules, err := loader.LoadFromDirectory(filepath.Dir(rulePath))
+	
+	// Load only the specific rule file for the test
+	rules, err := loadSingleRuleFile(rulePath)
 	if err != nil {
 		fmt.Printf("Error loading rule file %s: %v\n", rulePath, err)
 		os.Exit(1)
 	}
-
+	
 	// Setup Mocks
 	var kvContext *rule.KVContext
 	if kvData != nil {
@@ -312,6 +323,21 @@ func setupTestProcessor(rulePath string, kvData map[string]map[string]interface{
 	processor.SetTimeProvider(timeProvider)
 
 	return processor
+}
+
+// loadSingleRuleFile reads and parses a single YAML rule file.
+func loadSingleRuleFile(path string) ([]rule.Rule, error) {
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read rule file: %w", err)
+	}
+
+	var rules []rule.Rule
+	if err := yaml.Unmarshal(data, &rules); err != nil {
+		return nil, fmt.Errorf("failed to parse yaml rule file: %w", err)
+	}
+
+	return rules, nil
 }
 
 
