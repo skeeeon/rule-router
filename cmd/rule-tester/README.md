@@ -14,6 +14,10 @@ This tool is essential for maintaining a high-quality, reliable ruleset and inte
   * **Batch Testing**: Run a full suite of tests for your entire ruleset, based on a simple, convention-over-configuration directory structure.
   * **Dependency Mocking**: Isolate your tests by providing mock data for NATS KV stores and mock timestamps for time-based rules.
   * **Output Validation**: Guarantee the correctness of your templates by comparing the rendered action subject and payload against an expected output.
+  * **Parallel Execution**: Run tests in parallel for faster feedback (configurable workers).
+  * **Multiple Output Formats**: Human-readable output for development, JSON output for CI/CD integration.
+  * **Progress Indication**: Real-time progress updates during test execution.
+  * **Overwrite Protection**: Prevents accidental data loss when scaffolding test directories.
 
 -----
 
@@ -43,7 +47,19 @@ rules/
     └── not_match_1.json   # Placeholder for a message that SHOULD NOT match
 ```
 
-If your rule has a concrete subject (e.g., `sensors.data`), it will be automatically added to `_test_config.json`. If it uses a wildcard (e.g., `sensors.*`), a placeholder will be added with a comment instructing you to provide a concrete subject for your test.
+If your rule has a concrete subject (e.g., `sensors.data`), it will be automatically added to `_test_config.json`. If it uses a wildcard (e.g., `sensors.*`), a placeholder will be added.
+
+**Overwrite Protection:**
+```bash
+# If test directory exists, you'll be prompted
+rule-tester --scaffold ./rules/my-rule.yaml
+# ⚠️  Test directory already exists: rules/my-rule_test
+#    Overwrite? (y/N): 
+
+# Skip the prompt with --no-overwrite
+rule-tester --scaffold ./rules/my-rule.yaml --no-overwrite
+# Error: test directory already exists (exits without changes)
+```
 
 ### 2\. Writing a Basic Test
 
@@ -51,6 +67,24 @@ Edit the generated JSON files with your sample message data. The filename itself
 
   * `match_*.json`: The tester will assert that the rule **must** match. The test fails if it doesn't.
   * `not_match_*.json`: The tester will assert that the rule **must not** match. The test fails if it does.
+
+**Test Naming Conventions:**
+```
+✅ Good names (descriptive):
+   match_high_temp.json
+   match_business_hours.json
+   match_premium_customer.json
+   not_match_weekend.json
+   not_match_low_value.json
+
+⚠️  Acceptable (but less clear):
+   match_1.json
+   match_2.json
+
+❌ Invalid (wrong prefix):
+   MATCH_test.json  (case-sensitive)
+   test_match.json  (wrong order)
+```
 
 ### 3\. Running the Tests
 
@@ -68,11 +102,26 @@ rule-tester --test --rules ./rules
 ▶ RUNNING TESTS in ./rules/
 
 === RULE: rules/my-new-rule.yaml ===
-  ✔ match_1.json
-  ✔ not_match_1.json
+  ✔ match_1.json (5ms)
+  ✔ not_match_1.json (3ms)
 
 --- SUMMARY ---
 Total Tests: 2, Passed: 2, Failed: 0
+Duration: 12ms
+```
+
+**Parallel Execution:**
+```bash
+# Run with 8 parallel workers (default: 4)
+rule-tester --test --rules ./rules --parallel 8
+
+# Run sequentially (useful for debugging)
+rule-tester --test --rules ./rules --parallel 0
+```
+
+**Progress Indication:**
+```
+[45/100] Tests completed...
 ```
 
 -----
@@ -132,14 +181,34 @@ Create a `mock_kv_data.json` file in your test directory. The top-level keys are
         "sensor-123": { "status": "active" }
       },
       "device_config": {
-        "sensor-123": { "threshold": 30 }
+        "sensor-123": { 
+          "threshold": 30,
+          "settings": {
+            "enabled": true,
+            "alerts": ["email", "sms"]
+          }
+        }
       }
     }
     ```
 
+**Important Notes:**
+- Top-level keys are bucket names (must match buckets in your rules)
+- Second-level keys are KV keys
+- Values can be any valid JSON (objects, arrays, primitives, nested structures)
+- Supports full JSON path traversal just like production
+
 -----
 
 ## Full CLI Reference
+
+### Common Flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--output` | Output format: `pretty` or `json` | `pretty` |
+| `--verbose` | Show detailed output for failures | `false` |
+| `--parallel` | Number of parallel workers (0 = sequential) | `4` |
 
 #### `lint`
 
@@ -149,12 +218,27 @@ Validates the syntax of all `*.yaml` rule files in a directory.
 rule-tester --lint --rules ./rules
 ```
 
+**Output:**
+```
+▶ LINTING rules in ./rules
+
+✔ PASS: rules/temperature.yaml
+✔ PASS: rules/pressure.yaml
+✖ FAIL: rules/bad-rule.yaml
+  Error: invalid operator: 'invalid_op'
+
+Linting failed
+```
+
 #### `scaffold`
 
 Creates a test directory and pre-populated configuration files for a given rule.
 
 ```bash
 rule-tester --scaffold <path/to/rule.yaml>
+
+# With overwrite protection
+rule-tester --scaffold <path/to/rule.yaml> --no-overwrite
 ```
 
 #### `test`
@@ -162,7 +246,44 @@ rule-tester --scaffold <path/to/rule.yaml>
 Runs all test suites found in a directory.
 
 ```bash
+# Basic usage
 rule-tester --test --rules ./rules
+
+# With verbose output
+rule-tester --test --rules ./rules --verbose
+
+# JSON output for CI/CD
+rule-tester --test --rules ./rules --output json
+
+# Parallel execution
+rule-tester --test --rules ./rules --parallel 8
+
+# Sequential execution (debugging)
+rule-tester --test --rules ./rules --parallel 0
+```
+
+**JSON Output Format:**
+```json
+{
+  "total": 10,
+  "passed": 8,
+  "failed": 2,
+  "duration_ms": 145,
+  "results": [
+    {
+      "file": "match_high_temp.json",
+      "passed": true,
+      "duration_ms": 5
+    },
+    {
+      "file": "match_invalid.json",
+      "passed": false,
+      "error": "expected match=true, got match=false",
+      "details": "...",
+      "duration_ms": 8
+    }
+  ]
+}
 ```
 
 #### Quick Check
@@ -170,13 +291,348 @@ rule-tester --test --rules ./rules
 Runs a single rule against a single message for interactive development. It will smartly infer the subject from the rule file.
 
 ```bash
+# Basic usage
 rule-tester --rule <path/to/rule.yaml> --message <path/to/message.json>
-```
 
-To override the subject, especially for testing wildcard rules, use the `--subject` flag.
+# With KV mocking
+rule-tester --rule <path/to/rule.yaml> \
+            --message <path/to/message.json> \
+            --kv-mock <path/to/mock_kv_data.json>
 
-```bash
+# With subject override (for wildcard rules)
 rule-tester --rule <path/to/wildcard-rule.yaml> \
             --message <path/to/message.json> \
             --subject "sensors.specific.subject"
+
+# With verbose output
+rule-tester --rule <path/to/rule.yaml> \
+            --message <path/to/message.json> \
+            --verbose
 ```
+
+**Example Output:**
+```
+✓ Loaded KV mock data: 2 bucket(s)
+▶ Running Quick Check on subject: sensors.temp.room1
+
+Rule Matched: True
+Processing Time: 1.234ms
+
+--- Rendered Action 1 ---
+Subject: alerts.room1.high-temp
+Payload: {"alert":"High temperature","temp":35,"room":"room1"}
+-----------------------
+```
+
+-----
+
+## CI/CD Integration
+
+### GitHub Actions Example
+
+```yaml
+# .github/workflows/test-rules.yml
+name: Test Rules
+
+on:
+  push:
+    paths:
+      - 'rules/**'
+  pull_request:
+    paths:
+      - 'rules/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+      
+      - name: Install rule-tester
+        run: go install ./cmd/rule-tester
+      
+      - name: Lint rules
+        run: rule-tester --lint --rules ./rules
+      
+      - name: Run tests
+        run: rule-tester --test --rules ./rules --output json
+```
+
+### GitLab CI Example
+
+```yaml
+# .gitlab-ci.yml
+test-rules:
+  image: golang:1.23
+  stage: test
+  script:
+    - go install ./cmd/rule-tester
+    - rule-tester --lint --rules ./rules
+    - rule-tester --test --rules ./rules --output json
+  only:
+    changes:
+      - rules/**
+```
+
+-----
+
+## Troubleshooting
+
+### Common Issues
+
+#### Test Passes Locally, Fails in CI
+
+**Symptom:** Test works on your machine but fails in CI/CD pipeline.
+
+**Common Causes:**
+1. **Time zones**: Mock times are interpreted differently
+   ```json
+   // Use UTC to avoid ambiguity
+   {"mockTime": "2025-10-08T17:51:23Z"}
+   ```
+
+2. **File paths**: Different working directories
+   ```bash
+   # Use absolute paths or ensure working directory is correct
+   cd /path/to/project && rule-tester --test --rules ./rules
+   ```
+
+3. **Missing test files**: Ensure test directories are committed to git
+   ```bash
+   git add rules/*_test/
+   ```
+
+#### KV Lookup Fails in Test
+
+**Symptom:** Test fails with "KV field not found" or empty values.
+
+**Solution:** Ensure `mock_kv_data.json` is properly formatted:
+```json
+{
+  "bucket_name": {
+    "key_name": {"your": "data"}
+  }
+}
+```
+
+**Debug with verbose mode:**
+```bash
+rule-tester --rule ./rules/my-rule.yaml \
+            --message ./test.json \
+            --kv-mock ./mock_kv.json \
+            --verbose
+```
+
+#### Wildcard Subject Not Matching
+
+**Symptom:** Rule with wildcard (e.g., `sensors.*`) doesn't match in quick check.
+
+**Solution:** Provide a concrete subject:
+```bash
+rule-tester --rule ./rules/wildcard-rule.yaml \
+            --message ./test.json \
+            --subject "sensors.room1.temp"
+```
+
+#### Output Validation Fails on Identical JSON
+
+**Symptom:** Output validation fails even though JSON looks the same.
+
+**Cause:** Usually extra whitespace or key ordering (though this is handled).
+
+**Debug:** Use `--verbose` to see actual vs expected:
+```bash
+rule-tester --test --rules ./rules --verbose
+```
+
+#### Tests Run Slowly
+
+**Solution:** Increase parallel workers:
+```bash
+# Default is 4, try 8 or more
+rule-tester --test --rules ./rules --parallel 8
+```
+
+#### Scaffold Overwrites Test Files
+
+**Solution:** Use `--no-overwrite` flag:
+```bash
+rule-tester --scaffold ./rules/my-rule.yaml --no-overwrite
+```
+
+-----
+
+## Performance Tips
+
+1. **Parallel Execution**: Use `--parallel` flag for large test suites
+   ```bash
+   rule-tester --test --rules ./rules --parallel 8
+   ```
+
+2. **Separate Fast/Slow Tests**: Keep integration tests separate from unit tests
+   ```
+   rules/
+   ├── unit/      # Fast, isolated tests
+   └── integration/  # Slower, more complex tests
+   ```
+
+3. **CI Optimization**: Run linting before tests to fail fast
+   ```bash
+   rule-tester --lint --rules ./rules || exit 1
+   rule-tester --test --rules ./rules
+   ```
+
+-----
+
+## Best Practices
+
+### Test Organization
+
+```
+rules/
+├── temperature_rule.yaml
+├── temperature_rule_test/
+│   ├── _test_config.json
+│   ├── mock_kv_data.json
+│   ├── match_high_temp.json
+│   ├── match_high_temp_output.json
+│   ├── match_critical.json
+│   ├── not_match_normal.json
+│   └── not_match_offline.json
+└── pressure_rule.yaml
+```
+
+### Naming Conventions
+
+- Use descriptive test names: `match_high_temp.json` not `match_1.json`
+- Group related tests: `match_business_hours_weekday.json`, `match_business_hours_weekend.json`
+- Use consistent prefixes: Always `match_` or `not_match_`
+
+### Coverage
+
+Ensure you test:
+- **Happy path**: Expected conditions match
+- **Edge cases**: Boundary values (e.g., threshold exactly 30)
+- **Negative cases**: Conditions that should NOT match
+- **Template validation**: Use output files for critical rules
+- **KV dependencies**: Mock all required KV data
+- **Time dependencies**: Test different times of day/week
+
+-----
+
+## Examples
+
+### Example 1: Basic Rule Test
+
+**Rule** (`rules/temperature.yaml`):
+```yaml
+- subject: sensors.temperature
+  conditions:
+    operator: and
+    items:
+      - field: value
+        operator: gt
+        value: 30
+  action:
+    subject: alerts.high-temp
+    payload: '{"temp": {value}}'
+```
+
+**Test** (`rules/temperature_test/match_high.json`):
+```json
+{"value": 35}
+```
+
+**Test** (`rules/temperature_test/not_match_low.json`):
+```json
+{"value": 25}
+```
+
+### Example 2: KV-Dependent Rule Test
+
+**Rule** (`rules/customer_alert.yaml`):
+```yaml
+- subject: orders.created
+  conditions:
+    operator: and
+    items:
+      - field: "@kv.customer_data.{customer_id}:tier"
+        operator: eq
+        value: "premium"
+  action:
+    subject: alerts.premium-order
+    payload: '{"customer": "{customer_id}"}'
+```
+
+**Mock KV** (`rules/customer_alert_test/mock_kv_data.json`):
+```json
+{
+  "customer_data": {
+    "cust-123": {"tier": "premium"},
+    "cust-456": {"tier": "standard"}
+  }
+}
+```
+
+**Test** (`rules/customer_alert_test/match_premium.json`):
+```json
+{"customer_id": "cust-123"}
+```
+
+**Test** (`rules/customer_alert_test/not_match_standard.json`):
+```json
+{"customer_id": "cust-456"}
+```
+
+### Example 3: Time-Based Rule Test
+
+**Rule** (`rules/business_hours.yaml`):
+```yaml
+- subject: support.ticket
+  conditions:
+    operator: and
+    items:
+      - field: "@time.hour"
+        operator: gte
+        value: 9
+      - field: "@time.hour"
+        operator: lt
+        value: 17
+  action:
+    subject: support.during-hours
+    payload: '{}'
+```
+
+**Test Config** (`rules/business_hours_test/_test_config.json`):
+```json
+{
+  "subject": "support.ticket",
+  "mockTime": "2025-10-08T10:00:00Z"
+}
+```
+
+**Test** (`rules/business_hours_test/match_business_hours.json`):
+```json
+{"ticket_id": "123"}
+```
+
+To test after-hours, create another test directory with different `mockTime`.
+
+-----
+
+## Summary
+
+The `rule-tester` provides a complete testing solution for rule-router:
+
+- ✅ Fast feedback loop with Quick Check
+- ✅ Comprehensive test suites with Batch Test
+- ✅ Dependency isolation with mocking
+- ✅ CI/CD integration with JSON output
+- ✅ Production-grade features (parallel execution, progress indication)
+- ✅ Developer-friendly (scaffolding, overwrite protection)
+
+Start with scaffolding, write basic tests, then progressively add KV mocks and output validation as your rules become more complex.
