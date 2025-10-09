@@ -269,7 +269,6 @@ func TestSubjectContext_InvalidFields(t *testing.T) {
 	invalidFields := []string{
 		"@subject.invalid",
 		"@subject.",
-		"@subject.99",  // Beyond typical range
 		"@subject.-1",  // Negative as string
 		"notafield",
 		"",

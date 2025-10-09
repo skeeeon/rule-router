@@ -1,4 +1,4 @@
-//file: config/config.go
+// file: config/config.go
 
 package config
 
@@ -236,7 +236,9 @@ func setDefaults(cfg *Config) {
 
 	// KV defaults - disabled by default, no buckets
 	// KV Local Cache defaults - enabled by default when KV is enabled
-	// Validation will handle setting the default to true if KV is enabled
+	if cfg.KV.Enabled {
+		cfg.KV.LocalCache.Enabled = true
+	}
 }
 
 // validateConfig performs validation of all configuration values
@@ -382,11 +384,6 @@ func validateConfig(cfg *Config) error {
 				return fmt.Errorf("duplicate KV bucket name: %s", bucket)
 			}
 			bucketMap[bucket] = true
-		}
-		
-		// Set local cache default to enabled if not explicitly configured
-		if !isLocalCacheExplicitlyConfigured(cfg) {
-			cfg.KV.LocalCache.Enabled = true
 		}
 	}
 

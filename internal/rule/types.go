@@ -1,8 +1,9 @@
-//file: internal/rule/types.go
+// file: internal/rule/types.go
 
 package rule
 
 import (
+    "strconv"
     "strings"
 )
 
@@ -90,7 +91,7 @@ func (sc *SubjectContext) GetField(fieldName string) (interface{}, bool) {
                 return "", true
             default:
                 // Try to parse as integer index
-                if index := parseIntSafe(indexStr); index >= 0 {
+                if index, err := strconv.Atoi(indexStr); err == nil && index >= 0 {
                     return sc.GetToken(index), true
                 }
             }
@@ -106,50 +107,8 @@ func (sc *SubjectContext) GetAllFieldNames() []string {
     
     // Add indexed fields based on actual token count
     for i := 0; i < sc.Count; i++ {
-        fields = append(fields, "@subject."+intToString(i))
+        fields = append(fields, "@subject."+strconv.Itoa(i))
     }
     
     return fields
-}
-
-// Helper functions for safe conversions
-func parseIntSafe(s string) int {
-    switch s {
-    case "0": return 0
-    case "1": return 1
-    case "2": return 2
-    case "3": return 3
-    case "4": return 4
-    case "5": return 5
-    case "6": return 6
-    case "7": return 7
-    case "8": return 8
-    case "9": return 9
-    default:
-        // For more complex numbers, could use strconv.Atoi but keeping it simple
-        // Most NATS subjects won't have more than 10 tokens
-        return -1
-    }
-}
-
-func intToString(i int) string {
-    switch i {
-    case 0: return "0"
-    case 1: return "1"  
-    case 2: return "2"
-    case 3: return "3"
-    case 4: return "4"
-    case 5: return "5"
-    case 6: return "6"
-    case 7: return "7"
-    case 8: return "8"
-    case 9: return "9"
-    default:
-        // For simplicity, just return string representation of number
-        // In real use, most subjects won't exceed 10 tokens
-        if i < 100 {
-            return string(rune('0' + i/10)) + string(rune('0' + i%10))
-        }
-        return "many" // Fallback for very long subjects
-    }
 }
