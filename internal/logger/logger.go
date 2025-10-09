@@ -1,4 +1,4 @@
-//file: internal/logger/logger.go
+// file: internal/logger/logger.go
 
 package logger
 
@@ -115,7 +115,7 @@ func argsToFields(args ...interface{}) []zap.Field {
 			key, ok := args[i].(string)
 			if !ok {
 				continue
-			}
+						}
 			fields = append(fields, zap.Any(key, args[i+1]))
 		}
 	}

@@ -50,15 +50,17 @@ rules/
 If your rule has a concrete subject (e.g., `sensors.data`), it will be automatically added to `_test_config.json`. If it uses a wildcard (e.g., `sensors.*`), a placeholder will be added.
 
 **Overwrite Protection:**
+If a test directory already exists, the scaffolder will prompt you before overwriting to prevent accidental data loss. You can use the `--no-overwrite` flag to disable this behavior.
+
 ```bash
 # If test directory exists, you'll be prompted
-rule-tester --scaffold ./rules/my-rule.yaml
-# ⚠️  Test directory already exists: rules/my-rule_test
-#    Overwrite? (y/N): 
+$ rule-tester --scaffold ./rules/my-rule.yaml
+⚠️  Test directory already exists: rules/my-rule_test
+   Overwrite? (y/N): y
 
-# Skip the prompt with --no-overwrite
-rule-tester --scaffold ./rules/my-rule.yaml --no-overwrite
-# Error: test directory already exists (exits without changes)
+# Skip the prompt and fail if the directory exists
+$ rule-tester --scaffold ./rules/my-rule.yaml --no-overwrite
+Error: test directory already exists: rules/my-rule_test (use without --no-overwrite to proceed)
 ```
 
 ### 2\. Writing a Basic Test
@@ -120,8 +122,9 @@ rule-tester --test --rules ./rules --parallel 0
 ```
 
 **Progress Indication:**
+For larger test suites, a progress indicator will be displayed during parallel execution.
 ```
-[45/100] Tests completed...
+[45/100] Tests completed... (Failed: 1)
 ```
 
 -----
@@ -232,12 +235,12 @@ Linting failed
 
 #### `scaffold`
 
-Creates a test directory and pre-populated configuration files for a given rule.
+Creates a test directory and pre-populated configuration files for a given rule. Prompts before overwriting existing directories.
 
 ```bash
 rule-tester --scaffold <path/to/rule.yaml>
 
-# With overwrite protection
+# With overwrite protection (will fail if directory exists)
 rule-tester --scaffold <path/to/rule.yaml> --no-overwrite
 ```
 
@@ -249,7 +252,7 @@ Runs all test suites found in a directory.
 # Basic usage
 rule-tester --test --rules ./rules
 
-# With verbose output
+# With verbose output for detailed failure reports
 rule-tester --test --rules ./rules --verbose
 
 # JSON output for CI/CD
@@ -258,7 +261,7 @@ rule-tester --test --rules ./rules --output json
 # Parallel execution
 rule-tester --test --rules ./rules --parallel 8
 
-# Sequential execution (debugging)
+# Sequential execution (useful for debugging)
 rule-tester --test --rules ./rules --parallel 0
 ```
 
@@ -389,22 +392,16 @@ test-rules:
 **Symptom:** Test works on your machine but fails in CI/CD pipeline.
 
 **Common Causes:**
-1. **Time zones**: Mock times are interpreted differently
+1. **Time zones**: Mock times are interpreted differently. Use UTC (`Z` suffix) or include a timezone offset to avoid ambiguity.
    ```json
-   // Use UTC to avoid ambiguity
+   // Good:
    {"mockTime": "2025-10-08T17:51:23Z"}
+   {"mockTime": "2025-10-08T12:51:23-05:00"}
    ```
 
-2. **File paths**: Different working directories
-   ```bash
-   # Use absolute paths or ensure working directory is correct
-   cd /path/to/project && rule-tester --test --rules ./rules
-   ```
+2. **File paths**: Different working directories. Ensure commands are run from the project root.
 
-3. **Missing test files**: Ensure test directories are committed to git
-   ```bash
-   git add rules/*_test/
-   ```
+3. **Missing test files**: Ensure test directories (`*_test/`) are committed to git.
 
 #### KV Lookup Fails in Test
 
@@ -431,7 +428,7 @@ rule-tester --rule ./rules/my-rule.yaml \
 
 **Symptom:** Rule with wildcard (e.g., `sensors.*`) doesn't match in quick check.
 
-**Solution:** Provide a concrete subject:
+**Solution:** Provide a concrete subject using the `--subject` flag:
 ```bash
 rule-tester --rule ./rules/wildcard-rule.yaml \
             --message ./test.json \
@@ -442,16 +439,16 @@ rule-tester --rule ./rules/wildcard-rule.yaml \
 
 **Symptom:** Output validation fails even though JSON looks the same.
 
-**Cause:** Usually extra whitespace or key ordering (though this is handled).
+**Cause:** Usually extra whitespace or key ordering (though the tester canonicalizes JSON to handle ordering).
 
-**Debug:** Use `--verbose` to see actual vs expected:
+**Debug:** Use `--verbose` to see the actual vs. expected output diff:
 ```bash
 rule-tester --test --rules ./rules --verbose
 ```
 
 #### Tests Run Slowly
 
-**Solution:** Increase parallel workers:
+**Solution:** The test runner is highly optimized, but for extremely large test suites, you can increase parallel workers:
 ```bash
 # Default is 4, try 8 or more
 rule-tester --test --rules ./rules --parallel 8
@@ -459,28 +456,20 @@ rule-tester --test --rules ./rules --parallel 8
 
 #### Scaffold Overwrites Test Files
 
-**Solution:** Use `--no-overwrite` flag:
+**Solution:** The tool now prompts before overwriting. To prevent this and fail instead, use the `--no-overwrite` flag:
 ```bash
-rule-tester --scaffold ./rules/my-rule.yaml --no-overwrite
-```
+rule-tester --scaffold ./rules/my-rule.yaml --no-overwrite```
 
 -----
 
 ## Performance Tips
 
-1. **Parallel Execution**: Use `--parallel` flag for large test suites
+1. **Leverage Optimizations**: The test runner is already optimized to parse each rule file only once, making it significantly faster.
+2. **Parallel Execution**: Use the `--parallel` flag for large test suites to take advantage of multiple CPU cores.
    ```bash
    rule-tester --test --rules ./rules --parallel 8
    ```
-
-2. **Separate Fast/Slow Tests**: Keep integration tests separate from unit tests
-   ```
-   rules/
-   ├── unit/      # Fast, isolated tests
-   └── integration/  # Slower, more complex tests
-   ```
-
-3. **CI Optimization**: Run linting before tests to fail fast
+3. **CI Optimization**: Run the fast `lint` command before the `test` command to fail quickly on syntax errors.
    ```bash
    rule-tester --lint --rules ./rules || exit 1
    rule-tester --test --rules ./rules
@@ -509,7 +498,7 @@ rules/
 ### Naming Conventions
 
 - Use descriptive test names: `match_high_temp.json` not `match_1.json`
-- Group related tests: `match_business_hours_weekday.json`, `match_business_hours_weekend.json`
+- Group related tests: `match_business_hours_weekday.json`, `not_match_business_hours_weekend.json`
 - Use consistent prefixes: Always `match_` or `not_match_`
 
 ### Coverage
@@ -620,7 +609,7 @@ Ensure you test:
 {"ticket_id": "123"}
 ```
 
-To test after-hours, create another test directory with different `mockTime`.
+To test after-hours, create another test directory with a different `mockTime`.
 
 -----
 
@@ -629,7 +618,7 @@ To test after-hours, create another test directory with different `mockTime`.
 The `rule-tester` provides a complete testing solution for rule-router:
 
 - ✅ Fast feedback loop with Quick Check
-- ✅ Comprehensive test suites with Batch Test
+- ✅ Comprehensive and **fast** test suites with Batch Test
 - ✅ Dependency isolation with mocking
 - ✅ CI/CD integration with JSON output
 - ✅ Production-grade features (parallel execution, progress indication)
