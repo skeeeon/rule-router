@@ -24,7 +24,7 @@ var (
     // {temperature} -> groups: ["", "temperature"]
     // {@kv.bucket.key:path} -> groups: ["@", "kv.bucket.key:path"]
     // Note: Includes colon (:) to support KV syntax with colon delimiter
-    combinedVariablePattern = regexp.MustCompile(`\{(@?)([a-zA-Z0-9_.:()]+)\}`)
+    combinedVariablePattern = regexp.MustCompile(`\{(@?)([a-zA-Z0-9_.:()=/-]+)\}`)
 )
 
 type Processor struct {
