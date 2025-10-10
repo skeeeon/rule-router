@@ -404,40 +404,55 @@ func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, actio
 
 // publishJetStream publishes to JetStream with ack confirmation
 func (sm *SubscriptionManager) publishJetStream(ctx context.Context, action *rule.Action) error {
-	pubCtx, cancel := context.WithTimeout(ctx, sm.publishCfg.AckTimeout)
-	defer cancel()
+    pubCtx, cancel := context.WithTimeout(ctx, sm.publishCfg.AckTimeout)
+    defer cancel()
 
-	_, err := sm.jetStream.Publish(pubCtx, action.Subject, []byte(action.Payload))
-	if err != nil {
-		// **FIX**: Check for a more specific error to detect a missing stream.
-		// This provides a much clearer error message than a generic timeout.
-		if errors.Is(err, nats.ErrNoResponders) {
-			return fmt.Errorf("jetstream publish failed: no stream is configured for action subject '%s'", action.Subject)
-		}
-		return fmt.Errorf("jetstream publish failed: %w", err)
-	}
+    // NEW: Select payload bytes based on passthrough flag
+    var payloadBytes []byte
+    if action.Passthrough {
+        if len(action.RawPayload) == 0 {
+            sm.logger.Warn("passthrough action has no raw payload, publishing empty message",
+                "subject", action.Subject)
+        }
+        payloadBytes = action.RawPayload  // Zero-copy!
+        
+        sm.logger.Debug("publishing passthrough action",
+            "subject", action.Subject,
+            "payloadSize", len(payloadBytes))
+    } else {
+        payloadBytes = []byte(action.Payload)
+        
+        sm.logger.Debug("publishing templated action",
+            "subject", action.Subject,
+            "payloadSize", len(payloadBytes))
+    }
 
-	return nil
+    _, err := sm.jetStream.Publish(pubCtx, action.Subject, payloadBytes)
+    if err != nil {
+        if errors.Is(err, nats.ErrNoResponders) {
+            return fmt.Errorf("jetstream publish failed: no stream is configured for action subject '%s'", action.Subject)
+        }
+        return fmt.Errorf("jetstream publish failed: %w", err)
+    }
+
+    return nil
 }
 
 // publishCore publishes to core NATS (fire-and-forget, no ack)
 func (sm *SubscriptionManager) publishCore(ctx context.Context, action *rule.Action) error {
-	// **FIX**: The previous implementation incorrectly wrapped this in a timeout.
-	// A core NATS publish is a fast, local buffer operation and should not
-	// be timed out with the JetStream ackTimeout.
-	if err := sm.natsConn.Publish(action.Subject, []byte(action.Payload)); err != nil {
-		return fmt.Errorf("core nats publish failed: %w", err)
-	}
+    // NEW: Select payload bytes based on passthrough flag
+    var payloadBytes []byte
+    if action.Passthrough {
+        payloadBytes = action.RawPayload
+    } else {
+        payloadBytes = []byte(action.Payload)
+    }
+    
+    if err := sm.natsConn.Publish(action.Subject, payloadBytes); err != nil {
+        return fmt.Errorf("core nats publish failed: %w", err)
+    }
 
-	// Optional: You could flush the buffer here to ensure the message is sent
-	// immediately, but for a true "fire-and-forget" approach, this is not strictly
-	// necessary as the client will flush automatically.
-	//
-	// if err := sm.natsConn.FlushTimeout(2 * time.Second); err != nil {
-	// 	 return fmt.Errorf("core nats flush failed: %w", err)
-	// }
-
-	return nil
+    return nil
 }
 
 // Stop gracefully shuts down all subscriptions

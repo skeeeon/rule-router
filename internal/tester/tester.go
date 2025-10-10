@@ -209,7 +209,12 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 		for i, action := range actions {
 			fmt.Printf("\n--- Rendered Action %d ---\n", i+1)
 			fmt.Printf("Subject: %s\n", action.Subject)
-			fmt.Printf("Payload: %s\n", action.Payload)
+			// NEW: Handle passthrough for display
+			if action.Passthrough {
+				fmt.Printf("Payload: %s (passthrough)\n", string(action.RawPayload))
+			} else {
+				fmt.Printf("Payload: %s\n", action.Payload)
+			}
 			fmt.Println("-----------------------")
 		}
 	} else {
@@ -481,9 +486,9 @@ func (t *Tester) runSingleTestCase(processor *rule.Processor, messagePath, subje
 	return result
 }
 
-// validateOutput checks if the actual action matches the expected output file.
+// UPDATED: validateOutput checks if the actual action matches the expected output file.
 func validateOutput(action *rule.Action, outputFile string) error {
-	// Use os.ReadFile (Fix A)
+	// Use os.ReadFile
 	expectedBytes, err := os.ReadFile(outputFile)
 	if err != nil {
 		return fmt.Errorf("could not read expected output file: %w", err)
@@ -498,10 +503,21 @@ func validateOutput(action *rule.Action, outputFile string) error {
 		return fmt.Errorf("subject mismatch: got '%s', want '%s'", action.Subject, expected.Subject)
 	}
 
-	var actualPayload, expectedPayload interface{}
-	if err := json.Unmarshal([]byte(action.Payload), &actualPayload); err != nil {
-		return fmt.Errorf("could not parse actual action payload: %w", err)
+	// NEW: Handle passthrough validation
+	var actualPayload interface{}
+	if action.Passthrough {
+		// For passthrough, parse RawPayload
+		if err := json.Unmarshal(action.RawPayload, &actualPayload); err != nil {
+			return fmt.Errorf("could not parse passthrough raw payload: %w", err)
+		}
+	} else {
+		// For templated, parse Payload string
+		if err := json.Unmarshal([]byte(action.Payload), &actualPayload); err != nil {
+			return fmt.Errorf("could not parse templated action payload: %w", err)
+		}
 	}
+
+	var expectedPayload interface{}
 	if err := json.Unmarshal(expected.Payload, &expectedPayload); err != nil {
 		return fmt.Errorf("could not parse expected payload from output file: %w", err)
 	}
@@ -521,7 +537,9 @@ func setupTestProcessor(rulePath string, kvData map[string]map[string]interface{
 	// Always use NopLogger for test processor
 	log := logger.NewNopLogger()
 
-	rules, err := loadSingleRuleFile(rulePath)
+	// Use a loader with no configured buckets for testing, as we mock the cache directly
+	loader := rule.NewRulesLoader(log, []string{})
+	rules, err := loader.LoadFromDirectory(filepath.Dir(rulePath))
 	if err != nil {
 		fmt.Printf("Error loading rule file %s: %v\n", rulePath, err)
 		os.Exit(1)

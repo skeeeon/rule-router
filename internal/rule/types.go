@@ -27,8 +27,13 @@ type Condition struct {
 }
 
 type Action struct {
-    Subject string `json:"subject" yaml:"subject"`
-    Payload string `json:"payload" yaml:"payload"`
+    Subject     string `json:"subject" yaml:"subject"`
+    Payload     string `json:"payload" yaml:"payload"`
+    Passthrough bool   `json:"passthrough,omitempty" yaml:"passthrough,omitempty"` // NEW
+
+    // RawPayload stores the original unmodified message bytes when passthrough is true.
+    // This is populated during processing, not from config files.
+    RawPayload  []byte `json:"-" yaml:"-"` // NEW: Not serialized
 }
 
 // SubjectContext provides access to NATS subject information for templates and conditions

@@ -158,6 +158,11 @@ func (l *RulesLoader) validateRule(rule *Rule, filePath string, ruleIndex int) e
         return fmt.Errorf("action subject cannot be empty")
     }
 
+    // NEW: Validate passthrough vs payload mutual exclusivity
+    if err := l.validateActionPayload(rule.Action); err != nil {
+        return fmt.Errorf("invalid action configuration: %w", err)
+    }
+
     // Validate action subject for wildcard patterns too
     if containsWildcards(rule.Action.Subject) {
         l.logger.Info("action subject contains wildcards - ensure this is intentional", "actionSubject", rule.Action.Subject, "ruleSubject", rule.Subject, "file", filePath, "index", ruleIndex)
@@ -179,6 +184,20 @@ func (l *RulesLoader) validateRule(rule *Rule, filePath string, ruleIndex int) e
         }
     }
 
+    return nil
+}
+
+// CORRECTED: validateActionPayload ensures action payload configuration is valid
+func (l *RulesLoader) validateActionPayload(action *Action) error {
+    // The only truly invalid state is when passthrough is true AND a non-empty payload is also defined.
+    // An empty payload ("") is a valid configuration for a templated action.
+    if action.Passthrough && action.Payload != "" {
+        return fmt.Errorf("cannot specify both 'payload' and 'passthrough: true' - choose one")
+    }
+    
+    // The check for "neither specified" from the original plan was flawed because it couldn't
+    // distinguish between an omitted payload and an explicitly empty one (`payload: ""`),
+    // causing it to reject valid rules. An action that produces an empty message is a valid use case.
     return nil
 }
 

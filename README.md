@@ -11,6 +11,7 @@ A high-performance NATS JetStream message router that evaluates JSON messages ag
   - **Time-Based Rules** - Schedule-aware evaluation without external schedulers
   - **Pattern Matching** - NATS wildcards (`*` and `>`) with subject token access
   - **Template Engine** - Variable substitution with nested field support
+  - **Zero-Copy Passthrough** - Forward messages unchanged for high-performance filtering and routing
   - **Full Authentication** - Username/password, token, NKey, and `.creds` files
   - **Production Ready** - Prometheus metrics, structured logging, graceful shutdown
   - **Auto-Retry** - Exponential backoff for action publishing
@@ -93,7 +94,7 @@ cat > rules/temperature.yaml <<EOF
       }
 EOF
 
-# Run rule-router (will validate streams exist for both subjects)
+# Run rule-router (will validate streams exist for input subjects only)
 rule-router -config config/config.yaml -rules rules/
 
 # Test - publish to input stream
@@ -146,8 +147,45 @@ metrics:
         value: expectedValue
   action:
     subject: output.subject
-    payload: "JSON template"
+    payload: "JSON template"      # Mutually exclusive with 'passthrough'
 ```
+
+### Action Configuration
+
+Actions can either **template** a new message or **passthrough** the original message payload without modification.
+
+**Templated Action (default):**
+This is the standard behavior where you define a new payload.
+```yaml
+action:
+  subject: output.subject
+  payload: |
+    {
+      "transformed_field": "{original_field}",
+      "timestamp": "{@timestamp()}"
+    }
+```
+
+**Passthrough Action:**
+This forwards the original message payload unchanged, offering maximum performance for filtering and routing tasks.
+```yaml
+action:
+  subject: output.subject
+  passthrough: true  # Forwards original message payload
+```
+
+**Passthrough with Subject Templating:**
+You can still use templates in the action `subject` while forwarding the original payload. This enables powerful dynamic routing.
+```yaml
+action:
+  subject: "routed.{@subject.1}.{priority}"
+  passthrough: true  # Subject is templated, payload is original
+```
+
+**Important Rules:**
+- You must specify either `payload` OR `passthrough: true`. They are mutually exclusive. The rule loader will return an error if both are present.
+- Subject templating works with both modes.
+- Passthrough preserves the exact original message bytes, including formatting and field order.
 
 ### Condition Operators
 
@@ -355,8 +393,7 @@ RUN apk --no-cache add ca-certificates
 COPY --from=builder /app/rule-router /usr/local/bin/
 COPY rules/ /etc/rule-router/rules/
 COPY config/config.yaml /etc/rule-router/
-CMD ["rule-router", "-config", "/etc/rule-router/config.yaml", "-rules", "/etc/rule-router/rules/"]
-```
+CMD ["rule-router", "-config", "/etc/rule-router/config.yaml", "-rules", "/etc/rule-router/rules/"]```
 
 ### Docker Compose
 
@@ -403,6 +440,7 @@ Available at `http://localhost:2112/metrics`:
 
   - `actions_total{status="success|error"}`
   - `action_publish_failures_total`
+  - `actions_by_type_total{type="templated|passthrough"}`
 
 **NATS Connection:**
 
@@ -562,21 +600,19 @@ logging:
   level: debug
 
 # Check which stream was selected
-grep "selected optimal stream" rule-router.log | jq .
-```
+grep "selected optimal stream" rule-router.log | jq .```
 
 ## Examples
 
-Complete working examples in the [rules/](https://www.google.com/search?q=rules/) directory:
+Complete working examples in the rules directory:
 
   - `basic.yaml` - Simple conditions and actions
   - `wildcard-examples.yaml` - Pattern matching
   - `time-based.yaml` - Schedule-aware rules
   - `kv-json-path.yaml` - KV enrichment with JSON paths
   - `nested-fields.yaml` - Deep object access
+  - `passthrough.yaml` - High-performance message forwarding
   - `advanced.yaml` - Complex nested condition groups
-
-The rule loader will recursively scan the `rules/` directory but will automatically ignore any subdirectories ending in `_test` to prevent test files from being loaded as active rules.
 
 ## CLI Options
 
@@ -598,4 +634,4 @@ Options:
 
 ## License
 
-MIT License - see [LICENSE](https://www.google.com/search?q=LICENSE) file for details.
+MIT License - see license file for details.

@@ -136,8 +136,15 @@ func (p *Processor) ProcessWithSubject(actualSubject string, payload []byte) ([]
 
         // Evaluate conditions with subject context and KV context support
         if rule.Conditions == nil || p.evaluateConditions(rule.Conditions, msgValues, timeCtx, subjectCtx, p.kvContext) {
-            // Process action template with subject context and KV context
-            action, err := p.processActionTemplate(rule.Action, msgValues, timeCtx, subjectCtx, p.kvContext)
+            // Pass raw payload to template processor
+            action, err := p.processActionTemplate(
+                rule.Action, 
+                msgValues, 
+                timeCtx, 
+                subjectCtx, 
+                p.kvContext,
+                payload,  // NEW: Pass raw bytes
+            )
             if err != nil {
                 if p.metrics != nil {
                     p.metrics.IncTemplateOpsTotal("error")
@@ -151,6 +158,12 @@ func (p *Processor) ProcessWithSubject(actualSubject string, payload []byte) ([]
             if p.metrics != nil {
                 p.metrics.IncTemplateOpsTotal("success")
                 p.metrics.IncRuleMatches()
+                // NEW: Increment action type metric
+                if action.Passthrough {
+                    p.metrics.IncActionsByType("passthrough")
+                } else {
+                    p.metrics.IncActionsByType("templated")
+                }
             }
             
             p.logger.Debug("rule matched and action created",
@@ -186,13 +199,21 @@ func (p *Processor) Process(subject string, payload []byte) ([]*Action, error) {
     return p.ProcessWithSubject(subject, payload)
 }
 
-func (p *Processor) processActionTemplate(action *Action, msg map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext, kvCtx *KVContext) (*Action, error) {
+func (p *Processor) processActionTemplate(
+    action *Action, 
+    msg map[string]interface{}, 
+    timeCtx *TimeContext, 
+    subjectCtx *SubjectContext, 
+    kvCtx *KVContext,
+    rawPayload []byte,  // NEW PARAMETER: Pass raw bytes from ProcessWithSubject
+) (*Action, error) {
     processedAction := &Action{
-        Subject: action.Subject,
-        Payload: action.Payload,
+        Subject:     action.Subject,
+        Payload:     action.Payload,
+        Passthrough: action.Passthrough, // NEW: Copy flag
     }
 
-    // Process subject template if it contains variables
+    // Process subject template (always - even with passthrough)
     if strings.Contains(action.Subject, "{") {
         subject, err := p.processTemplate(action.Subject, msg, timeCtx, subjectCtx, kvCtx)
         if err != nil {
@@ -201,7 +222,19 @@ func (p *Processor) processActionTemplate(action *Action, msg map[string]interfa
         processedAction.Subject = subject
     }
 
-    // Process payload template
+    // NEW: Handle passthrough mode
+    if action.Passthrough {
+        processedAction.RawPayload = rawPayload  // Store original bytes
+        processedAction.Payload = ""             // Clear payload string
+        
+        p.logger.Debug("action configured as passthrough, preserving original message",
+            "subject", processedAction.Subject,
+            "payloadSize", len(rawPayload))
+        
+        return processedAction, nil
+    }
+
+    // Existing template processing for payload
     payload, err := p.processTemplate(action.Payload, msg, timeCtx, subjectCtx, kvCtx)
     if err != nil {
         return nil, fmt.Errorf("failed to process payload template: %w", err)

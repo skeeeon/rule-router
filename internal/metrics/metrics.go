@@ -24,6 +24,7 @@ type Metrics struct {
 	// Action metrics
 	actionsTotal          *prometheus.CounterVec
 	actionPublishFailures prometheus.Counter
+	actionsByType         *prometheus.CounterVec // NEW
 
 	// Template metrics
 	templateOpsTotal *prometheus.CounterVec
@@ -92,6 +93,14 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 				Help: "Total number of action publish failures (before retry)",
 			},
 		),
+		// NEW: Counter for action types
+		actionsByType: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "actions_by_type_total",
+				Help: "Total actions by type (templated vs passthrough)",
+			},
+			[]string{"type"},
+		),
 		templateOpsTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "template_operations_total",
@@ -124,6 +133,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.natsReconnectsTotal,
 		m.actionsTotal,
 		m.actionPublishFailures,
+		m.actionsByType, // NEW
 		m.templateOpsTotal,
 		m.processGoroutines,
 		m.processMemoryBytes,
@@ -185,6 +195,11 @@ func (m *Metrics) IncActionsTotal(status string) {
 // IncActionPublishFailures increments the action publish failures counter
 func (m *Metrics) IncActionPublishFailures() {
 	m.actionPublishFailures.Inc()
+}
+
+// NEW: IncActionsByType increments the action type counter
+func (m *Metrics) IncActionsByType(actionType string) {
+    m.actionsByType.WithLabelValues(actionType).Inc()
 }
 
 // IncTemplateOpsTotal increments the template operations counter for a given status
