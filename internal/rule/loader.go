@@ -3,14 +3,16 @@
 package rule
 
 import (
-    "fmt"
-    "os"
-    "path/filepath"
-    "regexp"
-    "strings"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+
 	json "github.com/goccy/go-json"
-    "gopkg.in/yaml.v3"
-    "rule-router/internal/logger"
+	"gopkg.in/yaml.v3"
+	"rule-router/internal/logger"
 )
 
 // Enhanced regex patterns for KV field validation with colon delimiter
@@ -60,13 +62,11 @@ func (l *RulesLoader) LoadFromDirectory(path string) ([]Rule, error) {
             return fmt.Errorf("error accessing path %s: %w", filePath, err)
         }
 
-        // **FIX STARTS HERE**
         // If the entry is a directory and ends with "_test", skip it entirely.
         if info.IsDir() && strings.HasSuffix(info.Name(), "_test") {
             l.logger.Debug("skipping test directory", "path", filePath)
             return filepath.SkipDir
         }
-        // **FIX ENDS HERE**
 
         if info.IsDir() {
             return nil
@@ -246,36 +246,42 @@ func (l *RulesLoader) validateConditions(conditions *Conditions) error {
     return nil
 }
 
+// **FIX START**
 // validateSubjectField validates subject field references like @subject.1, @subject.count
+// This version correctly parses any non-negative integer for token indices.
 func (l *RulesLoader) validateSubjectField(field string) error {
-    validSubjectFields := []string{
-        "@subject",
-        "@subject.count",
-        "@subject.first", 
-        "@subject.last",
-    }
-    
-    // Check exact matches first
-    for _, valid := range validSubjectFields {
-        if field == valid {
-            return nil
-        }
-    }
-    
-    // Check indexed fields: @subject.0, @subject.1, etc.
-    if strings.HasPrefix(field, "@subject.") {
-        suffix := field[9:] // Remove "@subject."
-        
-        // Simple validation for numeric indices
-        if len(suffix) == 1 && suffix >= "0" && suffix <= "9" {
-            return nil // @subject.0 through @subject.9 are valid
-        }
-        
-        return fmt.Errorf("unsupported subject field suffix '%s', use @subject.0-9, @subject.count, @subject.first, or @subject.last", suffix)
-    }
-    
-    return fmt.Errorf("invalid subject field format")
+	// Allow the full subject itself, e.g., "@subject"
+	if field == "@subject" {
+		return nil
+	}
+
+	// For token access, the field must start with the correct prefix.
+	if !strings.HasPrefix(field, "@subject.") {
+		return fmt.Errorf("invalid subject field format: %s", field)
+	}
+
+	// Extract the accessor part (e.g., "0", "10", "count", "first").
+	suffix := field[9:] // Remove "@subject."
+
+	// Check for special keyword accessors.
+	switch suffix {
+	case "count", "first", "last":
+		return nil
+	}
+
+	// If it's not a keyword, it must be a numeric index.
+	if index, err := strconv.Atoi(suffix); err == nil {
+		// Ensure the index is not negative.
+		if index < 0 {
+			return fmt.Errorf("subject token index cannot be negative, got: %d", index)
+		}
+		return nil // The format is valid.
+	}
+
+	// If it's not a recognized keyword and not a valid non-negative integer, it's an error.
+	return fmt.Errorf("invalid subject field token accessor '%s'; must be a non-negative integer, 'first', 'last', or 'count'", suffix)
 }
+// **FIX END**
 
 // isValidOperator checks if the operator is supported
 func (l *RulesLoader) isValidOperator(op string) bool {
@@ -456,7 +462,7 @@ func (l *RulesLoader) validateKVFieldWithVariables(field string) error {
         l.logger.Debug("validated KV field with variables in key", "field", field, "bucket", bucket, "key", key)
     }
     
-    // FIXED: Validate JSON path segments using brace-aware splitting
+    // FIXED: Parse JSON path using brace-aware splitting
     // This allows variables like {sensor.choice} to be treated as single tokens
     jsonPath, err := SplitPathRespectingBraces(jsonPathPart)
     if err != nil {
