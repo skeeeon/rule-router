@@ -21,6 +21,9 @@ func NewEvaluator(log *logger.Logger) *Evaluator {
 }
 
 // Evaluate checks if a message satisfies the conditions within a group.
+// Uses short-circuit evaluation for optimal performance:
+// - AND: Returns false on first false condition (remaining conditions skipped)
+// - OR: Returns true on first true condition (remaining conditions skipped)
 func (e *Evaluator) Evaluate(conditions *Conditions, context *EvaluationContext) bool {
 	if conditions == nil || (len(conditions.Items) == 0 && len(conditions.Groups) == 0) {
 		e.logger.Debug("no conditions to evaluate")
@@ -32,40 +35,105 @@ func (e *Evaluator) Evaluate(conditions *Conditions, context *EvaluationContext)
 		"numConditions", len(conditions.Items),
 		"numGroups", len(conditions.Groups))
 
-	results := make([]bool, 0, len(conditions.Items)+len(conditions.Groups))
-
-	for i, condition := range conditions.Items {
-		result := e.evaluateCondition(&condition, context)
-		results = append(results, result)
-		e.logger.Debug("evaluated individual condition",
-			"index", i, "field", condition.Field, "operator", condition.Operator, "value", condition.Value, "result", result)
-	}
-
-	for i, group := range conditions.Groups {
-		result := e.Evaluate(&group, context)
-		results = append(results, result)
-		e.logger.Debug("evaluated nested group", "index", i, "operator", group.Operator, "result", result)
-	}
-
-	switch conditions.Operator {
-	case "and":
-		for _, result := range results {
-			if !result {
-				return false
-			}
-		}
-		return true
-	case "or":
-		for _, result := range results {
-			if result {
-				return true
-			}
-		}
-		return false
-	default:
+	// Short-circuit evaluation based on operator
+	if conditions.Operator == "and" {
+		return e.evaluateAND(conditions, context)
+	} else if conditions.Operator == "or" {
+		return e.evaluateOR(conditions, context)
+	} else {
 		e.logger.Error("unknown logical operator", "operator", conditions.Operator)
 		return false
 	}
+}
+
+// evaluateAND evaluates with short-circuit on first false
+func (e *Evaluator) evaluateAND(conditions *Conditions, context *EvaluationContext) bool {
+	// Evaluate individual conditions - stop on first false
+	for i, condition := range conditions.Items {
+		result := e.evaluateCondition(&condition, context)
+		
+		e.logger.Debug("evaluated AND condition",
+			"index", i,
+			"field", condition.Field,
+			"operator", condition.Operator,
+			"value", condition.Value,
+			"result", result)
+		
+		if !result {
+			e.logger.Debug("AND group short-circuited on condition",
+				"failedIndex", i,
+				"field", condition.Field,
+				"totalConditions", len(conditions.Items),
+				"skippedConditions", len(conditions.Items)-i-1)
+			return false // Short-circuit: no need to check remaining
+		}
+	}
+
+	// Evaluate nested groups - stop on first false
+	for i, group := range conditions.Groups {
+		result := e.Evaluate(&group, context)
+		
+		e.logger.Debug("evaluated AND nested group",
+			"index", i,
+			"operator", group.Operator,
+			"result", result)
+		
+		if !result {
+			e.logger.Debug("AND group short-circuited on nested group",
+				"failedGroupIndex", i,
+				"totalGroups", len(conditions.Groups),
+				"skippedGroups", len(conditions.Groups)-i-1)
+			return false // Short-circuit: no need to check remaining
+		}
+	}
+
+	e.logger.Debug("AND group: all conditions passed")
+	return true
+}
+
+// evaluateOR evaluates with short-circuit on first true
+func (e *Evaluator) evaluateOR(conditions *Conditions, context *EvaluationContext) bool {
+	// Evaluate individual conditions - stop on first true
+	for i, condition := range conditions.Items {
+		result := e.evaluateCondition(&condition, context)
+		
+		e.logger.Debug("evaluated OR condition",
+			"index", i,
+			"field", condition.Field,
+			"operator", condition.Operator,
+			"value", condition.Value,
+			"result", result)
+		
+		if result {
+			e.logger.Debug("OR group short-circuited on condition",
+				"successIndex", i,
+				"field", condition.Field,
+				"totalConditions", len(conditions.Items),
+				"skippedConditions", len(conditions.Items)-i-1)
+			return true // Short-circuit: no need to check remaining
+		}
+	}
+
+	// Evaluate nested groups - stop on first true
+	for i, group := range conditions.Groups {
+		result := e.Evaluate(&group, context)
+		
+		e.logger.Debug("evaluated OR nested group",
+			"index", i,
+			"operator", group.Operator,
+			"result", result)
+		
+		if result {
+			e.logger.Debug("OR group short-circuited on nested group",
+				"successGroupIndex", i,
+				"totalGroups", len(conditions.Groups),
+				"skippedGroups", len(conditions.Groups)-i-1)
+			return true // Short-circuit: no need to check remaining
+		}
+	}
+
+	e.logger.Debug("OR group: no conditions passed")
+	return false
 }
 
 // evaluateCondition evaluates a single condition using the centralized context.
@@ -118,7 +186,6 @@ func (e *Evaluator) evaluateCondition(cond *Condition, context *EvaluationContex
 // --- Comparison Helpers ---
 
 func (e *Evaluator) compareValues(a, b interface{}, op string) bool {
-	// ... (omitted for brevity - this logic is identical to the original file)
 	if a == nil && b == nil {
 		return op == "eq"
 	}
@@ -175,8 +242,9 @@ func (e *Evaluator) compareValues(a, b interface{}, op string) bool {
 }
 
 func (e *Evaluator) compareContains(fieldValue, searchValue interface{}) bool {
-	// ... (omitted for brevity - this logic is identical to the original file)
+	// Check if fieldValue is an array
 	if arr, isArray := fieldValue.([]interface{}); isArray {
+		// Array membership check
 		for _, item := range arr {
 			if e.compareValues(item, searchValue, "eq") {
 				return true
@@ -184,17 +252,21 @@ func (e *Evaluator) compareContains(fieldValue, searchValue interface{}) bool {
 		}
 		return false
 	}
+
+	// String substring check
 	fieldStr := e.convertToString(fieldValue)
 	searchStr := e.convertToString(searchValue)
 	return strings.Contains(fieldStr, searchStr)
 }
 
 func (e *Evaluator) compareIn(fieldValue, allowedValues interface{}) bool {
-	// ... (omitted for brevity - this logic is identical to the original file)
+	// Check if allowedValues is an array
 	arr, isArray := allowedValues.([]interface{})
 	if !isArray {
 		return false
 	}
+
+	// Check if fieldValue is in the array
 	for _, item := range arr {
 		if e.compareValues(fieldValue, item, "eq") {
 			return true
@@ -204,7 +276,6 @@ func (e *Evaluator) compareIn(fieldValue, allowedValues interface{}) bool {
 }
 
 func (e *Evaluator) compareNumeric(a, b interface{}, op string) bool {
-	// ... (omitted for brevity - this logic is identical to the original file)
 	var numA, numB float64
 	var err error
 
@@ -247,7 +318,6 @@ func (e *Evaluator) toFloat(v interface{}) (float64, error) {
 }
 
 func (e *Evaluator) convertToString(value interface{}) string {
-	// ... (omitted for brevity - this logic is identical to the original file)
 	if value == nil {
 		return ""
 	}

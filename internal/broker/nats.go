@@ -485,10 +485,24 @@ func (b *NATSBroker) initializeNATSConnection() error {
 		return fmt.Errorf("failed to build NATS options: %w", err)
 	}
 
-	b.natsConn, err = nats.Connect(b.getFirstNATSURL(), natsOptions...)
+	// FIXED: Pass ALL URLs for proper failover support
+	// The NATS client will automatically try servers in order and handle reconnection
+	urlString := strings.Join(b.config.NATS.URLs, ",")
+	
+	b.logger.Debug("connecting to NATS with failover URLs", 
+		"urlCount", len(b.config.NATS.URLs),
+		"urlString", urlString)
+
+	b.natsConn, err = nats.Connect(urlString, natsOptions...)
 	if err != nil {
-		return fmt.Errorf("failed to connect to NATS: %w", err)
+		return fmt.Errorf("failed to connect to NATS (tried %d URLs): %w", len(b.config.NATS.URLs), err)
 	}
+
+	// Log which server we actually connected to
+	connectedURL := b.natsConn.ConnectedUrl()
+	b.logger.Info("NATS connection established successfully", 
+		"connectedURL", connectedURL,
+		"availableURLs", len(b.config.NATS.URLs))
 
 	// Create JetStream interface using the new API
 	b.jetStream, err = jetstream.New(b.natsConn)
@@ -496,7 +510,7 @@ func (b *NATSBroker) initializeNATSConnection() error {
 		return fmt.Errorf("failed to create JetStream interface: %w", err)
 	}
 
-	b.logger.Info("NATS connection established successfully")
+	b.logger.Info("JetStream interface created successfully")
 	return nil
 }
 
@@ -638,12 +652,4 @@ func (b *NATSBroker) Close() error {
 
 	b.logger.Info("successfully closed all NATS broker connections")
 	return nil
-}
-
-// getFirstNATSURL returns the first NATS URL or a default
-func (b *NATSBroker) getFirstNATSURL() string {
-	if len(b.config.NATS.URLs) > 0 {
-		return b.config.NATS.URLs[0]
-	}
-	return nats.DefaultURL
 }
