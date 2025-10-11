@@ -157,54 +157,71 @@ func (sm *SubscriptionManager) Start(ctx context.Context) error {
 	return nil
 }
 
-// fetcher is a dedicated goroutine that continuously pulls batches of messages from NATS
-// and pushes them onto a channel for the processing workers.
+// fetcher is a dedicated goroutine that continuously pulls messages from NATS
+// using the optimized Messages() iterator and pushes them onto a channel for the processing workers.
 func (sm *SubscriptionManager) fetcher(ctx context.Context, sub *Subscription, msgChan chan<- jetstream.Msg) {
 	defer sm.wg.Done()
-	// Closing the channel is the signal for the processing workers to shut down.
+	// Closing the channel signals to all worker goroutines that no more messages will be sent.
 	defer close(msgChan)
 
-	sub.logger.Debug("fetcher started", "subject", sub.Subject, "batchSize", sub.consumerCfg.FetchBatchSize)
+	sub.logger.Debug("fetcher started using Messages() iterator", "subject", sub.Subject, "batchSize", sub.consumerCfg.FetchBatchSize)
 
+	// Calculate the desired heartbeat interval as half the fetch timeout.
+	heartbeatInterval := sub.consumerCfg.FetchTimeout / 2
+	const minHeartbeat = 501 * time.Millisecond
+
+	// Enforce the minimum heartbeat of 501ms as requested.
+	if heartbeatInterval < minHeartbeat {
+		sub.logger.Debug("overriding heartbeat interval to meet NATS minimum requirement",
+			"subject", sub.Subject,
+			"configuredTimeout", sub.consumerCfg.FetchTimeout,
+			"calculatedHeartbeat", heartbeatInterval,
+			"enforcedHeartbeat", minHeartbeat)
+		heartbeatInterval = minHeartbeat
+	}
+
+	// Create the Messages iterator once before the loop.
+	iterator, err := sub.Consumer.Messages(
+		// This controls the size of the underlying pull requests.
+		jetstream.PullMaxMessages(sub.consumerCfg.FetchBatchSize),
+		// This is the timeout for each underlying pull request.
+		jetstream.PullExpiry(sub.consumerCfg.FetchTimeout),
+		// This enables heartbeats to detect stalled consumers or network issues.
+		jetstream.PullHeartbeat(heartbeatInterval),
+	)
+	if err != nil {
+		sub.logger.Error("failed to create messages iterator, terminating fetcher", "subject", sub.Subject, "error", err)
+		return
+	}
+	// Ensure the iterator is stopped to clean up all background resources.
+	defer iterator.Stop()
+
+	// The main loop is now simpler and more efficient.
 	for {
-		// Check for shutdown signal before fetching.
-		select {
-		case <-ctx.Done():
-			sub.logger.Debug("fetcher shutting down", "subject", sub.Subject)
-			return
-		default:
-			// Proceed with fetch.
-		}
-
-		// Fetch a batch of messages. This is a blocking call.
-		msgs, err := sub.Consumer.Fetch(sub.consumerCfg.FetchBatchSize, jetstream.FetchMaxWait(sub.consumerCfg.FetchTimeout))
+		// iterator.Next() is a blocking call that efficiently waits for the next message
+		// from its internal buffer or from the server.
+		msg, err := iterator.Next()
 		if err != nil {
-			// A timeout is expected and normal when the stream is idle.
-			if errors.Is(err, nats.ErrTimeout) {
-				continue
-			}
-			// For other errors, log and retry after a short delay.
-			sub.logger.Error("failed to fetch messages", "subject", sub.Subject, "error", err)
-			time.Sleep(1 * time.Second) // Prevent fast error loops
-			continue
-		}
-
-		// FIX: Correctly iterate over the message channel from the batch object.
-		for msg := range msgs.Messages() {
-			select {
-			case msgChan <- msg:
-				// Message successfully queued for a worker.
-			case <-ctx.Done():
-				// Application is shutting down, stop trying to queue messages.
-				sub.logger.Debug("fetcher shutting down during message queuing", "subject", sub.Subject)
+			// If the parent context is cancelled, it's a graceful shutdown.
+			if ctx.Err() != nil {
+				sub.logger.Debug("fetcher shutting down gracefully", "subject", sub.Subject)
 				return
 			}
+
+			// Otherwise, it's an unexpected error (e.g., missed heartbeats, permissions issue).
+			// We log the error and terminate the fetcher for this subscription to allow for recovery.
+			sub.logger.Error("iterator.Next() failed, terminating fetcher", "subject", sub.Subject, "error", err)
+			return
 		}
 
-		// NEW: Handle potential errors from the batch iterator itself.
-		if msgs.Error() != nil {
-			sub.logger.Error("error from message batch iterator", "subject", sub.Subject, "error", msgs.Error())
-			time.Sleep(1 * time.Second)
+		// Send the message to a worker, checking for a shutdown signal in parallel.
+		select {
+		case msgChan <- msg:
+			// Message successfully passed to a worker.
+		case <-ctx.Done():
+			// Application is shutting down, stop processing.
+			sub.logger.Debug("fetcher shutting down during message queuing", "subject", sub.Subject)
+			return
 		}
 	}
 }
