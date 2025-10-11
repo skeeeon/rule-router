@@ -228,6 +228,13 @@ action:
 - field: "@subject.count"     # Count: 3
 ```
 
+** Header Fields** 
+
+```yaml
+- field: "@header.Nats-Msg-Id"
+- field: "@header.X-Device-Firmware"
+```
+
 **KV Lookups** (with JSON path traversal using colon delimiter):
 
 ```yaml
@@ -267,9 +274,15 @@ action:
   conditions:
     operator: and
     items:
+      # 1. Check the message payload
       - field: value
         operator: gt
         value: 30
+      # 2. Check a NATS header for the device's operational status
+      - field: "@header.X-Device-Status"
+        operator: eq
+        value: "online"
+      # 3. Check the KV store to see if the device is enabled for alerting
       - field: "@kv.device_config.{@subject.1}:enabled"
         operator: eq
         value: true
@@ -280,9 +293,10 @@ action:
         "device_id": "{@subject.1}",
         "temperature": {value},
         "threshold": "{@kv.device_config.{@subject.1}:thresholds.max}",
+        "firmware": "{@header.X-Device-Firmware}",
         "alert_id": "{@uuid7()}",
         "timestamp": "{@timestamp()}"
-      }
+      }      
 ```
 
 ## Key-Value Store Integration
@@ -520,7 +534,7 @@ This project includes a standalone `rule-tester` utility for offline validation 
 
 ### Rule Tester Utility
 
-The tester allows you to validate rule syntax, test rule logic against sample messages, and mock dependencies like KV and time, all without needing a live NATS connection.
+The tester allows you to validate rule syntax, test rule logic against sample messages, and mock dependencies like headers, KV and time, all without needing a live NATS connection.
 
 **Key Features:**
 

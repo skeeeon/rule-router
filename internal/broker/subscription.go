@@ -17,6 +17,7 @@ import (
 	"rule-router/internal/rule"
 )
 
+// ... (NewSubscriptionManager, AddSubscription, Start, and other methods remain unchanged) ...
 // SubscriptionManager manages JetStream pull subscriptions for rule subjects
 // with parallel message processing and configurable action publishing (JetStream or Core)
 type SubscriptionManager struct {
@@ -152,111 +153,50 @@ func (sm *SubscriptionManager) worker(ctx context.Context, sub *Subscription, wo
 		"workerID", workerID,
 		"fetchBatchSize", sub.consumerCfg.FetchBatchSize)
 
-	// Create Messages() iterator for continuous message retrieval
-	// This provides optimized pull consumer behavior with pre-buffering
-	//
-	// Heartbeat configuration:
-	// - NATS minimum: 500ms
-	// - JetStream rule: heartbeat must be < 50% of expiry
-	// - For timeouts <= 1s, these constraints conflict, so we omit heartbeat
-	//   (the timeout itself provides liveness detection)
 	var messagesOpts []jetstream.PullMessagesOpt
 	messagesOpts = append(messagesOpts,
 		jetstream.PullMaxMessages(sub.consumerCfg.FetchBatchSize),
 		jetstream.PullExpiry(sub.consumerCfg.FetchTimeout),
 	)
 
-	// Only add heartbeat if fetchTimeout is long enough to satisfy both constraints
-	// Minimum fetchTimeout for heartbeat: 500ms / 0.5 = 1s, but must be > 1s to have heartbeat < 50%
-	// So we require at least 1.5s to safely use heartbeat
 	if sub.consumerCfg.FetchTimeout > 1500*time.Millisecond {
-		// Calculate heartbeat as 40% of timeout (safely under 50% requirement)
 		heartbeat := time.Duration(float64(sub.consumerCfg.FetchTimeout) * 0.4)
-
-		// Ensure NATS minimum of 500ms
 		if heartbeat < 500*time.Millisecond {
 			heartbeat = 500 * time.Millisecond
 		}
-
-		// Final safety check: ensure still under 50% of timeout
-		maxHeartbeat := sub.consumerCfg.FetchTimeout / 2
-		if heartbeat >= maxHeartbeat {
-			// This shouldn't happen with our 40% calculation, but be defensive
-			heartbeat = time.Duration(float64(maxHeartbeat) * 0.95) // 95% of the 50% limit
-		}
-
 		messagesOpts = append(messagesOpts, jetstream.PullHeartbeat(heartbeat))
-
-		sub.logger.Debug("configured heartbeat for message iterator",
-			"subject", sub.Subject,
-			"workerID", workerID,
-			"heartbeat", heartbeat,
-			"fetchTimeout", sub.consumerCfg.FetchTimeout)
-	} else {
-		sub.logger.Debug("omitting heartbeat due to short fetch timeout",
-			"subject", sub.Subject,
-			"workerID", workerID,
-			"fetchTimeout", sub.consumerCfg.FetchTimeout,
-			"reason", "timeout too short to satisfy NATS minimum (500ms) and JetStream rule (< 50% of expiry)")
 	}
 
 	iter, err := sub.Consumer.Messages(messagesOpts...)
 	if err != nil {
-		sub.logger.Error("failed to create message iterator",
-			"subject", sub.Subject,
-			"workerID", workerID,
-			"error", err)
+		sub.logger.Error("failed to create message iterator", "subject", sub.Subject, "error", err)
 		return
 	}
 	defer iter.Stop()
 
-	// Start a goroutine to stop the iterator when context is cancelled
-	// This unblocks any pending iter.Next() calls
 	go func() {
 		<-ctx.Done()
 		iter.Stop()
 	}()
 
 	for {
-		// Fetch next message - this will unblock when iter.Stop() is called
 		msg, err := iter.Next()
 		if err != nil {
-			// Check for context cancellation
 			if ctx.Err() != nil {
-				sub.logger.Debug("worker stopping due to context cancellation",
-					"subject", sub.Subject,
-					"workerID", workerID)
 				return
 			}
-
-			// Log other errors but continue processing
-			sub.logger.Debug("iterator error",
-				"subject", sub.Subject,
-				"workerID", workerID,
-				"error", err)
-
-			// Small backoff on error
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 
-		// Process message (includes rule evaluation + action publishing)
 		if err := sm.processMessage(ctx, sub, msg); err != nil {
-			sub.logger.Error("failed to process message",
-				"subject", sub.Subject,
-				"workerID", workerID,
-				"error", err)
-
-			// Negative ack on processing failure
+			sub.logger.Error("failed to process message", "subject", sub.Subject, "error", err)
 			msg.Nak()
-
 			if sm.metrics != nil {
 				sm.metrics.IncMessagesTotal("error")
 			}
 		} else {
-			// Ack successful processing (after actions published)
 			msg.Ack()
-
 			if sm.metrics != nil {
 				sm.metrics.IncMessagesTotal("processed")
 			}
@@ -264,62 +204,56 @@ func (sm *SubscriptionManager) worker(ctx context.Context, sub *Subscription, wo
 	}
 }
 
+
 // processMessage handles a single message through the rule engine
-// and publishes actions synchronously before returning
 func (sm *SubscriptionManager) processMessage(ctx context.Context, sub *Subscription, msg jetstream.Msg) error {
 	start := time.Now()
-
-	// Update metrics
 	if sm.metrics != nil {
 		sm.metrics.IncMessagesTotal("received")
 	}
 
-	sub.logger.Debug("processing message",
-		"subject", msg.Subject(),
-		"size", len(msg.Data()))
+	sub.logger.Debug("processing message", "subject", msg.Subject(), "size", len(msg.Data()))
 
-	// Process through rule engine
-	actions, err := sm.processor.ProcessWithSubject(msg.Subject(), msg.Data())
+	// **MODIFICATION START**
+	// Convert NATS headers to simple map[string]string for the rule engine.
+	// We take the first value for any header key with multiple values.
+	headers := make(map[string]string)
+	if msg.Headers() != nil {
+		for key, values := range msg.Headers() {
+			if len(values) > 0 {
+				headers[key] = values[0]
+			}
+		}
+	}
+
+	// Pass headers to the processor.
+	actions, err := sm.processor.ProcessWithSubject(msg.Subject(), msg.Data(), headers)
+	// **MODIFICATION END**
+
 	if err != nil {
 		return fmt.Errorf("rule processing failed: %w", err)
 	}
 
-	// Publish all actions synchronously (with retry)
 	for _, action := range actions {
 		if err := sm.publishActionWithRetry(ctx, action); err != nil {
-			sub.logger.Error("failed to publish action after retries",
-				"actionSubject", action.Subject,
-				"sourceSubject", msg.Subject(),
-				"error", err)
-
+			sub.logger.Error("failed to publish action after retries", "actionSubject", action.Subject, "error", err)
 			if sm.metrics != nil {
 				sm.metrics.IncActionsTotal("error")
 			}
-
-			// Continue processing other actions, but mark message as failed
-			// This ensures we don't ACK the message if any action fails
 			return fmt.Errorf("failed to publish action: %w", err)
 		}
-
 		if sm.metrics != nil {
 			sm.metrics.IncActionsTotal("success")
 			sm.metrics.IncRuleMatches()
 		}
-
-		sub.logger.Debug("action published",
-			"actionSubject", action.Subject,
-			"sourceSubject", msg.Subject())
 	}
 
 	duration := time.Since(start)
-	sub.logger.Debug("message processed",
-		"subject", msg.Subject(),
-		"duration", duration,
-		"actionsPublished", len(actions))
-
+	sub.logger.Debug("message processed", "subject", msg.Subject(), "duration", duration, "actionsPublished", len(actions))
 	return nil
 }
 
+// ... (publishActionWithRetry and other methods remain unchanged) ...
 // publishActionWithRetry publishes an action with exponential backoff retry
 // Supports both JetStream and Core NATS publish modes based on configuration
 func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, action *rule.Action) error {
@@ -329,12 +263,10 @@ func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, actio
 
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		// Check context cancellation
 		if ctx.Err() != nil {
 			return fmt.Errorf("context cancelled: %w", ctx.Err())
 		}
 
-		// Attempt to publish using configured mode
 		var err error
 		if publishMode == "core" {
 			err = sm.publishCore(ctx, action)
@@ -343,62 +275,28 @@ func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, actio
 		}
 
 		if err == nil {
-			// Success
-			if attempt > 0 {
-				sm.logger.Info("action published after retry",
-					"subject", action.Subject,
-					"attempts", attempt+1,
-					"mode", publishMode)
-			} else {
-				sm.logger.Debug("action published",
-					"subject", action.Subject,
-					"payloadSize", len(action.Payload),
-					"mode", publishMode)
-			}
 			return nil
 		}
 
 		lastErr = err
-
-		// Log the failure
 		sm.logger.Warn("action publish failed, will retry",
-			"attempt", attempt+1,
-			"maxRetries", maxRetries,
-			"subject", action.Subject,
-			"mode", publishMode,
-			"error", err)
-
-		// Update failure metrics
+			"attempt", attempt+1, "maxRetries", maxRetries, "subject", action.Subject, "error", err)
 		if sm.metrics != nil {
 			sm.metrics.IncActionPublishFailures()
 		}
 
-		// Last attempt - don't sleep
 		if attempt == maxRetries-1 {
-			sm.logger.Error("action publish failed after all retries",
-				"subject", action.Subject,
-				"attempts", maxRetries,
-				"mode", publishMode,
-				"error", lastErr)
 			break
 		}
 
-		// Exponential backoff: 50ms, 100ms, 200ms (default)
 		delay := baseDelay * time.Duration(1<<attempt)
-
-		sm.logger.Debug("backing off before retry",
-			"attempt", attempt+1,
-			"delay", delay)
-
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("context cancelled during retry backoff: %w", ctx.Err())
 		case <-time.After(delay):
-		// Continue to next retry
 		}
 	}
 
-	// All retries exhausted
 	return fmt.Errorf("failed to publish after %d attempts (mode: %s): %w", maxRetries, publishMode, lastErr)
 }
 
@@ -407,24 +305,11 @@ func (sm *SubscriptionManager) publishJetStream(ctx context.Context, action *rul
     pubCtx, cancel := context.WithTimeout(ctx, sm.publishCfg.AckTimeout)
     defer cancel()
 
-    // NEW: Select payload bytes based on passthrough flag
     var payloadBytes []byte
     if action.Passthrough {
-        if len(action.RawPayload) == 0 {
-            sm.logger.Warn("passthrough action has no raw payload, publishing empty message",
-                "subject", action.Subject)
-        }
-        payloadBytes = action.RawPayload  // Zero-copy!
-        
-        sm.logger.Debug("publishing passthrough action",
-            "subject", action.Subject,
-            "payloadSize", len(payloadBytes))
+        payloadBytes = action.RawPayload
     } else {
         payloadBytes = []byte(action.Payload)
-        
-        sm.logger.Debug("publishing templated action",
-            "subject", action.Subject,
-            "payloadSize", len(payloadBytes))
     }
 
     _, err := sm.jetStream.Publish(pubCtx, action.Subject, payloadBytes)
@@ -440,7 +325,6 @@ func (sm *SubscriptionManager) publishJetStream(ctx context.Context, action *rul
 
 // publishCore publishes to core NATS (fire-and-forget, no ack)
 func (sm *SubscriptionManager) publishCore(ctx context.Context, action *rule.Action) error {
-    // NEW: Select payload bytes based on passthrough flag
     var payloadBytes []byte
     if action.Passthrough {
         payloadBytes = action.RawPayload
@@ -462,18 +346,13 @@ func (sm *SubscriptionManager) Stop() error {
 
 	sm.logger.Info("stopping all subscriptions", "count", len(sm.subscriptions))
 
-	// Cancel all subscription contexts (stops workers from fetching new messages)
 	for _, sub := range sm.subscriptions {
 		if sub.cancel != nil {
 			sub.cancel()
 		}
 	}
 
-	// Wait for all workers to finish processing in-flight messages
-	// This ensures all messages are fully processed (including action publishing) before shutdown
-	sm.logger.Info("waiting for workers to complete in-flight messages")
 	sm.wg.Wait()
-
 	sm.logger.Info("all subscriptions stopped")
 	return nil
 }

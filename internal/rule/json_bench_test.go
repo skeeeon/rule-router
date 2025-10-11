@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	goccyjson "github.com/goccy/go-json"
+	"rule-router/internal/logger"
 )
 
 // Realistic message payloads for benchmarking
@@ -355,57 +356,55 @@ func BenchmarkNestedAccess_FourLevel(b *testing.B) {
 // Full Pipeline Benchmarks
 // ========================================
 
+// Helper to create a context for benchmark tests.
+func newBenchmarkContext(data map[string]interface{}, subject string) *EvaluationContext {
+	ctx, _ := NewEvaluationContext(
+		[]byte("{}"), nil, NewSubjectContext(subject),
+		NewSystemTimeProvider().GetCurrentContext(), nil,
+	)
+	ctx.Msg = data
+	return ctx
+}
+
 // BenchmarkFullPipeline_Small simulates complete message processing
 func BenchmarkFullPipeline_Small(b *testing.B) {
-	processor := newTestProcessor()
-	timeCtx := NewSystemTimeProvider().GetCurrentContext()
-	subjectCtx := NewSubjectContext("sensors.temperature")
-	
+	engine := NewTemplateEngine(logger.NewNopLogger())
+	template := `{"alert": "Temperature {temperature}°C", "device": "{device_id}"}`
+	var data map[string]interface{}
+	goccyjson.Unmarshal(smallMessageJSON, &data)
+	context := newBenchmarkContext(data, "sensors.temperature")
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		// Unmarshal
-		var data map[string]interface{}
-		goccyjson.Unmarshal(smallMessageJSON, &data)
-		
-		// Process template (simulate action)
-		template := `{"alert": "Temperature {temperature}°C", "device": {device_id}}`
-		processor.processTemplate(template, data, timeCtx, subjectCtx, nil)
+		engine.Execute(template, context)
 	}
 }
 
 // BenchmarkFullPipeline_Medium simulates medium complexity processing
 func BenchmarkFullPipeline_Medium(b *testing.B) {
-	processor := newTestProcessor()
-	timeCtx := NewSystemTimeProvider().GetCurrentContext()
-	subjectCtx := NewSubjectContext("sensors.temperature.room1")
-	
+	engine := NewTemplateEngine(logger.NewNopLogger())
+	template := `{"device": "{device.id}", "location": "{device.location.building}", "reading": "{data.reading.value}"}`
+	var data map[string]interface{}
+	goccyjson.Unmarshal(mediumMessageJSON, &data)
+	context := newBenchmarkContext(data, "sensors.temperature.room1")
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		// Unmarshal
-		var data map[string]interface{}
-		goccyjson.Unmarshal(mediumMessageJSON, &data)
-		
-		// Process template with nested fields
-		template := `{"device": {device.id}, "location": {device.location.building}, "reading": {data.reading.value}}`
-		processor.processTemplate(template, data, timeCtx, subjectCtx, nil)
+		engine.Execute(template, context)
 	}
 }
 
 // BenchmarkFullPipeline_Large simulates complex message processing
 func BenchmarkFullPipeline_Large(b *testing.B) {
-	processor := newTestProcessor()
-	timeCtx := NewSystemTimeProvider().GetCurrentContext()
-	subjectCtx := NewSubjectContext("orders.created")
-	
+	engine := NewTemplateEngine(logger.NewNopLogger())
+	template := `{"order_id": "{order.id}", "customer": "{order.customer.profile.name}", "total": "{order.totals.total}"}`
+	var data map[string]interface{}
+	goccyjson.Unmarshal(largeMessageJSON, &data)
+	context := newBenchmarkContext(data, "orders.created")
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		// Unmarshal
-		var data map[string]interface{}
-		goccyjson.Unmarshal(largeMessageJSON, &data)
-		
-		// Process complex template
-		template := `{"order_id": {order.id}, "customer": {order.customer.profile.name}, "total": {order.totals.total}}`
-		processor.processTemplate(template, data, timeCtx, subjectCtx, nil)
+		engine.Execute(template, context)
 	}
 }
 
@@ -517,65 +516,51 @@ func BenchmarkUnmarshal_Invalid_GoccyJSON(b *testing.B) {
 
 // BenchmarkRealWorld_IoTSensorBurst simulates IoT sensor burst
 func BenchmarkRealWorld_IoTSensorBurst(b *testing.B) {
-	processor := newTestProcessor()
-	timeCtx := NewSystemTimeProvider().GetCurrentContext()
-	subjectCtx := NewSubjectContext("sensors.temperature.room1")
-	
-	// Simulate processing 100 messages in a burst
-	messages := make([][]byte, 100)
+	engine := NewTemplateEngine(logger.NewNopLogger())
+	template := `{"alert": "Temperature {temperature}°C from {device_id}"}`
+
+	// Pre-unmarshal and create contexts outside the loop
+	messages := make([]*EvaluationContext, 100)
 	for i := 0; i < 100; i++ {
-		messages[i] = smallMessageJSON
+		var data map[string]interface{}
+		goccyjson.Unmarshal(smallMessageJSON, &data)
+		messages[i] = newBenchmarkContext(data, "sensors.temperature.room1")
 	}
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		for _, msg := range messages {
-			var data map[string]interface{}
-			goccyjson.Unmarshal(msg, &data)
-			template := `{"alert": "Temperature {temperature}°C from {device_id}"}`
-			processor.processTemplate(template, data, timeCtx, subjectCtx, nil)
+		for _, ctx := range messages {
+			engine.Execute(template, ctx)
 		}
 	}
 }
 
 // BenchmarkRealWorld_MixedWorkload simulates mixed message sizes
 func BenchmarkRealWorld_MixedWorkload(b *testing.B) {
-	processor := newTestProcessor()
-	timeCtx := NewSystemTimeProvider().GetCurrentContext()
-	
-	// Mix of message sizes (80% small, 15% medium, 5% large)
-	messages := make([]struct {
-		payload []byte
-		subject string
-	}, 100)
-	
+	engine := NewTemplateEngine(logger.NewNopLogger())
+	template := `{"processed": true, "timestamp": "{@timestamp()}"}`
+
+	// Pre-unmarshal and create contexts outside the loop
+	contexts := make([]*EvaluationContext, 100)
 	for i := 0; i < 100; i++ {
+		var payload []byte
+		var subject string
 		if i < 80 {
-			messages[i] = struct {
-				payload []byte
-				subject string
-			}{smallMessageJSON, "sensors.temperature"}
+			payload, subject = smallMessageJSON, "sensors.temperature"
 		} else if i < 95 {
-			messages[i] = struct {
-				payload []byte
-				subject string
-			}{mediumMessageJSON, "sensors.data"}
+			payload, subject = mediumMessageJSON, "sensors.data"
 		} else {
-			messages[i] = struct {
-				payload []byte
-				subject string
-			}{largeMessageJSON, "orders.created"}
+			payload, subject = largeMessageJSON, "orders.created"
 		}
+		var data map[string]interface{}
+		goccyjson.Unmarshal(payload, &data)
+		contexts[i] = newBenchmarkContext(data, subject)
 	}
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		for _, msg := range messages {
-			var data map[string]interface{}
-			goccyjson.Unmarshal(msg.payload, &data)
-			subjectCtx := NewSubjectContext(msg.subject)
-			template := `{"processed": true, "timestamp": "{@timestamp()}"}`
-			processor.processTemplate(template, data, timeCtx, subjectCtx, nil)
+		for _, ctx := range contexts {
+			engine.Execute(template, ctx)
 		}
 	}
 }

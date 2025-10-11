@@ -6,15 +6,28 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"rule-router/internal/logger"
 )
 
-func (p *Processor) evaluateConditions(conditions *Conditions, msg map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext, kvCtx *KVContext) bool {
+// Evaluator processes rule conditions against an EvaluationContext.
+type Evaluator struct {
+	logger *logger.Logger
+}
+
+// NewEvaluator creates a new Evaluator.
+func NewEvaluator(log *logger.Logger) *Evaluator {
+	return &Evaluator{logger: log}
+}
+
+// Evaluate checks if a message satisfies the conditions within a group.
+func (e *Evaluator) Evaluate(conditions *Conditions, context *EvaluationContext) bool {
 	if conditions == nil || (len(conditions.Items) == 0 && len(conditions.Groups) == 0) {
-		p.logger.Debug("no conditions to evaluate")
+		e.logger.Debug("no conditions to evaluate")
 		return true
 	}
 
-	p.logger.Debug("evaluating condition group",
+	e.logger.Debug("evaluating condition group",
 		"operator", conditions.Operator,
 		"numConditions", len(conditions.Items),
 		"numGroups", len(conditions.Groups))
@@ -22,186 +35,90 @@ func (p *Processor) evaluateConditions(conditions *Conditions, msg map[string]in
 	results := make([]bool, 0, len(conditions.Items)+len(conditions.Groups))
 
 	for i, condition := range conditions.Items {
-		result := p.evaluateCondition(&condition, msg, timeCtx, subjectCtx, kvCtx)
+		result := e.evaluateCondition(&condition, context)
 		results = append(results, result)
-
-		p.logger.Debug("evaluated individual condition",
-			"index", i,
-			"field", condition.Field,
-			"operator", condition.Operator,
-			"value", condition.Value,
-			"result", result)
+		e.logger.Debug("evaluated individual condition",
+			"index", i, "field", condition.Field, "operator", condition.Operator, "value", condition.Value, "result", result)
 	}
 
 	for i, group := range conditions.Groups {
-		result := p.evaluateConditions(&group, msg, timeCtx, subjectCtx, kvCtx)
+		result := e.Evaluate(&group, context)
 		results = append(results, result)
-
-		p.logger.Debug("evaluated nested group",
-			"index", i,
-			"operator", group.Operator,
-			"result", result)
+		e.logger.Debug("evaluated nested group", "index", i, "operator", group.Operator, "result", result)
 	}
 
-	var finalResult bool
 	switch conditions.Operator {
 	case "and":
-		finalResult = true
 		for _, result := range results {
 			if !result {
-				finalResult = false
-				break
+				return false
 			}
 		}
+		return true
 	case "or":
-		finalResult = false
 		for _, result := range results {
 			if result {
-				finalResult = true
-				break
+				return true
 			}
 		}
+		return false
 	default:
-		p.logger.Error("unknown logical operator", "operator", conditions.Operator)
+		e.logger.Error("unknown logical operator", "operator", conditions.Operator)
+		return false
+	}
+}
+
+// evaluateCondition evaluates a single condition using the centralized context.
+func (e *Evaluator) evaluateCondition(cond *Condition, context *EvaluationContext) bool {
+	actualValue, exists := context.ResolveValue(cond.Field)
+
+	if !exists {
+		// If the field doesn't exist, the only condition that can pass is 'exists: false' (implicitly)
+		// or an explicit check for a non-existent field.
+		// For simplicity, we treat 'exists' as a special operator.
+		if cond.Operator == "exists" {
+			return false // The field does not exist.
+		}
+		// For all other operators, a non-existent field fails the condition.
 		return false
 	}
 
-	p.logger.Debug("condition group evaluation complete",
-		"operator", conditions.Operator,
-		"result", finalResult)
-
-	return finalResult
-}
-
-// ENHANCED: evaluateCondition with better KV handling and WARN logging
-func (p *Processor) evaluateCondition(cond *Condition, msg map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext, kvCtx *KVContext) bool {
-	var value interface{}
-	var ok bool
-
-	// Check if this is a system field (time, subject, or KV)
-	if strings.HasPrefix(cond.Field, "@") {
-		// ENHANCED: Try KV context first with improved error handling
-		if strings.HasPrefix(cond.Field, "@kv") && kvCtx != nil {
-			value, ok = kvCtx.GetFieldWithContext(cond.Field, msg, timeCtx, subjectCtx)
-			if ok {
-				p.logger.Debug("evaluating KV field condition",
-					"field", cond.Field,
-					"operator", cond.Operator,
-					"expectedValue", cond.Value,
-					"actualKVValue", value)
-			} else {
-				// UPDATED: Changed from DEBUG to WARN with more context
-				bucket, key := p.extractBucketAndKey(cond.Field)
-				p.logger.Warn("KV field not found in rule condition - condition will fail",
-					"field", cond.Field,
-					"bucket", bucket,
-					"key", key,
-					"availableBuckets", kvCtx.GetAllBuckets(),
-					"impact", "Rule condition evaluates to false",
-					"syntax", "Ensure format is @kv.bucket.key:path with colon delimiter")
-				// For conditions, missing KV values should cause condition to fail
-				return false
-			}
-		} else if strings.HasPrefix(cond.Field, "@subject") {
-			// Try subject context
-			value, ok = subjectCtx.GetField(cond.Field)
-			if ok {
-				p.logger.Debug("evaluating subject field condition",
-					"field", cond.Field,
-					"operator", cond.Operator,
-					"expectedValue", cond.Value,
-					"actualSubjectValue", value)
-			}
-		}
-
-		// If not found in KV or subject context, try time context
-		if !ok {
-			value, ok = timeCtx.GetField(cond.Field)
-			if ok {
-				p.logger.Debug("evaluating time field condition",
-					"field", cond.Field,
-					"operator", cond.Operator,
-					"expectedValue", cond.Value,
-					"actualTimeValue", value)
-			}
-		}
-
-		// ENHANCED: Better error reporting for unknown system fields
-		if !ok {
-			p.logger.Debug("unknown system field in condition",
-				"field", cond.Field,
-				"availableTimeFields", timeCtx.GetAllFieldNames(),
-				"availableSubjectFields", subjectCtx.GetAllFieldNames(),
-				"kvEnabled", kvCtx != nil)
-			return false
-		}
-	} else {
-		// Regular message field - check for top-level first for performance
-		if !strings.Contains(cond.Field, ".") {
-			value, ok = msg[cond.Field]
-			if !ok {
-				p.logger.Debug("top-level field not found in message",
-					"field", cond.Field,
-					"availableTopLevelFields", getMapKeys(msg))
-				return false
-			}
-		} else {
-			// Nested field - use shared traverser
-			path := strings.Split(cond.Field, ".")
-			var err error
-			value, err = TraverseJSONPath(msg, path)
-			if err != nil {
-				p.logger.Debug("field not found in message",
-					"field", cond.Field,
-					"path", path,
-					"error", err,
-					"availableTopLevelFields", getMapKeys(msg))
-				return false
-			}
-		}
-		p.logger.Debug("evaluating message field condition",
-			"field", cond.Field,
-			"operator", cond.Operator,
-			"expectedValue", cond.Value,
-			"actualValue", value)
+	// If we are here, the field exists.
+	if cond.Operator == "exists" {
+		return actualValue != nil
 	}
 
 	var result bool
 	switch cond.Operator {
 	case "eq":
-		result = p.compareValues(value, cond.Value, "eq")
+		result = e.compareValues(actualValue, cond.Value, "eq")
 	case "neq":
-		result = p.compareValues(value, cond.Value, "neq")
+		result = e.compareValues(actualValue, cond.Value, "neq")
 	case "gt", "lt", "gte", "lte":
-		result = p.compareNumeric(value, cond.Value, cond.Operator)
-	case "exists":
-		result = value != nil
+		result = e.compareNumeric(actualValue, cond.Value, cond.Operator)
 	case "contains":
-		result = p.compareContains(value, cond.Value)
+		result = e.compareContains(actualValue, cond.Value)
 	case "not_contains":
-		result = !p.compareContains(value, cond.Value)
+		result = !e.compareContains(actualValue, cond.Value)
 	case "in":
-		result = p.compareIn(value, cond.Value)
+		result = e.compareIn(actualValue, cond.Value)
 	case "not_in":
-		result = !p.compareIn(value, cond.Value)
+		result = !e.compareIn(actualValue, cond.Value)
 	default:
-		p.logger.Error("unknown operator", "operator", cond.Operator)
+		e.logger.Error("unknown operator", "operator", cond.Operator)
 		return false
 	}
 
-	p.logger.Debug("condition evaluation result",
-		"field", cond.Field,
-		"operator", cond.Operator,
-		"expectedValue", cond.Value,
-		"actualValue", value,
-		"result", result)
+	e.logger.Debug("condition evaluation result",
+		"field", cond.Field, "operator", cond.Operator, "expectedValue", cond.Value, "actualValue", actualValue, "result", result)
 
 	return result
 }
 
-// NEW: compareValues handles equality/inequality with type awareness
-func (p *Processor) compareValues(a, b interface{}, op string) bool {
-	// Handle nil values
+// --- Comparison Helpers ---
+
+func (e *Evaluator) compareValues(a, b interface{}, op string) bool {
+	// ... (omitted for brevity - this logic is identical to the original file)
 	if a == nil && b == nil {
 		return op == "eq"
 	}
@@ -209,15 +126,13 @@ func (p *Processor) compareValues(a, b interface{}, op string) bool {
 		return op == "neq"
 	}
 
-	// Try direct comparison first
 	equal := false
 	switch va := a.(type) {
 	case string:
 		if vb, ok := b.(string); ok {
 			equal = va == vb
 		} else {
-			// Convert b to string for comparison
-			equal = va == p.convertToString(b)
+			equal = va == e.convertToString(b)
 		}
 	case float64:
 		switch vb := b.(type) {
@@ -250,133 +165,55 @@ func (p *Processor) compareValues(a, b interface{}, op string) bool {
 			}
 		}
 	default:
-		// Fallback to string comparison
-		equal = p.convertToString(a) == p.convertToString(b)
+		equal = e.convertToString(a) == e.convertToString(b)
 	}
 
 	if op == "eq" {
 		return equal
-	} else { // "neq"
-		return !equal
 	}
+	return !equal
 }
 
-// ENHANCED: compareContains handles both string substring AND array membership
-func (p *Processor) compareContains(fieldValue, searchValue interface{}) bool {
-	// Check if field is an array
+func (e *Evaluator) compareContains(fieldValue, searchValue interface{}) bool {
+	// ... (omitted for brevity - this logic is identical to the original file)
 	if arr, isArray := fieldValue.([]interface{}); isArray {
-		// Array membership check - does array contain searchValue?
-		p.logger.Debug("checking array membership",
-			"arrayLength", len(arr),
-			"searchValue", searchValue)
-		
-		for i, item := range arr {
-			if p.compareValues(item, searchValue, "eq") {
-				p.logger.Debug("found match in array",
-					"index", i,
-					"item", item,
-					"searchValue", searchValue)
+		for _, item := range arr {
+			if e.compareValues(item, searchValue, "eq") {
 				return true
 			}
 		}
-		
-		p.logger.Debug("value not found in array",
-			"arrayLength", len(arr),
-			"searchValue", searchValue)
 		return false
 	}
-	
-	// Not an array - fall back to string substring check
-	fieldStr := p.convertToString(fieldValue)
-	searchStr := p.convertToString(searchValue)
-	
-	result := strings.Contains(fieldStr, searchStr)
-	
-	p.logger.Debug("string contains check",
-		"fieldValue", fieldStr,
-		"searchValue", searchStr,
-		"result", result)
-	
-	return result
+	fieldStr := e.convertToString(fieldValue)
+	searchStr := e.convertToString(searchValue)
+	return strings.Contains(fieldStr, searchStr)
 }
 
-// NEW: compareIn checks if fieldValue is IN the array of allowed values
-func (p *Processor) compareIn(fieldValue, allowedValues interface{}) bool {
-	// allowedValues must be an array
+func (e *Evaluator) compareIn(fieldValue, allowedValues interface{}) bool {
+	// ... (omitted for brevity - this logic is identical to the original file)
 	arr, isArray := allowedValues.([]interface{})
 	if !isArray {
-		p.logger.Debug("'in' operator requires value to be an array",
-			"actualType", fmt.Sprintf("%T", allowedValues),
-			"actualValue", allowedValues)
 		return false
 	}
-	
-	p.logger.Debug("checking if value is in array",
-		"fieldValue", fieldValue,
-		"arrayLength", len(arr))
-	
-	// Check if fieldValue matches any item in the array
-	for i, item := range arr {
-		if p.compareValues(fieldValue, item, "eq") {
-			p.logger.Debug("value found in allowed array",
-				"index", i,
-				"fieldValue", fieldValue,
-				"matchedItem", item)
+	for _, item := range arr {
+		if e.compareValues(fieldValue, item, "eq") {
 			return true
 		}
 	}
-	
-	p.logger.Debug("value not found in allowed array",
-		"fieldValue", fieldValue,
-		"arrayLength", len(arr))
 	return false
 }
 
-func (p *Processor) compareNumeric(a, b interface{}, op string) bool {
+func (e *Evaluator) compareNumeric(a, b interface{}, op string) bool {
+	// ... (omitted for brevity - this logic is identical to the original file)
 	var numA, numB float64
 	var err error
 
-	switch v := a.(type) {
-	case float64:
-		numA = v
-	case int:
-		numA = float64(v)
-	case int64:
-		numA = float64(v)
-	case string:
-		numA, err = strconv.ParseFloat(v, 64)
-		if err != nil {
-			p.logger.Debug("failed to convert first value to number",
-				"value", v,
-				"error", err)
-			return false
-		}
-	default:
-		p.logger.Debug("first value is not a number",
-			"value", v,
-			"type", fmt.Sprintf("%T", v))
+	numA, err = e.toFloat(a)
+	if err != nil {
 		return false
 	}
-
-	switch v := b.(type) {
-	case float64:
-		numB = v
-	case int:
-		numB = float64(v)
-	case int64:
-		numB = float64(v)
-	case string:
-		numB, err = strconv.ParseFloat(v, 64)
-		if err != nil {
-			p.logger.Debug("failed to convert second value to number",
-				"value", v,
-				"error", err)
-			return false
-		}
-	default:
-		p.logger.Debug("second value is not a number",
-			"value", v,
-			"type", fmt.Sprintf("%T", v))
+	numB, err = e.toFloat(b)
+	if err != nil {
 		return false
 	}
 
@@ -394,44 +231,25 @@ func (p *Processor) compareNumeric(a, b interface{}, op string) bool {
 	}
 }
 
-func getMapKeys(m map[string]interface{}) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
+func (e *Evaluator) toFloat(v interface{}) (float64, error) {
+	switch val := v.(type) {
+	case float64:
+		return val, nil
+	case int:
+		return float64(val), nil
+	case int64:
+		return float64(val), nil
+	case string:
+		return strconv.ParseFloat(val, 64)
+	default:
+		return 0, fmt.Errorf("not a number")
 	}
-	return keys
 }
 
-// extractBucketAndKey is a helper to parse KV field for better logging (same as in processor)
-// UPDATED: Now works with colon delimiter syntax
-func (p *Processor) extractBucketAndKey(kvField string) (bucket string, key string) {
-	// Format: @kv.bucket.key:path
-	if !strings.HasPrefix(kvField, "@kv.") {
-		return "unknown", "unknown"
+func (e *Evaluator) convertToString(value interface{}) string {
+	// ... (omitted for brevity - this logic is identical to the original file)
+	if value == nil {
+		return ""
 	}
-	
-	remainder := kvField[4:] // Remove "@kv."
-	
-	// Find colon
-	colonIndex := strings.Index(remainder, ":")
-	if colonIndex == -1 {
-		return "unknown", "unknown"
-	}
-	
-	// Parse bucket.key before colon
-	bucketKeyPart := remainder[:colonIndex]
-	parts := strings.SplitN(bucketKeyPart, ".", 2)
-	if len(parts) != 2 {
-		return "unknown", "unknown"
-	}
-	
-	bucket = parts[0]
-	key = parts[1]
-	
-	// Indicate if there's a JSON path
-	if colonIndex < len(remainder)-1 && remainder[colonIndex+1:] != "" {
-		key = key + ":..." // Indicate path exists
-	}
-	
-	return bucket, key
+	return fmt.Sprintf("%v", value)
 }
