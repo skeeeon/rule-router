@@ -196,6 +196,13 @@ func (sm *SubscriptionManager) fetcher(ctx context.Context, sub *Subscription, m
 	// Ensure the iterator is stopped to clean up all background resources.
 	defer iterator.Stop()
 
+	// Launch a dedicated goroutine to stop the iterator when the context is canceled.
+	// This is the idiomatic way to handle this API.
+	go func() {
+		<-ctx.Done()
+		iterator.Stop()
+	}()
+
 	// The main loop is now simpler and more efficient.
 	for {
 		// iterator.Next() is a blocking call that efficiently waits for the next message
