@@ -560,9 +560,35 @@ func (b *NATSBroker) initializeKVStores(ctx context.Context) error {
 func (b *NATSBroker) buildNATSOptions() ([]nats.Option, error) {
 	var natsOptions []nats.Option
 
+	// IMPROVEMENT: Add connection lifecycle handlers for observability and metrics
 	natsOptions = append(natsOptions,
 		nats.ReconnectWait(b.config.NATS.Connection.ReconnectWait),
 		nats.MaxReconnects(b.config.NATS.Connection.MaxReconnects),
+		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
+			// Log the disconnection and update metrics
+			b.logger.Warn("NATS client disconnected", "error", err)
+			if b.metrics != nil {
+				b.metrics.SetNATSConnectionStatus(false)
+			}
+		}),
+		nats.ReconnectHandler(func(nc *nats.Conn) {
+			// Log the successful reconnection and update metrics
+			b.logger.Info("NATS client reconnected", "url", nc.ConnectedUrl())
+			if b.metrics != nil {
+				b.metrics.SetNATSConnectionStatus(true)
+				b.metrics.IncNATSReconnects()
+			}
+		}),
+		nats.ClosedHandler(func(nc *nats.Conn) {
+			// Log when the connection is permanently closed
+			b.logger.Error("NATS connection permanently closed", "error", nc.LastError())
+			if b.metrics != nil {
+				b.metrics.SetNATSConnectionStatus(false)
+			}
+		}),
+		// IMPROVEMENT: Add reconnect jitter to prevent "thundering herd" issues
+		// Using default values which are sensible, but could be made configurable.
+		nats.ReconnectJitter(100*time.Millisecond, 1*time.Second),
 	)
 
 	if b.config.NATS.CredsFile != "" {
@@ -640,10 +666,15 @@ func (b *NATSBroker) Close() error {
 
 	b.logger.Info("durable consumers remain in NATS for next startup", "consumerCount", len(b.consumers))
 
-	// Close NATS connection
+	// IMPROVEMENT: Use Drain() for graceful shutdown to prevent message loss
 	if b.natsConn != nil {
-		b.natsConn.Close()
-		b.logger.Debug("closed NATS connection")
+		b.logger.Info("draining NATS connection (publishing pending messages)")
+		if err := b.natsConn.Drain(); err != nil {
+			errors = append(errors, fmt.Errorf("failed to drain NATS connection: %w", err))
+		} else {
+			b.logger.Debug("NATS connection drained successfully")
+		}
+		// Per nats.go docs, Close() is not needed after Drain()
 	}
 
 	if len(errors) > 0 {
