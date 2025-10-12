@@ -485,8 +485,6 @@ func (b *NATSBroker) initializeNATSConnection() error {
 		return fmt.Errorf("failed to build NATS options: %w", err)
 	}
 
-	// FIXED: Pass ALL URLs for proper failover support
-	// The NATS client will automatically try servers in order and handle reconnection
 	urlString := strings.Join(b.config.NATS.URLs, ",")
 	
 	b.logger.Debug("connecting to NATS with failover URLs", 
@@ -498,19 +496,32 @@ func (b *NATSBroker) initializeNATSConnection() error {
 		return fmt.Errorf("failed to connect to NATS (tried %d URLs): %w", len(b.config.NATS.URLs), err)
 	}
 
-	// Log which server we actually connected to
 	connectedURL := b.natsConn.ConnectedUrl()
 	b.logger.Info("NATS connection established successfully", 
 		"connectedURL", connectedURL,
 		"availableURLs", len(b.config.NATS.URLs))
 
-	// Create JetStream interface using the new API
-	b.jetStream, err = jetstream.New(b.natsConn)
+	// --- BEST PRACTICE: Configure JetStream for Async Publishing ---
+	jsOpts := []jetstream.JetStreamOpt{
+		// Set a limit on the number of outstanding async publishes. This is crucial for backpressure.
+		jetstream.WithPublishAsyncMaxPending(1024),
+		// Set up a handler to log any errors that occur in the background.
+		jetstream.WithPublishAsyncErrHandler(func(js jetstream.JetStream, msg *nats.Msg, err error) {
+			b.logger.Error("asynchronous publish failed", "subject", msg.Subject, "error", err)
+			if b.metrics != nil {
+				// This metric tracks failures that happen after the initial send.
+				b.metrics.IncActionPublishFailures()
+			}
+		}),
+	}
+
+	b.jetStream, err = jetstream.New(b.natsConn, jsOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to create JetStream interface: %w", err)
 	}
+	// --- END BEST PRACTICE ---
 
-	b.logger.Info("JetStream interface created successfully")
+	b.logger.Info("JetStream interface created successfully with async publishing enabled")
 	return nil
 }
 
@@ -521,7 +532,6 @@ func (b *NATSBroker) initializeKVStores(ctx context.Context) error {
 	for _, bucketName := range b.config.KV.Buckets {
 		b.logger.Debug("connecting to KV bucket", "bucket", bucketName)
 		
-		// Use context with timeout for KV operations
 		kvCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		
 		kv, err := b.jetStream.KeyValue(kvCtx, bucketName)
@@ -560,19 +570,16 @@ func (b *NATSBroker) initializeKVStores(ctx context.Context) error {
 func (b *NATSBroker) buildNATSOptions() ([]nats.Option, error) {
 	var natsOptions []nats.Option
 
-	// IMPROVEMENT: Add connection lifecycle handlers for observability and metrics
 	natsOptions = append(natsOptions,
 		nats.ReconnectWait(b.config.NATS.Connection.ReconnectWait),
 		nats.MaxReconnects(b.config.NATS.Connection.MaxReconnects),
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
-			// Log the disconnection and update metrics
 			b.logger.Warn("NATS client disconnected", "error", err)
 			if b.metrics != nil {
 				b.metrics.SetNATSConnectionStatus(false)
 			}
 		}),
 		nats.ReconnectHandler(func(nc *nats.Conn) {
-			// Log the successful reconnection and update metrics
 			b.logger.Info("NATS client reconnected", "url", nc.ConnectedUrl())
 			if b.metrics != nil {
 				b.metrics.SetNATSConnectionStatus(true)
@@ -580,14 +587,11 @@ func (b *NATSBroker) buildNATSOptions() ([]nats.Option, error) {
 			}
 		}),
 		nats.ClosedHandler(func(nc *nats.Conn) {
-			// Log when the connection is permanently closed
 			b.logger.Error("NATS connection permanently closed", "error", nc.LastError())
 			if b.metrics != nil {
 				b.metrics.SetNATSConnectionStatus(false)
 			}
 		}),
-		// IMPROVEMENT: Add reconnect jitter to prevent "thundering herd" issues
-		// Using default values which are sensible, but could be made configurable.
 		nats.ReconnectJitter(100*time.Millisecond, 1*time.Second),
 	)
 
@@ -666,7 +670,6 @@ func (b *NATSBroker) Close() error {
 
 	b.logger.Info("durable consumers remain in NATS for next startup", "consumerCount", len(b.consumers))
 
-	// IMPROVEMENT: Use Drain() for graceful shutdown to prevent message loss
 	if b.natsConn != nil {
 		b.logger.Info("draining NATS connection (publishing pending messages)")
 		if err := b.natsConn.Drain(); err != nil {
@@ -674,7 +677,6 @@ func (b *NATSBroker) Close() error {
 		} else {
 			b.logger.Debug("NATS connection drained successfully")
 		}
-		// Per nats.go docs, Close() is not needed after Drain()
 	}
 
 	if len(errors) > 0 {

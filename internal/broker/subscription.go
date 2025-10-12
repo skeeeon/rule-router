@@ -193,20 +193,14 @@ func (sm *SubscriptionManager) fetcher(ctx context.Context, sub *Subscription, m
 		return
 	}
 
-	// --- FIX: Restore the shutdown goroutine to prevent deadlocks on exit ---
-	// This goroutine listens for the context cancellation and explicitly stops the
-	// iterator, which unblocks the `iterator.Next()` call in the main loop below.
 	go func() {
 		<-ctx.Done()
 		iterator.Stop()
 	}()
-	// --- END FIX ---
 
 	for {
 		msg, err := iterator.Next()
 		if err != nil {
-			// The iterator is stopped or a terminal error occurred.
-			// Check if this was due to a graceful shutdown.
 			if ctx.Err() != nil {
 				sub.logger.Debug("fetcher shutting down gracefully", "subject", sub.Subject)
 			} else {
@@ -219,8 +213,6 @@ func (sm *SubscriptionManager) fetcher(ctx context.Context, sub *Subscription, m
 		case msgChan <- msg:
 			// Message successfully passed to a worker.
 		case <-ctx.Done():
-			// Application is shutting down, stop processing.
-			// The iterator.Stop() is handled by the dedicated goroutine above.
 			sub.logger.Debug("fetcher shutting down during message queuing", "subject", sub.Subject)
 			return
 		}
@@ -233,11 +225,9 @@ func (sm *SubscriptionManager) processingWorker(ctx context.Context, msgChan <-c
 
 	sm.logger.Debug("processing worker started", "subject", subject, "workerID", workerID)
 
-	// This loop will automatically terminate when the fetcher closes the msgChan.
 	for msg := range msgChan {
 		if err := sm.processMessage(ctx, msg); err != nil {
 			sm.logger.Error("failed to process message", "subject", msg.Subject(), "error", err)
-			// Attempt to NAK the message for redelivery.
 			if nakErr := msg.Nak(); nakErr != nil {
 				sm.logger.Error("failed to NAK message", "subject", msg.Subject(), "error", nakErr)
 			}
@@ -245,7 +235,6 @@ func (sm *SubscriptionManager) processingWorker(ctx context.Context, msgChan <-c
 				sm.metrics.IncMessagesTotal("error")
 			}
 		} else {
-			// Acknowledge successful processing.
 			if ackErr := msg.Ack(); ackErr != nil {
 				sm.logger.Error("failed to ACK message", "subject", msg.Subject(), "error", ackErr)
 			}
@@ -301,7 +290,6 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 }
 
 // publishActionWithRetry publishes an action with exponential backoff and jitter.
-// Supports both JetStream and Core NATS publish modes based on configuration.
 func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, action *rule.Action) error {
 	maxRetries := sm.publishCfg.MaxRetries
 	baseDelay := sm.publishCfg.RetryBaseDelay
@@ -335,7 +323,6 @@ func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, actio
 			break
 		}
 
-		// IMPROVEMENT: Add jitter to exponential backoff to prevent thundering herd.
 		delay := baseDelay * time.Duration(1<<attempt)
 		jitter := time.Duration(rand.Intn(25)) * time.Millisecond
 		
@@ -349,11 +336,8 @@ func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, actio
 	return fmt.Errorf("failed to publish after %d attempts (mode: %s): %w", maxRetries, publishMode, lastErr)
 }
 
-// publishJetStream publishes to JetStream with ack confirmation.
+// publishJetStream publishes to JetStream using the async model for high throughput.
 func (sm *SubscriptionManager) publishJetStream(ctx context.Context, action *rule.Action) error {
-	pubCtx, cancel := context.WithTimeout(ctx, sm.publishCfg.AckTimeout)
-	defer cancel()
-
 	var payloadBytes []byte
 	if action.Passthrough {
 		payloadBytes = action.RawPayload
@@ -361,15 +345,30 @@ func (sm *SubscriptionManager) publishJetStream(ctx context.Context, action *rul
 		payloadBytes = []byte(action.Payload)
 	}
 
-	_, err := sm.jetStream.Publish(pubCtx, action.Subject, payloadBytes)
+	// Use PublishAsync for non-blocking send. The client library buffers internally.
+	ackF, err := sm.jetStream.PublishAsync(action.Subject, payloadBytes)
 	if err != nil {
+		// This error occurs if the async buffer is full (backpressure).
+		return fmt.Errorf("jetstream async publish failed on send: %w", err)
+	}
+
+	// Block and wait for the acknowledgement for this specific attempt, respecting the configured timeout.
+	pubCtx, cancel := context.WithTimeout(ctx, sm.publishCfg.AckTimeout)
+	defer cancel()
+
+	select {
+	case <-ackF.Ok():
+		return nil // Publish was successful.
+	case err := <-ackF.Err():
+		// The server returned an error for this publish.
 		if errors.Is(err, nats.ErrNoResponders) {
 			return fmt.Errorf("jetstream publish failed: no stream is configured for action subject '%s'", action.Subject)
 		}
-		return fmt.Errorf("jetstream publish failed: %w", err)
+		return fmt.Errorf("jetstream async publish failed on ack: %w", err)
+	case <-pubCtx.Done():
+		// We timed out waiting for the server's acknowledgement.
+		return fmt.Errorf("timeout waiting for publish acknowledgement: %w", pubCtx.Err())
 	}
-
-	return nil
 }
 
 // publishCore publishes to core NATS (fire-and-forget, no ack).
