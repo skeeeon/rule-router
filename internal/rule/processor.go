@@ -17,8 +17,8 @@ type Processor struct {
 	logger       *logger.Logger
 	metrics      *metrics.Metrics
 	stats        ProcessorStats
-	evaluator    *Evaluator      // New
-	templater    *TemplateEngine // New
+	evaluator    *Evaluator
+	templater    *TemplateEngine
 }
 
 type ProcessorStats struct {
@@ -124,7 +124,7 @@ func (p *Processor) ProcessWithSubject(actualSubject string, payload []byte, hea
 	return actions, nil
 }
 
-// processAction uses the TemplateEngine to render the final action.
+// processAction uses the TemplateEngine to render the final action, including headers.
 func (p *Processor) processAction(action *Action, context *EvaluationContext) (*Action, error) {
 	processedAction := &Action{
 		Passthrough: action.Passthrough,
@@ -148,7 +148,47 @@ func (p *Processor) processAction(action *Action, context *EvaluationContext) (*
 		processedAction.Payload = payload
 	}
 
+	// NEW: Process headers
+	processedAction.Headers, err = p.processHeaders(action, context)
+	if err != nil {
+		return nil, fmt.Errorf("failed to process headers: %w", err)
+	}
+
 	return processedAction, nil
+}
+
+// processHeaders templates header values and merges with original headers in passthrough mode.
+func (p *Processor) processHeaders(action *Action, context *EvaluationContext) (map[string]string, error) {
+	// Fast path: if no headers are configured and it's not passthrough, there's nothing to do.
+	if len(action.Headers) == 0 && !action.Passthrough {
+		return nil, nil
+	}
+
+	result := make(map[string]string)
+
+	// If passthrough is enabled, copy all original headers from the message context first.
+	if action.Passthrough && context.Headers != nil {
+		for key, value := range context.Headers {
+			result[key] = value
+		}
+	}
+
+	// Process and add/overwrite with the headers configured in the rule's action.
+	// This loop runs for both passthrough (override) and non-passthrough (create) modes.
+	for key, valueTemplate := range action.Headers {
+		processedValue, err := p.templater.Execute(valueTemplate, context)
+		if err != nil {
+			return nil, fmt.Errorf("failed to template header '%s': %w", key, err)
+		}
+		result[key] = processedValue
+	}
+
+	// Return nil instead of an empty map for efficiency and cleaner output.
+	if len(result) == 0 {
+		return nil, nil
+	}
+
+	return result, nil
 }
 
 // Process maintains backward compatibility.

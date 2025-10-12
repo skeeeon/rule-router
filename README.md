@@ -11,6 +11,7 @@ A high-performance NATS JetStream message router that evaluates JSON messages ag
   - **Time-Based Rules** - Schedule-aware evaluation without external schedulers
   - **Pattern Matching** - NATS wildcards (`*` and `>`) with subject token access
   - **Template Engine** - Variable substitution with nested field support
+  - **Action Headers** - Add, override, and template NATS headers in rule actions
   - **Zero-Copy Passthrough** - Forward messages unchanged for high-performance filtering and routing
   - **Full Authentication** - Username/password, token, NKey, and `.creds` files
   - **Production Ready** - Prometheus metrics, structured logging, graceful shutdown
@@ -148,8 +149,12 @@ metrics:
   action:
     subject: output.subject
     payload: "JSON template"      # Mutually exclusive with 'passthrough'
-```
-
+    headers:                      # Optional: Add/override NATS headers
+      X-Custom-Header: "static value"
+      X-Dynamic-Header: "{field_from_message}"
+      X-Generated-ID: "{@uuid7()}"
+``
+`
 ### Action Configuration
 
 Actions can either **template** a new message or **passthrough** the original message payload without modification.
@@ -164,6 +169,9 @@ action:
       "transformed_field": "{original_field}",
       "timestamp": "{@timestamp()}"
     }
+  headers:
+    X-Priority: "high"
+    X-Device-ID: "{device_id}"
 ```
 
 **Passthrough Action:**
@@ -174,19 +182,24 @@ action:
   passthrough: true  # Forwards original message payload
 ```
 
-**Passthrough with Subject Templating:**
-You can still use templates in the action `subject` while forwarding the original payload. This enables powerful dynamic routing.
+**Passthrough with Subject and Header Templating:**
+You can still use templates in the action `subject` and `headers` while forwarding the original payload. This enables powerful dynamic routing and message enrichment.
 ```yaml
 action:
   subject: "routed.{@subject.1}.{priority}"
-  passthrough: true  # Subject is templated, payload is original
+  passthrough: true  # Subject and headers are templated, payload is original
+  headers:
+    X-Processed-By: "rule-router"
+    X-Original-Priority: "{priority}" # Add a new header
+    X-Priority: "high"                # Override an original header
 ```
 
 **Important Rules:**
 - You must specify either `payload` OR `passthrough: true`. They are mutually exclusive. The rule loader will return an error if both are present.
-- Subject templating works with both modes.
+- Subject and header templating works with both modes.
 - Passthrough preserves the exact original message bytes, including formatting and field order.
-
+- When using passthrough, configured headers are merged with the original message's headers. If a header key exists in both, the value from the rule's `headers` block takes precedence (override)
+.
 ### Condition Operators
 
 **Comparison:**
@@ -293,10 +306,14 @@ action:
         "device_id": "{@subject.1}",
         "temperature": {value},
         "threshold": "{@kv.device_config.{@subject.1}:thresholds.max}",
-        "firmware": "{@header.X-Device-Firmware}",
         "alert_id": "{@uuid7()}",
         "timestamp": "{@timestamp()}"
-      }      
+      }
+    headers:
+      X-Alert-Priority: "high"
+      X-Device-ID: "{@subject.1}"
+      X-Device-Firmware: "{@header.X-Device-Firmware}"
+      X-Correlation-ID: "{@header.Nats-Msg-Id}"
 ```
 
 ## Key-Value Store Integration

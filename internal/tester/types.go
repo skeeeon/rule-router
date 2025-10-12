@@ -16,8 +16,9 @@ type TestConfig struct {
 
 // ExpectedOutput defines the structure for output validation files.
 type ExpectedOutput struct {
-	Subject string          `json:"subject"`
-	Payload json.RawMessage `json:"payload"`
+	Subject string            `json:"subject"`
+	Payload json.RawMessage   `json:"payload"`
+	Headers map[string]string `json:"headers,omitempty"` // NEW: For header validation
 }
 
 // TestResult represents the outcome of a single test.

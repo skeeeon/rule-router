@@ -40,11 +40,19 @@ func (t *Tester) Lint(rulesDir string) error {
 	var failed bool
 
 	err := filepath.Walk(rulesDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil { return err }
-		if info.IsDir() && strings.HasSuffix(info.Name(), "_test") { return filepath.SkipDir }
-		if info.IsDir() { return nil }
+		if err != nil {
+			return err
+		}
+		if info.IsDir() && strings.HasSuffix(info.Name(), "_test") {
+			return filepath.SkipDir
+		}
+		if info.IsDir() {
+			return nil
+		}
 		ext := strings.ToLower(filepath.Ext(path))
-		if ext != ".json" && ext != ".yaml" && ext != ".yml" { return nil }
+		if ext != ".json" && ext != ".yaml" && ext != ".yml" {
+			return nil
+		}
 		if _, err := loadSingleRuleFile(path); err != nil {
 			fmt.Printf("✖ FAIL: %s\n  Error: %v\n", path, err)
 			failed = true
@@ -54,8 +62,12 @@ func (t *Tester) Lint(rulesDir string) error {
 		return nil
 	})
 
-	if err != nil { return fmt.Errorf("walk error: %w", err) }
-	if failed { return fmt.Errorf("linting failed") }
+	if err != nil {
+		return fmt.Errorf("walk error: %w", err)
+	}
+	if failed {
+		return fmt.Errorf("linting failed")
+	}
 	fmt.Println("\nLinting complete. All files are valid.")
 	return nil
 }
@@ -309,11 +321,19 @@ func loadTestConfig(path string) *TestConfig {
 func (t *Tester) collectTestGroups(rulesDir string) ([]TestGroup, error) {
 	var testGroups []TestGroup
 	err := filepath.Walk(rulesDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil { return err }
-		if info.IsDir() && strings.HasSuffix(info.Name(), "_test") { return filepath.SkipDir }
-		if info.IsDir() { return nil }
+		if err != nil {
+			return err
+		}
+		if info.IsDir() && strings.HasSuffix(info.Name(), "_test") {
+			return filepath.SkipDir
+		}
+		if info.IsDir() {
+			return nil
+		}
 		ext := strings.ToLower(filepath.Ext(path))
-		if ext != ".json" && ext != ".yaml" && ext != ".yml" { return nil }
+		if ext != ".json" && ext != ".yaml" && ext != ".yml" {
+			return nil
+		}
 		testDir := strings.TrimSuffix(path, filepath.Ext(path)) + "_test"
 		if _, err := os.Stat(testDir); !os.IsNotExist(err) {
 			testFiles, _ := filepath.Glob(filepath.Join(testDir, "*.json"))
@@ -326,8 +346,10 @@ func (t *Tester) collectTestGroups(rulesDir string) ([]TestGroup, error) {
 			}
 			if len(validTests) > 0 {
 				testGroups = append(testGroups, TestGroup{
-					RulePath: path, TestDir: testDir, TestFiles: validTests,
-					KVData: loadMockKV(filepath.Join(testDir, "mock_kv_data.json")),
+					RulePath:   path,
+					TestDir:    testDir,
+					TestFiles:  validTests,
+					KVData:     loadMockKV(filepath.Join(testDir, "mock_kv_data.json")),
 					TestConfig: loadTestConfig(filepath.Join(testDir, "_test_config.json")),
 				})
 			}
@@ -339,32 +361,85 @@ func (t *Tester) collectTestGroups(rulesDir string) ([]TestGroup, error) {
 
 func validateOutput(action *rule.Action, outputFile string) error {
 	expectedBytes, err := os.ReadFile(outputFile)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	var expected ExpectedOutput
-	if err := json.Unmarshal(expectedBytes, &expected); err != nil { return err }
-	if action.Subject != expected.Subject { return fmt.Errorf("subject mismatch: got '%s', want '%s'", action.Subject, expected.Subject) }
+	if err := json.Unmarshal(expectedBytes, &expected); err != nil {
+		return fmt.Errorf("could not parse expected output file %s: %w", outputFile, err)
+	}
+
+	// 1. Validate Subject
+	if action.Subject != expected.Subject {
+		return fmt.Errorf("subject mismatch: got '%s', want '%s'", action.Subject, expected.Subject)
+	}
+
+	// 2. Validate Payload
 	var actualPayload, expectedPayload interface{}
 	payloadBytes := []byte(action.Payload)
-	if action.Passthrough { payloadBytes = action.RawPayload }
-	if err := json.Unmarshal(payloadBytes, &actualPayload); err != nil { return err }
-	if err := json.Unmarshal(expected.Payload, &expectedPayload); err != nil { return err }
+	if action.Passthrough {
+		payloadBytes = action.RawPayload
+	}
+	if err := json.Unmarshal(payloadBytes, &actualPayload); err != nil {
+		return fmt.Errorf("could not unmarshal actual action payload: %w", err)
+	}
+	if err := json.Unmarshal(expected.Payload, &expectedPayload); err != nil {
+		return fmt.Errorf("could not unmarshal expected payload from output file: %w", err)
+	}
 	actualCanon, _ := json.Marshal(actualPayload)
 	expectedCanon, _ := json.Marshal(expectedPayload)
-	if string(actualCanon) != string(expectedCanon) { return fmt.Errorf("payload mismatch:\ngot:  %s\nwant: %s", string(actualCanon), string(expectedCanon)) }
+	if string(actualCanon) != string(expectedCanon) {
+		return fmt.Errorf("payload mismatch:\ngot:  %s\nwant: %s", string(actualCanon), string(expectedCanon))
+	}
+
+	// 3. Validate Headers
+	if expected.Headers != nil {
+		if action.Headers == nil {
+			return fmt.Errorf("output validation failed: expected headers but got none")
+		}
+
+		// Check for missing headers and mismatched values
+		for key, expectedValue := range expected.Headers {
+			actualValue, exists := action.Headers[key]
+			if !exists {
+				return fmt.Errorf("output validation failed: missing expected header '%s'", key)
+			}
+			if actualValue != expectedValue {
+				return fmt.Errorf("output validation failed: header '%s' mismatch: got '%s', want '%s'",
+					key, actualValue, expectedValue)
+			}
+		}
+
+		// Check for unexpected extra headers
+		if len(action.Headers) != len(expected.Headers) {
+			for key := range action.Headers {
+				if _, isExpected := expected.Headers[key]; !isExpected {
+					return fmt.Errorf("output validation failed: unexpected header found '%s'", key)
+				}
+			}
+		}
+	} else if len(action.Headers) > 0 {
+		return fmt.Errorf("output validation failed: expected no headers, but got %d headers", len(action.Headers))
+	}
+
 	return nil
 }
 
 func setupTestProcessor(rulePath string, kvData map[string]map[string]interface{}, testConfig *TestConfig, verbose bool) *rule.Processor {
 	log := logger.NewNopLogger()
 	var bucketNames []string
-	for bucket := range kvData { bucketNames = append(bucketNames, bucket) }
+	for bucket := range kvData {
+		bucketNames = append(bucketNames, bucket)
+	}
 	loader := rule.NewRulesLoader(log, bucketNames)
 	rules, _ := loader.LoadFromDirectory(filepath.Dir(rulePath))
 	var kvContext *rule.KVContext
 	if kvData != nil {
 		cache := rule.NewLocalKVCache(log)
 		for bucket, keys := range kvData {
-			for key, val := range keys { cache.Set(bucket, key, val) }
+			for key, val := range keys {
+				cache.Set(bucket, key, val)
+			}
 		}
 		kvContext = rule.NewKVContext(nil, log, cache)
 	}
@@ -380,15 +455,21 @@ func setupTestProcessor(rulePath string, kvData map[string]map[string]interface{
 
 func loadSingleRuleFile(path string) ([]rule.Rule, error) {
 	data, err := os.ReadFile(path)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	var rules []rule.Rule
-	if err := yaml.Unmarshal(data, &rules); err != nil { return nil, err }
+	if err := yaml.Unmarshal(data, &rules); err != nil {
+		return nil, err
+	}
 	return rules, nil
 }
 
 func loadMockKV(path string) map[string]map[string]interface{} {
 	bytes, err := os.ReadFile(path)
-	if err != nil { return nil }
+	if err != nil {
+		return nil
+	}
 	var data map[string]map[string]interface{}
 	json.Unmarshal(bytes, &data)
 	return data
