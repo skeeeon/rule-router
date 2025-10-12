@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -164,69 +165,62 @@ func (sm *SubscriptionManager) fetcher(ctx context.Context, sub *Subscription, m
 	// Closing the channel signals to all worker goroutines that no more messages will be sent.
 	defer close(msgChan)
 
-	sub.logger.Debug("fetcher started using Messages() iterator", "subject", sub.Subject, "batchSize", sub.consumerCfg.FetchBatchSize)
+	sub.logger.Debug("fetcher started", "subject", sub.Subject, "batchSize", sub.consumerCfg.FetchBatchSize)
 
-	// Calculate the desired heartbeat interval as half the fetch timeout.
-	heartbeatInterval := sub.consumerCfg.FetchTimeout / 2
-	const minHeartbeat = 501 * time.Millisecond
-
-	// Enforce the minimum heartbeat of 501ms as requested.
-	if heartbeatInterval < minHeartbeat {
-		sub.logger.Debug("overriding heartbeat interval to meet NATS minimum requirement",
-			"subject", sub.Subject,
-			"configuredTimeout", sub.consumerCfg.FetchTimeout,
-			"calculatedHeartbeat", heartbeatInterval,
-			"enforcedHeartbeat", minHeartbeat)
-		heartbeatInterval = minHeartbeat
+	iteratorOpts := []jetstream.PullMessagesOpt{
+		jetstream.PullMaxMessages(sub.consumerCfg.FetchBatchSize),
+		jetstream.PullExpiry(sub.consumerCfg.FetchTimeout),
 	}
 
-	// Create the Messages iterator once before the loop.
-	iterator, err := sub.Consumer.Messages(
-		// This controls the size of the underlying pull requests.
-		jetstream.PullMaxMessages(sub.consumerCfg.FetchBatchSize),
-		// This is the timeout for each underlying pull request.
-		jetstream.PullExpiry(sub.consumerCfg.FetchTimeout),
-		// This enables heartbeats to detect stalled consumers or network issues.
-		jetstream.PullHeartbeat(heartbeatInterval),
-	)
+	const heartbeatThreshold = 2 * time.Second
+
+	if sub.consumerCfg.FetchTimeout >= heartbeatThreshold {
+		heartbeatInterval := sub.consumerCfg.FetchTimeout / 2
+		iteratorOpts = append(iteratorOpts, jetstream.PullHeartbeat(heartbeatInterval))
+		sub.logger.Debug("Enabling JetStream heartbeat for long poll",
+			"subject", sub.Subject,
+			"fetchTimeout", sub.consumerCfg.FetchTimeout,
+			"heartbeat", heartbeatInterval)
+	} else {
+		sub.logger.Debug("Omitting JetStream heartbeat for short poll",
+			"subject", sub.Subject,
+			"fetchTimeout", sub.consumerCfg.FetchTimeout)
+	}
+
+	iterator, err := sub.Consumer.Messages(iteratorOpts...)
 	if err != nil {
 		sub.logger.Error("failed to create messages iterator, terminating fetcher", "subject", sub.Subject, "error", err)
 		return
 	}
-	// Ensure the iterator is stopped to clean up all background resources.
-	defer iterator.Stop()
 
-	// Launch a dedicated goroutine to stop the iterator when the context is canceled.
-	// This is the idiomatic way to handle this API.
+	// --- FIX: Restore the shutdown goroutine to prevent deadlocks on exit ---
+	// This goroutine listens for the context cancellation and explicitly stops the
+	// iterator, which unblocks the `iterator.Next()` call in the main loop below.
 	go func() {
 		<-ctx.Done()
 		iterator.Stop()
 	}()
+	// --- END FIX ---
 
-	// The main loop is now simpler and more efficient.
 	for {
-		// iterator.Next() is a blocking call that efficiently waits for the next message
-		// from its internal buffer or from the server.
 		msg, err := iterator.Next()
 		if err != nil {
-			// If the parent context is cancelled, it's a graceful shutdown.
+			// The iterator is stopped or a terminal error occurred.
+			// Check if this was due to a graceful shutdown.
 			if ctx.Err() != nil {
 				sub.logger.Debug("fetcher shutting down gracefully", "subject", sub.Subject)
-				return
+			} else {
+				sub.logger.Error("iterator.Next() failed, terminating fetcher", "subject", sub.Subject, "error", err)
 			}
-
-			// Otherwise, it's an unexpected error (e.g., missed heartbeats, permissions issue).
-			// We log the error and terminate the fetcher for this subscription to allow for recovery.
-			sub.logger.Error("iterator.Next() failed, terminating fetcher", "subject", sub.Subject, "error", err)
 			return
 		}
 
-		// Send the message to a worker, checking for a shutdown signal in parallel.
 		select {
 		case msgChan <- msg:
 			// Message successfully passed to a worker.
 		case <-ctx.Done():
 			// Application is shutting down, stop processing.
+			// The iterator.Stop() is handled by the dedicated goroutine above.
 			sub.logger.Debug("fetcher shutting down during message queuing", "subject", sub.Subject)
 			return
 		}
@@ -306,7 +300,7 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 	return nil
 }
 
-// publishActionWithRetry publishes an action with exponential backoff retry.
+// publishActionWithRetry publishes an action with exponential backoff and jitter.
 // Supports both JetStream and Core NATS publish modes based on configuration.
 func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, action *rule.Action) error {
 	maxRetries := sm.publishCfg.MaxRetries
@@ -341,11 +335,14 @@ func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, actio
 			break
 		}
 
+		// IMPROVEMENT: Add jitter to exponential backoff to prevent thundering herd.
 		delay := baseDelay * time.Duration(1<<attempt)
+		jitter := time.Duration(rand.Intn(25)) * time.Millisecond
+		
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("context cancelled during retry backoff: %w", ctx.Err())
-		case <-time.After(delay):
+		case <-time.After(delay + jitter):
 		}
 	}
 
