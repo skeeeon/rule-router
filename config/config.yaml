@@ -45,7 +45,7 @@ nats:
                               # - Lower (1s) = more aggressive, higher CPU
                               # - Higher (5s+) = more efficient, allows heartbeat
                               # Note: For fetchTimeout > 1.5s, automatic heartbeat is enabled
-                              #       For fetchTimeout <= 1.5s, heartbeat is omitted (conflicts with NATS constraints)
+                              #       For fetchTimeout <= 1.5s, heartbeat is omitted (conflicts with NATS constraints) Must be minimum 1s
     
     maxAckPending: 1000       # Max unacknowledged messages per consumer
                               # Controls backpressure and memory usage
@@ -61,7 +61,7 @@ nats:
     # Delivery Behavior
     deliverPolicy: all        # Options:
                               # - all: Process all messages (including historical)
-                              # - new: Only process new messages (ignore backlog)
+                              # - new: Only process new messages (Default, ignore backlog)
                               # - last: Start from most recent message
                               # - by_start_time: Start from specific timestamp
                               # - by_start_sequence: Start from specific sequence number

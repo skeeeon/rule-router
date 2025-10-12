@@ -214,7 +214,7 @@ func setDefaults(cfg *Config) {
 		cfg.NATS.Consumers.MaxAckPending = 1000
 	}
 	if cfg.NATS.Consumers.DeliverPolicy == "" {
-		cfg.NATS.Consumers.DeliverPolicy = "all"
+		cfg.NATS.Consumers.DeliverPolicy = "new"
 	}
 	if cfg.NATS.Consumers.ReplayPolicy == "" {
 		cfg.NATS.Consumers.ReplayPolicy = "instant"
