@@ -5,6 +5,7 @@ package broker
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -33,16 +34,15 @@ type StreamInfo struct {
 	IsSource      bool                   // True if this stream has sources
 }
 
-// streamMatch represents a potential stream match with scoring information
+// streamMatch represents a potential stream match with its properties for sorting.
 type streamMatch struct {
 	streamName  string
 	filter      string
-	specificity int                    // Subject pattern specificity score
-	storage     jetstream.StorageType  // Memory or File
-	isMirror    bool                   // Is this a mirror stream?
-	isSource    bool                   // Is this a sourced stream?
-	isSystem    bool                   // Is this a system stream ($*, KV_*)?
-	finalScore  int                    // Computed final score
+	specificity int                   // Subject pattern specificity score
+	storage     jetstream.StorageType // Memory or File
+	isMirror    bool                  // Is this a mirror stream?
+	isSource    bool                  // Is this a sourced stream?
+	isSystem    bool                  // Is this a system stream ($*, KV_*)?
 }
 
 // NewStreamResolver creates a new stream resolver
@@ -162,9 +162,8 @@ func (sr *StreamResolver) Discover(ctx context.Context) error {
 	return nil
 }
 
-// FindStreamForSubject finds the optimal stream for the given subject
-// Considers primary streams, mirror filters, and source filters
-// Prefers memory storage and more specific subject patterns
+// FindStreamForSubject finds the optimal stream for the given subject by collecting
+// all potential matches and sorting them by a series of explicit priority rules.
 func (sr *StreamResolver) FindStreamForSubject(subject string) (string, error) {
 	if !sr.discovered {
 		return "", fmt.Errorf("streams not discovered - call Discover() first")
@@ -189,13 +188,6 @@ func (sr *StreamResolver) FindStreamForSubject(subject string) (string, error) {
 					isSource:    false,
 					isSystem:    sr.isSystemStream(stream.Name),
 				})
-
-				sr.logger.Debug("primary stream matches subject",
-					"subject", subject,
-					"stream", stream.Name,
-					"filter", filter,
-					"storage", stream.Storage,
-					"specificity", sr.calculateSpecificity(filter))
 			}
 		}
 
@@ -211,13 +203,6 @@ func (sr *StreamResolver) FindStreamForSubject(subject string) (string, error) {
 					isSource:    false,
 					isSystem:    sr.isSystemStream(stream.Name),
 				})
-
-				sr.logger.Debug("mirror stream matches subject",
-					"subject", subject,
-					"stream", stream.Name,
-					"mirrorFilter", stream.MirrorFilter,
-					"storage", stream.Storage,
-					"specificity", sr.calculateSpecificity(stream.MirrorFilter))
 			}
 		}
 
@@ -234,13 +219,6 @@ func (sr *StreamResolver) FindStreamForSubject(subject string) (string, error) {
 						isSource:    true,
 						isSystem:    sr.isSystemStream(stream.Name),
 					})
-
-					sr.logger.Debug("sourced stream matches subject",
-						"subject", subject,
-						"stream", stream.Name,
-						"sourceFilter", filter,
-						"storage", stream.Storage,
-						"specificity", sr.calculateSpecificity(filter))
 				}
 			}
 		}
@@ -253,15 +231,51 @@ func (sr *StreamResolver) FindStreamForSubject(subject string) (string, error) {
 			subject, availableFilters)
 	}
 
-	// Score all matches and select the best one
-	var bestMatch *streamMatch
-	for i := range matches {
-		matches[i].finalScore = sr.scoreMatch(&matches[i])
-
-		if bestMatch == nil || matches[i].finalScore > bestMatch.finalScore {
-			bestMatch = &matches[i]
-		}
+	// If only one stream matches, no need to sort.
+	if len(matches) == 1 {
+		sr.logger.Info("selected optimal stream for subject (only one match)",
+			"subject", subject,
+			"selectedStream", matches[0].streamName,
+			"filter", matches[0].filter,
+			"storage", matches[0].storage)
+		return matches[0].streamName, nil
 	}
+
+	// Sort the matches based on explicit priority rules.
+	// The 'less' function returns true if item 'i' is better than item 'j'.
+	sort.Slice(matches, func(i, j int) bool {
+		a := matches[i]
+		b := matches[j]
+
+		// Rule 1: More specific subject filter is better (higher score is better).
+		if a.specificity != b.specificity {
+			return a.specificity > b.specificity
+		}
+
+		// Rule 2: Memory storage is better than File storage.
+		if a.storage != b.storage {
+			return a.storage == jetstream.MemoryStorage
+		}
+
+		// Rule 3: Primary streams are better than Mirrors or Sourced streams.
+		// A primary stream has both isMirror and isSource as false.
+		aIsPrimary := !a.isMirror && !a.isSource
+		bIsPrimary := !b.isMirror && !b.isSource
+		if aIsPrimary != bIsPrimary {
+			return aIsPrimary
+		}
+
+		// Rule 4: Non-system streams are better than system streams.
+		if a.isSystem != b.isSystem {
+			return !a.isSystem
+		}
+
+		// If all rules are equal, the order doesn't matter.
+		return false
+	})
+
+	// The best match is now the first element in the sorted slice.
+	bestMatch := matches[0]
 
 	// Log selection decision with reasoning
 	sr.logger.Info("selected optimal stream for subject",
@@ -272,58 +286,21 @@ func (sr *StreamResolver) FindStreamForSubject(subject string) (string, error) {
 		"isMirror", bestMatch.isMirror,
 		"isSource", bestMatch.isSource,
 		"specificity", bestMatch.specificity,
-		"finalScore", bestMatch.finalScore,
 		"totalMatches", len(matches),
-		"reason", sr.explainSelection(bestMatch))
+		"reason", sr.explainSelection(&bestMatch))
 
 	// Debug: log all alternatives considered
-	if len(matches) > 1 {
-		alternatives := make([]string, 0, len(matches)-1)
-		for i := range matches {
-			if matches[i].streamName != bestMatch.streamName {
-				alternatives = append(alternatives, fmt.Sprintf("%s(score:%d,storage:%s)",
-					matches[i].streamName, matches[i].finalScore, matches[i].storage))
-			}
-		}
-		sr.logger.Debug("alternative streams considered",
-			"subject", subject,
-			"alternatives", alternatives)
+	alternatives := make([]string, 0, len(matches)-1)
+	for i := 1; i < len(matches); i++ {
+		alt := matches[i]
+		alternatives = append(alternatives, fmt.Sprintf("%s(spec:%d,storage:%s)",
+			alt.streamName, alt.specificity, alt.storage))
 	}
+	sr.logger.Debug("alternative streams considered",
+		"subject", subject,
+		"alternatives", alternatives)
 
 	return bestMatch.streamName, nil
-}
-
-// scoreMatch calculates a composite score for a stream match
-// Scoring factors (in priority order):
-// 1. Subject specificity (most important)
-// 2. Storage type (memory preferred 2x over file)
-// 3. Stream type (primary slightly preferred over mirror/source due to replication lag)
-// 4. System stream penalty (10x reduction for KV/system streams)
-func (sr *StreamResolver) scoreMatch(match *streamMatch) int {
-	// Start with subject specificity score
-	score := match.specificity
-
-	// Storage type multiplier: memory = 2x, file = 1x
-	// Rationale: Memory streams have ~5x lower latency for consumer operations
-	if match.storage == jetstream.MemoryStorage {
-		score *= 2
-	}
-	// File storage keeps original score (implicit 1x multiplier)
-
-	// Mirror/source penalty: 5% reduction (0.95x)
-	// Rationale: Mirrors/sources have millisecond replication lag
-	// For pull consumers, this is negligible but we still prefer primary slightly
-	if match.isMirror || match.isSource {
-		score = (score * 95) / 100
-	}
-
-	// System stream penalty: 10x reduction
-	// Rationale: Avoid using KV streams or system streams for regular message processing
-	if match.isSystem {
-		score /= 10
-	}
-
-	return score
 }
 
 // explainSelection provides human-readable reasoning for stream selection
@@ -332,30 +309,26 @@ func (sr *StreamResolver) explainSelection(match *streamMatch) string {
 
 	// Storage explanation
 	if match.storage == jetstream.MemoryStorage {
-		reasons = append(reasons, "memory-storage(2x)")
+		reasons = append(reasons, "memory-storage")
 	} else {
-		reasons = append(reasons, "file-storage(1x)")
+		reasons = append(reasons, "file-storage")
 	}
 
 	// Specificity explanation
-	if match.specificity > 100 {
-		reasons = append(reasons, fmt.Sprintf("high-specificity(%d)", match.specificity))
-	} else {
-		reasons = append(reasons, fmt.Sprintf("low-specificity(%d)", match.specificity))
-	}
+	reasons = append(reasons, fmt.Sprintf("specificity(%d)", match.specificity))
 
 	// Stream type explanation
 	if match.isMirror {
-		reasons = append(reasons, "mirror(0.95x)")
+		reasons = append(reasons, "mirror")
 	} else if match.isSource {
-		reasons = append(reasons, "sourced(0.95x)")
+		reasons = append(reasons, "sourced")
 	} else {
-		reasons = append(reasons, "primary(1x)")
+		reasons = append(reasons, "primary")
 	}
 
 	// System stream penalty
 	if match.isSystem {
-		reasons = append(reasons, "system(0.1x)")
+		reasons = append(reasons, "system-stream-deprioritized")
 	}
 
 	return strings.Join(reasons, ", ")
