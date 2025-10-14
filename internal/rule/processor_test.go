@@ -18,7 +18,7 @@ func newTestTemplateEngine() *TemplateEngine {
 // Helper to create a context for template tests.
 func newTemplateTestContext(data map[string]interface{}, subject string, t time.Time) *EvaluationContext {
 	timeProvider := NewMockTimeProvider(t)
-	ctx, _ := NewEvaluationContext([]byte("{}"), nil, NewSubjectContext(subject), timeProvider.GetCurrentContext(), nil)
+	ctx, _ := NewEvaluationContext([]byte("{}"), nil, NewSubjectContext(subject), timeProvider.GetCurrentContext(), nil, nil, logger.NewNopLogger())
 	ctx.Msg = data
 	return ctx
 }
@@ -26,7 +26,7 @@ func newTemplateTestContext(data map[string]interface{}, subject string, t time.
 // TestProcessor_Orchestration verifies the processor correctly calls evaluator and templater.
 func TestProcessor_Orchestration(t *testing.T) {
 	log := logger.NewNopLogger()
-	processor := NewProcessor(log, nil, nil)
+	processor := NewProcessor(log, nil, nil, nil)
 
 	rules := []Rule{
 		{

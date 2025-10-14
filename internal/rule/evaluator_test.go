@@ -21,7 +21,7 @@ func newTestContext(data map[string]interface{}, subject string) *EvaluationCont
 	subjectCtx := NewSubjectContext(subject)
 
 	// We can ignore the error here as test data is controlled.
-	ctx, _ := NewEvaluationContext([]byte("{}"), nil, subjectCtx, timeCtx, nil)
+	ctx, _ := NewEvaluationContext([]byte("{}"), nil, subjectCtx, timeCtx, nil, nil, logger.NewNopLogger())
 	ctx.Msg = data // Directly set the unmarshalled message data.
 	return ctx
 }
@@ -173,7 +173,7 @@ func TestEvaluateCondition_TimeFields(t *testing.T) {
 	fixedTime := time.Date(2024, 3, 15, 14, 30, 0, 0, time.UTC)
 	timeProvider := NewMockTimeProvider(fixedTime)
 
-	context, _ := NewEvaluationContext([]byte("{}"), nil, NewSubjectContext("test.subject"), timeProvider.GetCurrentContext(), nil)
+	context, _ := NewEvaluationContext([]byte("{}"), nil, NewSubjectContext("test.subject"), timeProvider.GetCurrentContext(), nil, nil, logger.NewNopLogger())
 	condition := Condition{Field: "@time.hour", Operator: "eq", Value: 14}
 
 	if !evaluator.evaluateCondition(&condition, context) {

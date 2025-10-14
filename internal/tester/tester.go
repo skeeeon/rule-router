@@ -427,12 +427,17 @@ func validateOutput(action *rule.Action, outputFile string) error {
 
 func setupTestProcessor(rulePath string, kvData map[string]map[string]interface{}, testConfig *TestConfig, verbose bool) *rule.Processor {
 	log := logger.NewNopLogger()
+	
+	// Extract bucket names from KV data
 	var bucketNames []string
 	for bucket := range kvData {
 		bucketNames = append(bucketNames, bucket)
 	}
+	
 	loader := rule.NewRulesLoader(log, bucketNames)
 	rules, _ := loader.LoadFromDirectory(filepath.Dir(rulePath))
+	
+	// Setup KV context with local cache
 	var kvContext *rule.KVContext
 	if kvData != nil {
 		cache := rule.NewLocalKVCache(log)
@@ -443,13 +448,50 @@ func setupTestProcessor(rulePath string, kvData map[string]map[string]interface{
 		}
 		kvContext = rule.NewKVContext(nil, log, cache)
 	}
-	processor := rule.NewProcessor(log, nil, kvContext)
+	
+	// NEW: Setup signature verification for testing
+	var sigVerification *rule.SignatureVerification
+	if testConfig.MockSignature != nil {
+		// Enable signature verification with default header names
+		sigVerification = rule.NewSignatureVerification(
+			true,
+			"Nats-Public-Key",
+			"Nats-Signature",
+		)
+		
+		// Add mock headers to test config headers
+		if testConfig.Headers == nil {
+			testConfig.Headers = make(map[string]string)
+		}
+		
+		// Set the public key header
+		testConfig.Headers["Nats-Public-Key"] = testConfig.MockSignature.PublicKey
+		
+		// Set a dummy signature header (will be validated based on MockSignature.Valid)
+		// In a real test, you could generate an actual signature, but for simplicity
+		// we're just setting a placeholder. The mock logic would need to be more sophisticated
+		// to actually verify signatures in tests - for now this just enables the @signature fields
+		testConfig.Headers["Nats-Signature"] = "dGVzdC1zaWduYXR1cmU=" // base64 "test-signature"
+		
+		// NOTE: For true signature verification testing, you would need to:
+		// 1. Generate a real NKey pair
+		// 2. Sign the test message payload with the private key
+		// 3. Put the real signature in the header
+		// For offline testing, you can verify @signature.pubkey access works
+		// but @signature.valid will always be false unless you generate real signatures
+	}
+	
+	// Create processor with signature verification
+	processor := rule.NewProcessor(log, nil, kvContext, sigVerification)
 	processor.LoadRules(rules)
+	
+	// Setup mock time provider if specified
 	if testConfig.MockTime != "" {
 		if t, err := time.Parse(time.RFC3339, testConfig.MockTime); err == nil {
 			processor.SetTimeProvider(rule.NewMockTimeProvider(t))
 		}
 	}
+	
 	return processor
 }
 

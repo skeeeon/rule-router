@@ -360,7 +360,7 @@ func BenchmarkNestedAccess_FourLevel(b *testing.B) {
 func newBenchmarkContext(data map[string]interface{}, subject string) *EvaluationContext {
 	ctx, _ := NewEvaluationContext(
 		[]byte("{}"), nil, NewSubjectContext(subject),
-		NewSystemTimeProvider().GetCurrentContext(), nil,
+		NewSystemTimeProvider().GetCurrentContext(), nil, nil, logger.NewNopLogger(), 
 	)
 	ctx.Msg = data
 	return ctx
