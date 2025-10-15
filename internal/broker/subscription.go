@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -220,28 +222,78 @@ func (sm *SubscriptionManager) fetcher(ctx context.Context, sub *Subscription, m
 }
 
 // processingWorker consumes messages from the shared channel and executes the rule processor.
+// It includes robust panic recovery and intelligent error handling to prevent worker crashes
+// and redelivery loops for malformed "poison messages".
 func (sm *SubscriptionManager) processingWorker(ctx context.Context, msgChan <-chan jetstream.Msg, workerID int, subject string) {
 	defer sm.wg.Done()
 
 	sm.logger.Debug("processing worker started", "subject", subject, "workerID", workerID)
 
 	for msg := range msgChan {
-		if err := sm.processMessage(ctx, msg); err != nil {
-			sm.logger.Error("failed to process message", "subject", msg.Subject(), "error", err)
-			if nakErr := msg.Nak(); nakErr != nil {
-				sm.logger.Error("failed to NAK message", "subject", msg.Subject(), "error", nakErr)
+		// Capture the message in a new variable for the deferred function to close over.
+		// This is a Go best practice to avoid capturing the loop variable `msg` which changes on each iteration.
+		currentMsg := msg
+
+		// Use an anonymous function to scope the defer, ensuring it runs for each message.
+		func() {
+			// --- START OF PANIC RECOVERY FIX ---
+			// This defer block catches any panics that occur during message processing.
+			// This prevents a single malformed message from crashing the entire worker goroutine.
+			defer func() {
+				if r := recover(); r != nil {
+					sm.logger.Error("panic recovered in processing worker",
+						"panic", r,
+						"subject", currentMsg.Subject(),
+						"stack", string(debug.Stack()),
+					)
+
+					// A message that causes a panic is a "poison message" and should be terminated
+					// to prevent it from being redelivered and causing another panic.
+					if termErr := currentMsg.Term(); termErr != nil {
+						sm.logger.Error("failed to Terminate message after panic", "subject", currentMsg.Subject(), "error", termErr)
+					}
+
+					if sm.metrics != nil {
+						sm.metrics.IncMessagesTotal("error")
+					}
+				}
+			}()
+			// --- END OF PANIC RECOVERY FIX ---
+
+			// Process the message. Any errors or panics will be handled gracefully.
+			if err := sm.processMessage(ctx, currentMsg); err != nil {
+				sm.logger.Error("failed to process message", "subject", currentMsg.Subject(), "error", err)
+
+				// --- START OF TERMINAL ERROR FIX ---
+				// Differentiate between transient and terminal errors. A terminal error (e.g., bad JSON)
+				// will never succeed, so we use msg.Term() to stop JetStream from redelivering it.
+				// A transient error (e.g., temporary network issue) might succeed on retry, so we use msg.Nak().
+				if isTerminalError(err) {
+					sm.logger.Warn("terminating malformed message to prevent redelivery loop", "subject", currentMsg.Subject())
+					if termErr := currentMsg.Term(); termErr != nil {
+						sm.logger.Error("failed to Terminate message", "subject", currentMsg.Subject(), "error", termErr)
+					}
+				} else {
+					// For other, potentially transient errors, Nak the message to allow retries up to `maxDeliver`.
+					if nakErr := currentMsg.Nak(); nakErr != nil {
+						sm.logger.Error("failed to NAK message", "subject", currentMsg.Subject(), "error", nakErr)
+					}
+				}
+				// --- END OF TERMINAL ERROR FIX ---
+
+				if sm.metrics != nil {
+					sm.metrics.IncMessagesTotal("error")
+				}
+			} else {
+				// Message processed successfully, acknowledge it.
+				if ackErr := currentMsg.Ack(); ackErr != nil {
+					sm.logger.Error("failed to ACK message", "subject", currentMsg.Subject(), "error", ackErr)
+				}
+				if sm.metrics != nil {
+					sm.metrics.IncMessagesTotal("processed")
+				}
 			}
-			if sm.metrics != nil {
-				sm.metrics.IncMessagesTotal("error")
-			}
-		} else {
-			if ackErr := msg.Ack(); ackErr != nil {
-				sm.logger.Error("failed to ACK message", "subject", msg.Subject(), "error", ackErr)
-			}
-			if sm.metrics != nil {
-				sm.metrics.IncMessagesTotal("processed")
-			}
-		}
+		}() // Immediately invoke the anonymous function.
 	}
 
 	sm.logger.Debug("processing worker finished", "subject", subject, "workerID", workerID)
@@ -267,6 +319,7 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 
 	actions, err := sm.processor.ProcessWithSubject(msg.Subject(), msg.Data(), headers)
 	if err != nil {
+		// This error will be caught by the caller (processingWorker) and handled appropriately.
 		return fmt.Errorf("rule processing failed: %w", err)
 	}
 
@@ -276,6 +329,7 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 			if sm.metrics != nil {
 				sm.metrics.IncActionsTotal("error")
 			}
+			// Return the error to allow the message to be NAK'd, as the action failed.
 			return fmt.Errorf("failed to publish action: %w", err)
 		}
 		if sm.metrics != nil {
@@ -440,4 +494,20 @@ func (sm *SubscriptionManager) GetSubscriptionCount() int {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	return len(sm.subscriptions)
+}
+
+// isTerminalError checks if an error is permanent and should not be retried.
+// This is used to decide whether to Terminate or Nak a message.
+func isTerminalError(err error) bool {
+	// A JSON unmarshalling error is a classic terminal error, as the message
+	// payload is fundamentally invalid and will never be successfully processed.
+	if strings.Contains(err.Error(), "unmarshal") {
+		return true
+	}
+
+	// Future terminal errors could be added here. For example:
+	// - A cryptographic signature validation failure.
+	// - A business logic validation error (e.g., "missing required field 'transaction_id'").
+
+	return false
 }
