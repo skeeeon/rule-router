@@ -645,6 +645,30 @@ func (b *NATSBroker) GetKVStores() map[string]jetstream.KeyValue {
 	return stores
 }
 
+// Helper
+// GetJetStream returns the JetStream interface
+func (b *NATSBroker) GetJetStream() jetstream.JetStream {
+    return b.jetStream
+}
+
+// GetNATSConn returns the NATS connection
+func (b *NATSBroker) GetNATSConn() *nats.Conn {
+    return b.natsConn
+}
+
+// GetStreamResolver returns the stream resolver
+func (b *NATSBroker) GetStreamResolver() *StreamResolver {
+    return b.streamResolver
+}
+
+// GetConsumerName returns the consumer name for a subject
+func (b *NATSBroker) GetConsumerName(subject string) string {
+    if name, exists := b.consumers[subject]; exists {
+        return name
+    }
+    return b.generateConsumerName(subject)
+}
+
 // Close shuts down the broker connections
 func (b *NATSBroker) Close() error {
 	b.logger.Info("closing NATS broker connections")
