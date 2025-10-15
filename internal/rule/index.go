@@ -1,244 +1,216 @@
-//file: internal/rule/index.go
+// file: internal/rule/index.go
 
 package rule
 
 import (
-    "sync"
-    "sync/atomic"
-    "time"
+	"sync"
+	"sync/atomic"
+	"time"
 
-    "rule-router/internal/logger"
+	"rule-router/internal/logger"
 )
 
+// RuleIndex provides efficient rule lookup for NATS subjects
+// Supports both exact matches (O(1)) and wildcard patterns (O(n))
 type RuleIndex struct {
-    exactMatches   map[string][]*Rule     // exact subject → rules
-    patternRules   []*PatternRule         // all wildcard pattern rules
-    mu             sync.RWMutex
-    stats          IndexStats
-    logger         *logger.Logger
+	exactMatches map[string][]*Rule // exact subject -> rules
+	patternRules []*PatternRule     // rules with wildcards
+	stats        IndexStats
+	mu           sync.RWMutex
+	logger       *logger.Logger
 }
 
 // PatternRule wraps a rule with its compiled pattern matcher
 type PatternRule struct {
-    Rule    *Rule
-    Matcher *PatternMatcher
+	Rule    *Rule
+	Matcher *PatternMatcher
 }
 
+// IndexStats tracks index performance metrics
 type IndexStats struct {
-    lookups       uint64
-    matches       uint64
-    exactMatches  uint64
-    patternChecks uint64
-    lastUpdated   time.Time
-    mu            sync.RWMutex
+	exactLookups   uint64
+	patternChecks  uint64
+	matches        uint64
+	lastUpdated    time.Time
 }
 
+// NewRuleIndex creates a new rule index
 func NewRuleIndex(log *logger.Logger) *RuleIndex {
-    return &RuleIndex{
-        exactMatches: make(map[string][]*Rule),
-        patternRules: make([]*PatternRule, 0),
-        stats: IndexStats{
-            lastUpdated: time.Now(),
-        },
-        logger: log,
-    }
+	return &RuleIndex{
+		exactMatches: make(map[string][]*Rule),
+		patternRules: make([]*PatternRule, 0),
+		logger:       log,
+	}
 }
 
+// Add indexes a NATS-triggered rule for efficient lookup
+// HTTP-triggered rules are ignored (they're stored separately in Processor)
 func (idx *RuleIndex) Add(rule *Rule) {
-    if rule == nil {
-        idx.logger.Error("attempted to add nil rule to index")
-        return
-    }
+	if rule == nil {
+		idx.logger.Error("attempted to add nil rule to index")
+		return
+	}
 
-    idx.mu.Lock()
-    defer idx.mu.Unlock()
+	// Only index NATS-triggered rules
+	if rule.Trigger.NATS == nil {
+		idx.logger.Debug("skipping non-NATS rule in index")
+		return
+	}
 
-    // Determine if this is a pattern or exact match
-    if containsWildcards(rule.Subject) {
-        // It's a pattern rule
-        matcher, err := NewPatternMatcher(rule.Subject)
-        if err != nil {
-            idx.logger.Error("failed to create pattern matcher for rule",
-                "subject", rule.Subject,
-                "error", err)
-            return
-        }
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
 
-        patternRule := &PatternRule{
-            Rule:    rule,
-            Matcher: matcher,
-        }
-        idx.patternRules = append(idx.patternRules, patternRule)
+	subject := rule.Trigger.NATS.Subject
 
-        idx.logger.Debug("added pattern rule to index",
-            "subject", rule.Subject,
-            "totalPatternRules", len(idx.patternRules))
-    } else {
-        // It's an exact match rule
-        idx.exactMatches[rule.Subject] = append(idx.exactMatches[rule.Subject], rule)
+	if containsWildcards(subject) {
+		// Pattern rule - needs matcher
+		matcher, err := NewPatternMatcher(subject)
+		if err != nil {
+			idx.logger.Error("failed to create pattern matcher",
+				"subject", subject,
+				"error", err)
+			return
+		}
 
-        idx.logger.Debug("added exact rule to index",
-            "subject", rule.Subject,
-            "existingRules", len(idx.exactMatches[rule.Subject]))
-    }
+		patternRule := &PatternRule{
+			Rule:    rule,
+			Matcher: matcher,
+		}
+		idx.patternRules = append(idx.patternRules, patternRule)
 
-    idx.stats.lastUpdated = time.Now()
+		idx.logger.Debug("added pattern rule to index",
+			"subject", subject,
+			"totalPatternRules", len(idx.patternRules))
+	} else {
+		// Exact match rule
+		idx.exactMatches[subject] = append(idx.exactMatches[subject], rule)
 
-    idx.logger.Info("rule added to index",
-        "subject", rule.Subject,
-        "isPattern", containsWildcards(rule.Subject),
-        "totalExactSubjects", len(idx.exactMatches),
-        "totalPatternRules", len(idx.patternRules))
+		idx.logger.Debug("added exact rule to index",
+			"subject", subject,
+			"existingRules", len(idx.exactMatches[subject]))
+	}
+
+	idx.stats.lastUpdated = time.Now()
+
+	idx.logger.Info("rule added to index",
+		"subject", subject,
+		"isPattern", containsWildcards(subject),
+		"totalExactSubjects", len(idx.exactMatches),
+		"totalPatternRules", len(idx.patternRules))
 }
 
-// Find returns rules matching the exact subject (legacy method for backward compatibility)
-func (idx *RuleIndex) Find(subject string) []*Rule {
-    idx.mu.RLock()
-    defer idx.mu.RUnlock()
-
-    atomic.AddUint64(&idx.stats.lookups, 1)
-    rules := idx.exactMatches[subject]
-
-    idx.logger.Debug("exact subject lookup",
-        "subject", subject,
-        "rulesFound", len(rules))
-
-    if len(rules) > 0 {
-        atomic.AddUint64(&idx.stats.matches, 1)
-        atomic.AddUint64(&idx.stats.exactMatches, 1)
-    }
-    
-    return rules
-}
-
-// FindAllMatching returns ALL rules that match the given subject (exact + patterns)
+// FindAllMatching returns all rules that match the given NATS subject
+// First checks exact matches (O(1)), then pattern matches (O(n))
 func (idx *RuleIndex) FindAllMatching(subject string) []*Rule {
-    idx.mu.RLock()
-    defer idx.mu.RUnlock()
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
 
-    atomic.AddUint64(&idx.stats.lookups, 1)
+	allMatches := make([]*Rule, 0)
 
-    var allMatches []*Rule
+	// Check exact matches first (O(1))
+	atomic.AddUint64(&idx.stats.exactLookups, 1)
+	if exactRules, found := idx.exactMatches[subject]; found {
+		allMatches = append(allMatches, exactRules...)
 
-    // First check exact matches (fastest)
-    if exactRules := idx.exactMatches[subject]; exactRules != nil {
-        allMatches = append(allMatches, exactRules...)
-        atomic.AddUint64(&idx.stats.exactMatches, 1)
-        
-        idx.logger.Debug("found exact matches",
-            "subject", subject,
-            "exactMatches", len(exactRules))
-    }
+		idx.logger.Debug("found exact rule matches",
+			"subject", subject,
+			"exactMatches", len(exactRules))
+	}
 
-    // Then check pattern matches
-    var patternMatches int
-    for _, patternRule := range idx.patternRules {
-        atomic.AddUint64(&idx.stats.patternChecks, 1)
-        
-        if patternRule.Matcher.Match(subject) {
-            allMatches = append(allMatches, patternRule.Rule)
-            patternMatches++
-            
-            idx.logger.Debug("pattern rule matched",
-                "subject", subject,
-                "pattern", patternRule.Rule.Subject)
-        }
-    }
+	// Then check pattern matches (O(n))
+	var patternMatches int
+	for _, patternRule := range idx.patternRules {
+		atomic.AddUint64(&idx.stats.patternChecks, 1)
 
-    if len(allMatches) > 0 {
-        atomic.AddUint64(&idx.stats.matches, 1)
-    }
+		if patternRule.Matcher.Match(subject) {
+			allMatches = append(allMatches, patternRule.Rule)
+			patternMatches++
 
-    idx.logger.Debug("completed rule matching",
-        "subject", subject,
-        "totalMatches", len(allMatches),
-        "exactMatches", len(allMatches)-patternMatches,
-        "patternMatches", patternMatches)
+			idx.logger.Debug("pattern rule matched",
+				"subject", subject,
+				"pattern", patternRule.Rule.Trigger.NATS.Subject)
+		}
+	}
 
-    return allMatches
+	if len(allMatches) > 0 {
+		atomic.AddUint64(&idx.stats.matches, 1)
+	}
+
+	idx.logger.Debug("completed rule matching",
+		"subject", subject,
+		"totalMatches", len(allMatches),
+		"exactMatches", len(allMatches)-patternMatches,
+		"patternMatches", patternMatches)
+
+	return allMatches
 }
 
-// GetSubjects returns all unique subjects (both exact and patterns)
+// GetSubjects returns all unique NATS subjects (both exact and patterns)
 func (idx *RuleIndex) GetSubjects() []string {
-    idx.mu.RLock()
-    defer idx.mu.RUnlock()
-    
-    // Calculate total capacity needed
-    totalCapacity := len(idx.exactMatches) + len(idx.patternRules)
-    subjects := make([]string, 0, totalCapacity)
-    
-    // Add exact match subjects
-    for subject := range idx.exactMatches {
-        subjects = append(subjects, subject)
-    }
-    
-    // Add pattern subjects
-    for _, patternRule := range idx.patternRules {
-        subjects = append(subjects, patternRule.Rule.Subject)
-    }
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
 
-    idx.logger.Debug("retrieved all subjects",
-        "exactSubjects", len(idx.exactMatches),
-        "patternSubjects", len(idx.patternRules),
-        "totalSubjects", len(subjects))
+	totalCapacity := len(idx.exactMatches) + len(idx.patternRules)
+	subjects := make([]string, 0, totalCapacity)
 
-    return subjects
+	// Add exact match subjects
+	for subject := range idx.exactMatches {
+		subjects = append(subjects, subject)
+	}
+
+	// Add pattern subjects
+	for _, patternRule := range idx.patternRules {
+		subjects = append(subjects, patternRule.Rule.Trigger.NATS.Subject)
+	}
+
+	idx.logger.Debug("retrieved all subjects",
+		"exactSubjects", len(idx.exactMatches),
+		"patternSubjects", len(idx.patternRules),
+		"totalSubjects", len(subjects))
+
+	return subjects
 }
 
-// GetSubscriptionSubjects returns subjects that should be subscribed to in NATS
-// This is the simple 1:1 mapping approach (no consolidation)
+// GetSubscriptionSubjects returns subjects that should be used for JetStream subscriptions
+// Converts wildcard patterns to NATS subscription format
 func (idx *RuleIndex) GetSubscriptionSubjects() []string {
-    return idx.GetSubjects() // Simple: subscribe to exactly what's in rules
+	subjects := idx.GetSubjects()
+
+	idx.logger.Info("returning subscription subjects",
+		"count", len(subjects),
+		"subjects", subjects)
+
+	return subjects
 }
 
+// Clear removes all indexed rules
 func (idx *RuleIndex) Clear() {
-    idx.mu.Lock()
-    defer idx.mu.Unlock()
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
 
-    previousExactCount := len(idx.exactMatches)
-    previousPatternCount := len(idx.patternRules)
-    
-    idx.exactMatches = make(map[string][]*Rule)
-    idx.patternRules = make([]*PatternRule, 0)
-    idx.stats.lastUpdated = time.Now()
+	idx.exactMatches = make(map[string][]*Rule)
+	idx.patternRules = make([]*PatternRule, 0)
+	idx.stats = IndexStats{}
 
-    idx.logger.Info("index cleared",
-        "previousExactRules", previousExactCount,
-        "previousPatternRules", previousPatternCount,
-        "timestamp", idx.stats.lastUpdated)
+	idx.logger.Info("index cleared")
 }
 
+// GetRuleCounts returns the number of exact and pattern rules
+func (idx *RuleIndex) GetRuleCounts() (exactCount, patternCount int) {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	exactCount = len(idx.exactMatches)
+	patternCount = len(idx.patternRules)
+	return
+}
+
+// GetStats returns index statistics
 func (idx *RuleIndex) GetStats() IndexStats {
-    idx.stats.mu.RLock()
-    defer idx.stats.mu.RUnlock()
-
-    stats := IndexStats{
-        lookups:       atomic.LoadUint64(&idx.stats.lookups),
-        matches:       atomic.LoadUint64(&idx.stats.matches),
-        exactMatches:  atomic.LoadUint64(&idx.stats.exactMatches),
-        patternChecks: atomic.LoadUint64(&idx.stats.patternChecks),
-        lastUpdated:   idx.stats.lastUpdated,
-    }
-
-    idx.logger.Debug("index stats retrieved",
-        "lookups", stats.lookups,
-        "matches", stats.matches,
-        "exactMatches", stats.exactMatches,
-        "patternChecks", stats.patternChecks,
-        "lastUpdated", stats.lastUpdated)
-
-    return stats
-}
-
-// GetRuleCounts returns counts for monitoring/metrics
-func (idx *RuleIndex) GetRuleCounts() (exactRules, patternRules int) {
-    idx.mu.RLock()
-    defer idx.mu.RUnlock()
-    
-    exactCount := 0
-    for _, rules := range idx.exactMatches {
-        exactCount += len(rules)
-    }
-    
-    return exactCount, len(idx.patternRules)
+	return IndexStats{
+		exactLookups:  atomic.LoadUint64(&idx.stats.exactLookups),
+		patternChecks: atomic.LoadUint64(&idx.stats.patternChecks),
+		matches:       atomic.LoadUint64(&idx.stats.matches),
+		lastUpdated:   idx.stats.lastUpdated,
+	}
 }
