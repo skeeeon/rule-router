@@ -1,62 +1,80 @@
-//file: internal/metrics/metrics.go
+// file: internal/metrics/metrics.go
 
 package metrics
 
 import (
+	"runtime"
+	"sync/atomic"
+
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// Metrics holds all prometheus metrics for the application
+// Metrics provides centralized metrics collection for both rule-router and http-gateway
 type Metrics struct {
-	// Message metrics
-	messagesTotal     *prometheus.CounterVec
-	messageQueueDepth prometheus.Gauge
-	processingBacklog prometheus.Gauge
+	registry *prometheus.Registry // Now exposed for HTTP metrics
 
-	// Rule metrics
-	ruleMatchesTotal prometheus.Counter
-	rulesActive      prometheus.Gauge
+	// Message processing metrics (shared)
+	messagesTotal             *prometheus.CounterVec
+	messageProcessingBacklog  prometheus.Gauge
+	ruleMatches               prometheus.Counter
+	rulesActive               prometheus.Gauge
+	actionsTotal              *prometheus.CounterVec
+	actionsByType             *prometheus.CounterVec
+	actionPublishFailures     prometheus.Counter
+	templateOpsTotal          *prometheus.CounterVec
 
-	// NATS metrics
+	// NATS connection metrics (shared)
 	natsConnectionStatus prometheus.Gauge
-	natsReconnectsTotal  prometheus.Counter
+	natsReconnects       prometheus.Counter
 
-	// Action metrics
-	actionsTotal          *prometheus.CounterVec
-	actionPublishFailures prometheus.Counter
-	actionsByType         *prometheus.CounterVec // NEW
+	// Signature verification metrics (shared)
+	signatureVerificationsTotal   *prometheus.CounterVec
+	signatureVerificationDuration prometheus.Histogram
 
-	// Template metrics
-	templateOpsTotal *prometheus.CounterVec
+	// KV metrics (shared)
+	kvCacheHits   prometheus.Counter
+	kvCacheMisses prometheus.Counter
+	kvCacheSize   prometheus.Gauge
 
-	// System metrics
-	processGoroutines  prometheus.Gauge
-	processMemoryBytes prometheus.Gauge
+	// System metrics (shared)
+	goroutines   prometheus.Gauge
+	memoryBytes  prometheus.Gauge
+
+	// HTTP Inbound metrics (http-gateway only)
+	httpInboundRequestsTotal *prometheus.CounterVec
+	httpRequestDuration      *prometheus.HistogramVec
+
+	// HTTP Outbound metrics (http-gateway only)
+	httpOutboundRequestsTotal *prometheus.CounterVec
+	httpOutboundDuration      *prometheus.HistogramVec
+
+	// Internal counters for atomic operations
+	stats struct {
+		messagesReceived uint64
+		messagesError    uint64
+	}
 }
 
-// NewMetrics creates and registers all prometheus metrics
-func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
+// NewMetrics creates a new metrics instance with all collectors registered
+func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 	m := &Metrics{
+		registry: registry,
+
+		// Message processing
 		messagesTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "messages_total",
-				Help: "Total number of messages processed by status",
+				Help: "Total number of messages by status",
 			},
 			[]string{"status"},
 		),
-		messageQueueDepth: prometheus.NewGauge(
-			prometheus.GaugeOpts{
-				Name: "message_queue_depth",
-				Help: "Current number of messages in the processing queue",
-			},
-		),
-		processingBacklog: prometheus.NewGauge(
+		messageProcessingBacklog: prometheus.NewGauge(
 			prometheus.GaugeOpts{
 				Name: "message_processing_backlog",
-				Help: "Difference between received and processed messages",
+				Help: "Number of messages waiting to be processed",
 			},
 		),
-		ruleMatchesTotal: prometheus.NewCounter(
+		ruleMatches: prometheus.NewCounter(
 			prometheus.CounterOpts{
 				Name: "rule_matches_total",
 				Help: "Total number of rule matches",
@@ -65,41 +83,28 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		rulesActive: prometheus.NewGauge(
 			prometheus.GaugeOpts{
 				Name: "rules_active",
-				Help: "Current number of active rules",
-			},
-		),
-		natsConnectionStatus: prometheus.NewGauge(
-			prometheus.GaugeOpts{
-				Name: "nats_connection_status",
-				Help: "Current NATS connection status (0/1)",
-			},
-		),
-		natsReconnectsTotal: prometheus.NewCounter(
-			prometheus.CounterOpts{
-				Name: "nats_reconnects_total",
-				Help: "Total number of NATS reconnection attempts",
+				Help: "Number of active rules",
 			},
 		),
 		actionsTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "actions_total",
-				Help: "Total number of rule actions executed by status",
+				Help: "Total number of actions by status",
 			},
 			[]string{"status"},
+		),
+		actionsByType: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "actions_by_type_total",
+				Help: "Total number of actions by type",
+			},
+			[]string{"type"},
 		),
 		actionPublishFailures: prometheus.NewCounter(
 			prometheus.CounterOpts{
 				Name: "action_publish_failures_total",
-				Help: "Total number of action publish failures (before retry)",
+				Help: "Total number of action publish failures",
 			},
-		),
-		// NEW: Counter for action types
-		actionsByType: prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Name: "actions_by_type_total",
-				Help: "Total actions by type (templated vs passthrough)",
-			},
-			[]string{"type"},
 		),
 		templateOpsTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
@@ -108,39 +113,133 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			},
 			[]string{"status"},
 		),
-		processGoroutines: prometheus.NewGauge(
+
+		// NATS connection
+		natsConnectionStatus: prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "nats_connection_status",
+				Help: "NATS connection status (1 = connected, 0 = disconnected)",
+			},
+		),
+		natsReconnects: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "nats_reconnects_total",
+				Help: "Total number of NATS reconnections",
+			},
+		),
+
+		// Signature verification
+		signatureVerificationsTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "signature_verifications_total",
+				Help: "Total number of signature verifications by result",
+			},
+			[]string{"result"},
+		),
+		signatureVerificationDuration: prometheus.NewHistogram(
+			prometheus.HistogramOpts{
+				Name:    "signature_verification_duration_seconds",
+				Help:    "Duration of signature verification operations",
+				Buckets: prometheus.DefBuckets,
+			},
+		),
+
+		// KV metrics
+		kvCacheHits: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "kv_cache_hits_total",
+				Help: "Total number of KV cache hits",
+			},
+		),
+		kvCacheMisses: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "kv_cache_misses_total",
+				Help: "Total number of KV cache misses",
+			},
+		),
+		kvCacheSize: prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "kv_cache_size",
+				Help: "Current number of entries in KV cache",
+			},
+		),
+
+		// System metrics
+		goroutines: prometheus.NewGauge(
 			prometheus.GaugeOpts{
 				Name: "process_goroutines",
-				Help: "Current number of goroutines",
+				Help: "Number of goroutines",
 			},
 		),
-		processMemoryBytes: prometheus.NewGauge(
+		memoryBytes: prometheus.NewGauge(
 			prometheus.GaugeOpts{
 				Name: "process_memory_bytes",
-				Help: "Current memory usage in bytes",
+				Help: "Process memory usage in bytes",
 			},
+		),
+
+		// HTTP Inbound (http-gateway)
+		httpInboundRequestsTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "http_inbound_requests_total",
+				Help: "Total number of inbound HTTP requests",
+			},
+			[]string{"path", "method", "status"},
+		),
+		httpRequestDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "http_request_duration_seconds",
+				Help:    "Duration of inbound HTTP requests",
+				Buckets: prometheus.DefBuckets,
+			},
+			[]string{"path", "method"},
+		),
+
+		// HTTP Outbound (http-gateway)
+		httpOutboundRequestsTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "http_outbound_requests_total",
+				Help: "Total number of outbound HTTP requests",
+			},
+			[]string{"url", "status_code"},
+		),
+		httpOutboundDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "http_outbound_duration_seconds",
+				Help:    "Duration of outbound HTTP requests",
+				Buckets: prometheus.DefBuckets,
+			},
+			[]string{"url"},
 		),
 	}
 
-	// Register all metrics
-	metrics := []prometheus.Collector{
+	// Register all collectors
+	collectors := []prometheus.Collector{
 		m.messagesTotal,
-		m.messageQueueDepth,
-		m.processingBacklog,
-		m.ruleMatchesTotal,
+		m.messageProcessingBacklog,
+		m.ruleMatches,
 		m.rulesActive,
-		m.natsConnectionStatus,
-		m.natsReconnectsTotal,
 		m.actionsTotal,
+		m.actionsByType,
 		m.actionPublishFailures,
-		m.actionsByType, // NEW
 		m.templateOpsTotal,
-		m.processGoroutines,
-		m.processMemoryBytes,
+		m.natsConnectionStatus,
+		m.natsReconnects,
+		m.signatureVerificationsTotal,
+		m.signatureVerificationDuration,
+		m.kvCacheHits,
+		m.kvCacheMisses,
+		m.kvCacheSize,
+		m.goroutines,
+		m.memoryBytes,
+		m.httpInboundRequestsTotal,
+		m.httpRequestDuration,
+		m.httpOutboundRequestsTotal,
+		m.httpOutboundDuration,
 	}
 
-	for _, metric := range metrics {
-		if err := reg.Register(metric); err != nil {
+	for _, collector := range collectors {
+		if err := registry.Register(collector); err != nil {
 			return nil, err
 		}
 	}
@@ -148,32 +247,50 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 	return m, nil
 }
 
-// IncMessagesTotal increments the messages counter for a given status
+// GetRegistry returns the Prometheus registry (needed for HTTP handler)
+func (m *Metrics) GetRegistry() *prometheus.Registry {
+	return m.registry
+}
+
+// Message processing metrics
 func (m *Metrics) IncMessagesTotal(status string) {
 	m.messagesTotal.WithLabelValues(status).Inc()
+	if status == "received" {
+		atomic.AddUint64(&m.stats.messagesReceived, 1)
+	} else if status == "error" {
+		atomic.AddUint64(&m.stats.messagesError, 1)
+	}
 }
 
-// SetMessageQueueDepth sets the current message queue depth
-func (m *Metrics) SetMessageQueueDepth(depth float64) {
-	m.messageQueueDepth.Set(depth)
+func (m *Metrics) SetMessageProcessingBacklog(count float64) {
+	m.messageProcessingBacklog.Set(count)
 }
 
-// SetProcessingBacklog sets the current processing backlog
-func (m *Metrics) SetProcessingBacklog(backlog float64) {
-	m.processingBacklog.Set(backlog)
-}
-
-// IncRuleMatches increments the rule matches counter
 func (m *Metrics) IncRuleMatches() {
-	m.ruleMatchesTotal.Inc()
+	m.ruleMatches.Inc()
 }
 
-// SetRulesActive sets the number of active rules
 func (m *Metrics) SetRulesActive(count float64) {
 	m.rulesActive.Set(count)
 }
 
-// SetNATSConnectionStatus sets the NATS connection status
+func (m *Metrics) IncActionsTotal(status string) {
+	m.actionsTotal.WithLabelValues(status).Inc()
+}
+
+func (m *Metrics) IncActionsByType(actionType string) {
+	m.actionsByType.WithLabelValues(actionType).Inc()
+}
+
+func (m *Metrics) IncActionPublishFailures() {
+	m.actionPublishFailures.Inc()
+}
+
+func (m *Metrics) IncTemplateOpsTotal(status string) {
+	m.templateOpsTotal.WithLabelValues(status).Inc()
+}
+
+// NATS connection metrics
 func (m *Metrics) SetNATSConnectionStatus(connected bool) {
 	if connected {
 		m.natsConnectionStatus.Set(1)
@@ -182,50 +299,61 @@ func (m *Metrics) SetNATSConnectionStatus(connected bool) {
 	}
 }
 
-// IncNATSReconnects increments the NATS reconnects counter
 func (m *Metrics) IncNATSReconnects() {
-	m.natsReconnectsTotal.Inc()
+	m.natsReconnects.Inc()
 }
 
-// IncActionsTotal increments the actions counter for a given status
-func (m *Metrics) IncActionsTotal(status string) {
-	m.actionsTotal.WithLabelValues(status).Inc()
+// Signature verification metrics
+func (m *Metrics) IncSignatureVerifications(result string) {
+	m.signatureVerificationsTotal.WithLabelValues(result).Inc()
 }
 
-// IncActionPublishFailures increments the action publish failures counter
-func (m *Metrics) IncActionPublishFailures() {
-	m.actionPublishFailures.Inc()
+func (m *Metrics) ObserveSignatureVerificationDuration(seconds float64) {
+	m.signatureVerificationDuration.Observe(seconds)
 }
 
-// NEW: IncActionsByType increments the action type counter
-func (m *Metrics) IncActionsByType(actionType string) {
-    m.actionsByType.WithLabelValues(actionType).Inc()
+// KV metrics
+func (m *Metrics) IncKVCacheHits() {
+	m.kvCacheHits.Inc()
 }
 
-// IncTemplateOpsTotal increments the template operations counter for a given status
-func (m *Metrics) IncTemplateOpsTotal(status string) {
-	m.templateOpsTotal.WithLabelValues(status).Inc()
+func (m *Metrics) IncKVCacheMisses() {
+	m.kvCacheMisses.Inc()
 }
 
-// SetProcessMetrics sets the current process metrics
-func (m *Metrics) SetProcessMetrics(goroutines, memoryBytes float64) {
-	m.processGoroutines.Set(goroutines)
-	m.processMemoryBytes.Set(memoryBytes)
+func (m *Metrics) SetKVCacheSize(size float64) {
+	m.kvCacheSize.Set(size)
 }
 
-// Legacy compatibility methods for MQTT metrics (now mapping to NATS)
+// System metrics
+func (m *Metrics) UpdateSystemMetrics() {
+	m.goroutines.Set(float64(runtime.NumGoroutine()))
 
-// SetMQTTConnectionStatus sets the NATS connection status (legacy method)
-func (m *Metrics) SetMQTTConnectionStatus(connected bool) {
-	m.SetNATSConnectionStatus(connected)
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+	m.memoryBytes.Set(float64(memStats.Alloc))
 }
 
-// IncMQTTReconnects increments the NATS reconnects counter (legacy method)
-func (m *Metrics) IncMQTTReconnects() {
-	m.IncNATSReconnects()
+// HTTP Inbound metrics (http-gateway only)
+func (m *Metrics) IncHTTPInboundRequestsTotal(path, method, status string) {
+	m.httpInboundRequestsTotal.WithLabelValues(path, method, status).Inc()
 }
 
-// SetWorkerPoolActive is now a no-op since we removed worker pools
-func (m *Metrics) SetWorkerPoolActive(count float64) {
-	// No-op - worker pool metrics removed
+func (m *Metrics) ObserveHTTPRequestDuration(path, method string, seconds float64) {
+	m.httpRequestDuration.WithLabelValues(path, method).Observe(seconds)
+}
+
+// HTTP Outbound metrics (http-gateway only)
+func (m *Metrics) IncHTTPOutboundRequestsTotal(url, statusCode string) {
+	m.httpOutboundRequestsTotal.WithLabelValues(url, statusCode).Inc()
+}
+
+func (m *Metrics) ObserveHTTPOutboundDuration(url string, seconds float64) {
+	m.httpOutboundDuration.WithLabelValues(url).Observe(seconds)
+}
+
+// GetStats returns current statistics
+func (m *Metrics) GetStats() (received, errors uint64) {
+	return atomic.LoadUint64(&m.stats.messagesReceived),
+		atomic.LoadUint64(&m.stats.messagesError)
 }

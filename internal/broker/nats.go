@@ -656,11 +656,6 @@ func (b *NATSBroker) GetNATSConn() *nats.Conn {
     return b.natsConn
 }
 
-// GetStreamResolver returns the stream resolver
-func (b *NATSBroker) GetStreamResolver() *StreamResolver {
-    return b.streamResolver
-}
-
 // GetConsumerName returns the consumer name for a subject
 func (b *NATSBroker) GetConsumerName(subject string) string {
     if name, exists := b.consumers[subject]; exists {

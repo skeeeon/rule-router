@@ -23,20 +23,14 @@ func run() error {
 	rulesPath := flag.String("rules", "rules", "path to rules directory")
 	flag.Parse()
 
-	// Load main configuration
-	cfg, err := config.Load(*configPath)
-	if err != nil {
-		return err
-	}
-
-	// Load HTTP-specific configuration
-	httpCfg, err := config.LoadHTTPConfig(*configPath)
+	// Load configuration (validates HTTP fields are present)
+	cfg, err := config.LoadHTTPConfig(*configPath)
 	if err != nil {
 		return err
 	}
 
 	// Create application
-	app, err := gateway.NewApp(cfg, httpCfg, *rulesPath)
+	app, err := gateway.NewApp(cfg, *rulesPath)
 	if err != nil {
 		return err
 	}
