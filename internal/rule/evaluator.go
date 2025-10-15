@@ -1,14 +1,19 @@
-//file: internal/rule/evaluator.go
+// file: internal/rule/evaluator.go
 
 package rule
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"rule-router/internal/logger"
 )
+
+// Clock skew tolerance for "recent" operator (allows messages slightly in the future)
+const clockSkewTolerance = 5 * time.Second
 
 // Evaluator processes rule conditions against an EvaluationContext.
 type Evaluator struct {
@@ -21,9 +26,6 @@ func NewEvaluator(log *logger.Logger) *Evaluator {
 }
 
 // Evaluate checks if a message satisfies the conditions within a group.
-// Uses short-circuit evaluation for optimal performance:
-// - AND: Returns false on first false condition (remaining conditions skipped)
-// - OR: Returns true on first true condition (remaining conditions skipped)
 func (e *Evaluator) Evaluate(conditions *Conditions, context *EvaluationContext) bool {
 	if conditions == nil || (len(conditions.Items) == 0 && len(conditions.Groups) == 0) {
 		e.logger.Debug("no conditions to evaluate")
@@ -35,7 +37,6 @@ func (e *Evaluator) Evaluate(conditions *Conditions, context *EvaluationContext)
 		"numConditions", len(conditions.Items),
 		"numGroups", len(conditions.Groups))
 
-	// Short-circuit evaluation based on operator
 	if conditions.Operator == "and" {
 		return e.evaluateAND(conditions, context)
 	} else if conditions.Operator == "or" {
@@ -46,9 +47,7 @@ func (e *Evaluator) Evaluate(conditions *Conditions, context *EvaluationContext)
 	}
 }
 
-// evaluateAND evaluates with short-circuit on first false
 func (e *Evaluator) evaluateAND(conditions *Conditions, context *EvaluationContext) bool {
-	// Evaluate individual conditions - stop on first false
 	for i, condition := range conditions.Items {
 		result := e.evaluateCondition(&condition, context)
 		
@@ -65,11 +64,10 @@ func (e *Evaluator) evaluateAND(conditions *Conditions, context *EvaluationConte
 				"field", condition.Field,
 				"totalConditions", len(conditions.Items),
 				"skippedConditions", len(conditions.Items)-i-1)
-			return false // Short-circuit: no need to check remaining
+			return false
 		}
 	}
 
-	// Evaluate nested groups - stop on first false
 	for i, group := range conditions.Groups {
 		result := e.Evaluate(&group, context)
 		
@@ -83,7 +81,7 @@ func (e *Evaluator) evaluateAND(conditions *Conditions, context *EvaluationConte
 				"failedGroupIndex", i,
 				"totalGroups", len(conditions.Groups),
 				"skippedGroups", len(conditions.Groups)-i-1)
-			return false // Short-circuit: no need to check remaining
+			return false
 		}
 	}
 
@@ -91,9 +89,7 @@ func (e *Evaluator) evaluateAND(conditions *Conditions, context *EvaluationConte
 	return true
 }
 
-// evaluateOR evaluates with short-circuit on first true
 func (e *Evaluator) evaluateOR(conditions *Conditions, context *EvaluationContext) bool {
-	// Evaluate individual conditions - stop on first true
 	for i, condition := range conditions.Items {
 		result := e.evaluateCondition(&condition, context)
 		
@@ -110,11 +106,10 @@ func (e *Evaluator) evaluateOR(conditions *Conditions, context *EvaluationContex
 				"field", condition.Field,
 				"totalConditions", len(conditions.Items),
 				"skippedConditions", len(conditions.Items)-i-1)
-			return true // Short-circuit: no need to check remaining
+			return true
 		}
 	}
 
-	// Evaluate nested groups - stop on first true
 	for i, group := range conditions.Groups {
 		result := e.Evaluate(&group, context)
 		
@@ -128,7 +123,7 @@ func (e *Evaluator) evaluateOR(conditions *Conditions, context *EvaluationContex
 				"successGroupIndex", i,
 				"totalGroups", len(conditions.Groups),
 				"skippedGroups", len(conditions.Groups)-i-1)
-			return true // Short-circuit: no need to check remaining
+			return true
 		}
 	}
 
@@ -136,22 +131,16 @@ func (e *Evaluator) evaluateOR(conditions *Conditions, context *EvaluationContex
 	return false
 }
 
-// evaluateCondition evaluates a single condition using the centralized context.
 func (e *Evaluator) evaluateCondition(cond *Condition, context *EvaluationContext) bool {
 	actualValue, exists := context.ResolveValue(cond.Field)
 
 	if !exists {
-		// If the field doesn't exist, the only condition that can pass is 'exists: false' (implicitly)
-		// or an explicit check for a non-existent field.
-		// For simplicity, we treat 'exists' as a special operator.
 		if cond.Operator == "exists" {
-			return false // The field does not exist.
+			return false
 		}
-		// For all other operators, a non-existent field fails the condition.
 		return false
 	}
 
-	// If we are here, the field exists.
 	if cond.Operator == "exists" {
 		return actualValue != nil
 	}
@@ -172,6 +161,9 @@ func (e *Evaluator) evaluateCondition(cond *Condition, context *EvaluationContex
 		result = e.compareIn(actualValue, cond.Value)
 	case "not_in":
 		result = !e.compareIn(actualValue, cond.Value)
+	case "recent":
+		// NEW: Time-based replay protection
+		result = e.compareRecent(actualValue, cond.Value, context)
 	default:
 		e.logger.Error("unknown operator", "operator", cond.Operator)
 		return false
@@ -181,6 +173,83 @@ func (e *Evaluator) evaluateCondition(cond *Condition, context *EvaluationContex
 		"field", cond.Field, "operator", cond.Operator, "expectedValue", cond.Value, "actualValue", actualValue, "result", result)
 
 	return result
+}
+
+// compareRecent checks if a timestamp is within a tolerance duration of current time.
+// Supports Unix seconds (int/float) and RFC3339 strings.
+// Allows small future tolerance (5s) to account for clock skew.
+func (e *Evaluator) compareRecent(msgTimestamp, tolerance interface{}, context *EvaluationContext) bool {
+	// Parse tolerance duration string
+	toleranceStr, ok := tolerance.(string)
+	if !ok {
+		e.logger.Debug("recent operator: tolerance must be a duration string", "tolerance", tolerance)
+		return false
+	}
+	
+	duration, err := time.ParseDuration(toleranceStr)
+	if err != nil {
+		e.logger.Debug("recent operator: invalid duration",
+			"tolerance", toleranceStr,
+			"error", err)
+		return false
+	}
+
+	// Parse message timestamp
+	ts, err := e.parseTimestamp(msgTimestamp)
+	if err != nil {
+		e.logger.Debug("recent operator: failed to parse timestamp",
+			"value", msgTimestamp,
+			"error", err)
+		return false
+	}
+
+	// Get current time from context
+	now := context.Time.timestamp
+	diff := now.Sub(ts)
+
+	// Reject if timestamp is too far in the future (beyond clock skew tolerance)
+	if diff < -clockSkewTolerance {
+		e.logger.Debug("recent operator: timestamp too far in future",
+			"timestamp", ts,
+			"now", now,
+			"diff", diff,
+			"maxFutureTolerance", clockSkewTolerance)
+		return false
+	}
+
+	// Accept if within tolerance window
+	isRecent := diff <= duration
+
+	e.logger.Debug("recent operator evaluation",
+		"timestamp", ts,
+		"now", now,
+		"diff", diff,
+		"tolerance", duration,
+		"result", isRecent)
+
+	return isRecent
+}
+
+// parseTimestamp flexibly parses timestamps from various formats.
+// Standardized on Unix seconds (int/float) with RFC3339 as fallback.
+func (e *Evaluator) parseTimestamp(value interface{}) (time.Time, error) {
+	switch v := value.(type) {
+	case float64:
+		// Unix seconds (may have fractional part for milliseconds)
+		sec, dec := math.Modf(v)
+		return time.Unix(int64(sec), int64(dec*1e9)), nil
+	case int64:
+		// Unix seconds
+		return time.Unix(v, 0), nil
+	case int:
+		// Unix seconds
+		return time.Unix(int64(v), 0), nil
+	case string:
+		// RFC3339 format as fallback
+		return time.Parse(time.RFC3339, v)
+	default:
+		return time.Time{}, fmt.Errorf("unsupported timestamp type: %T", v)
+	}
 }
 
 // --- Comparison Helpers ---
@@ -242,9 +311,7 @@ func (e *Evaluator) compareValues(a, b interface{}, op string) bool {
 }
 
 func (e *Evaluator) compareContains(fieldValue, searchValue interface{}) bool {
-	// Check if fieldValue is an array
 	if arr, isArray := fieldValue.([]interface{}); isArray {
-		// Array membership check
 		for _, item := range arr {
 			if e.compareValues(item, searchValue, "eq") {
 				return true
@@ -253,20 +320,17 @@ func (e *Evaluator) compareContains(fieldValue, searchValue interface{}) bool {
 		return false
 	}
 
-	// String substring check
 	fieldStr := e.convertToString(fieldValue)
 	searchStr := e.convertToString(searchValue)
 	return strings.Contains(fieldStr, searchStr)
 }
 
 func (e *Evaluator) compareIn(fieldValue, allowedValues interface{}) bool {
-	// Check if allowedValues is an array
 	arr, isArray := allowedValues.([]interface{})
 	if !isArray {
 		return false
 	}
 
-	// Check if fieldValue is in the array
 	for _, item := range arr {
 		if e.compareValues(fieldValue, item, "eq") {
 			return true

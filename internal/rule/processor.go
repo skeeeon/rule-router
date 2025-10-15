@@ -1,4 +1,4 @@
-//file: internal/rule/processor.go
+// file: internal/rule/processor.go
 
 package rule
 
@@ -11,14 +11,15 @@ import (
 )
 
 type Processor struct {
-	index        *RuleIndex
-	timeProvider TimeProvider
-	kvContext    *KVContext
-	logger       *logger.Logger
-	metrics      *metrics.Metrics
-	stats        ProcessorStats
-	evaluator    *Evaluator
-	templater    *TemplateEngine
+	index            *RuleIndex
+	timeProvider     TimeProvider
+	kvContext        *KVContext
+	logger           *logger.Logger
+	metrics          *metrics.Metrics
+	stats            ProcessorStats
+	evaluator        *Evaluator
+	templater        *TemplateEngine
+	sigVerification  *SignatureVerification // NEW
 }
 
 type ProcessorStats struct {
@@ -27,15 +28,17 @@ type ProcessorStats struct {
 	Errors    uint64
 }
 
-func NewProcessor(log *logger.Logger, metrics *metrics.Metrics, kvCtx *KVContext) *Processor {
+// NewProcessor creates a new processor with optional signature verification
+func NewProcessor(log *logger.Logger, metrics *metrics.Metrics, kvCtx *KVContext, sigVerification *SignatureVerification) *Processor {
 	p := &Processor{
-		index:        NewRuleIndex(log),
-		timeProvider: NewSystemTimeProvider(),
-		kvContext:    kvCtx,
-		logger:       log,
-		metrics:      metrics,
-		evaluator:    NewEvaluator(log),
-		templater:    NewTemplateEngine(log),
+		index:           NewRuleIndex(log),
+		timeProvider:    NewSystemTimeProvider(),
+		kvContext:       kvCtx,
+		logger:          log,
+		metrics:         metrics,
+		evaluator:       NewEvaluator(log),
+		templater:       NewTemplateEngine(log),
+		sigVerification: sigVerification,
 	}
 
 	if kvCtx != nil {
@@ -43,6 +46,13 @@ func NewProcessor(log *logger.Logger, metrics *metrics.Metrics, kvCtx *KVContext
 	} else {
 		p.logger.Info("initializing processor without KV support")
 	}
+
+	if sigVerification != nil && sigVerification.Enabled {
+		p.logger.Info("initializing processor with signature verification enabled",
+			"pubKeyHeader", sigVerification.PublicKeyHeader,
+			"sigHeader", sigVerification.SignatureHeader)
+	}
+
 	return p
 }
 
@@ -72,13 +82,15 @@ func (p *Processor) ProcessWithSubject(actualSubject string, payload []byte, hea
 		return nil, nil
 	}
 
-	// 1. Create the context ONCE.
+	// Create the context ONCE with signature verification config
 	context, err := NewEvaluationContext(
 		payload,
 		headers,
 		NewSubjectContext(actualSubject),
 		p.timeProvider.GetCurrentContext(),
 		p.kvContext,
+		p.sigVerification, // NEW: Pass signature verification config
+		p.logger,          // NEW: Pass logger for signature verification
 	)
 	if err != nil {
 		atomic.AddUint64(&p.stats.Errors, 1)
@@ -93,9 +105,7 @@ func (p *Processor) ProcessWithSubject(actualSubject string, payload []byte, hea
 	for _, rule := range rules {
 		p.logger.Debug("evaluating rule", "rulePattern", rule.Subject, "actualSubject", actualSubject)
 
-		// 2. Pass context to the Evaluator.
 		if rule.Conditions == nil || p.evaluator.Evaluate(rule.Conditions, context) {
-			// 3. Pass context to the TemplateEngine via processAction.
 			action, err := p.processAction(rule.Action, context)
 			if err != nil {
 				if p.metrics != nil {
@@ -148,7 +158,7 @@ func (p *Processor) processAction(action *Action, context *EvaluationContext) (*
 		processedAction.Payload = payload
 	}
 
-	// NEW: Process headers
+	// Process headers
 	processedAction.Headers, err = p.processHeaders(action, context)
 	if err != nil {
 		return nil, fmt.Errorf("failed to process headers: %w", err)
@@ -159,22 +169,18 @@ func (p *Processor) processAction(action *Action, context *EvaluationContext) (*
 
 // processHeaders templates header values and merges with original headers in passthrough mode.
 func (p *Processor) processHeaders(action *Action, context *EvaluationContext) (map[string]string, error) {
-	// Fast path: if no headers are configured and it's not passthrough, there's nothing to do.
 	if len(action.Headers) == 0 && !action.Passthrough {
 		return nil, nil
 	}
 
 	result := make(map[string]string)
 
-	// If passthrough is enabled, copy all original headers from the message context first.
 	if action.Passthrough && context.Headers != nil {
 		for key, value := range context.Headers {
 			result[key] = value
 		}
 	}
 
-	// Process and add/overwrite with the headers configured in the rule's action.
-	// This loop runs for both passthrough (override) and non-passthrough (create) modes.
 	for key, valueTemplate := range action.Headers {
 		processedValue, err := p.templater.Execute(valueTemplate, context)
 		if err != nil {
@@ -183,7 +189,6 @@ func (p *Processor) processHeaders(action *Action, context *EvaluationContext) (
 		result[key] = processedValue
 	}
 
-	// Return nil instead of an empty map for efficiency and cleaner output.
 	if len(result) == 0 {
 		return nil, nil
 	}

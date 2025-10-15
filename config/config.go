@@ -18,6 +18,19 @@ type Config struct {
 	Logging LogConfig     `json:"logging" yaml:"logging"`
 	Metrics MetricsConfig `json:"metrics" yaml:"metrics"`
 	KV      KVConfig      `json:"kv" yaml:"kv"`
+	Security SecurityConfig `json:"security" yaml:"security"` // NEW
+}
+
+// NEW: SecurityConfig holds all security-related settings
+type SecurityConfig struct {
+	Verification VerificationConfig `json:"verification" yaml:"verification"`
+}
+
+// NEW: VerificationConfig defines headers for signature verification
+type VerificationConfig struct {
+	Enabled         bool   `json:"enabled" yaml:"enabled"`
+	PublicKeyHeader string `json:"publicKeyHeader" yaml:"publicKeyHeader"`
+	SignatureHeader string `json:"signatureHeader" yaml:"signatureHeader"`
 }
 
 type NATSConfig struct {
@@ -27,92 +40,66 @@ type NATSConfig struct {
 	Token    string   `json:"token" yaml:"token"`
 	
 	// NATS-specific authentication
-	NKey      string `json:"nkey" yaml:"nkey"`           // NKey for JWT authentication
-	CredsFile string `json:"credsFile" yaml:"credsFile"` // Path to .creds file
+	NKey      string `json:"nkey" yaml:"nkey"`
+	CredsFile string `json:"credsFile" yaml:"credsFile"`
 	
 	TLS struct {
 		Enable   bool   `json:"enable" yaml:"enable"`
 		CertFile string `json:"certFile" yaml:"certFile"`
 		KeyFile  string `json:"keyFile" yaml:"keyFile"`
 		CAFile   string `json:"caFile" yaml:"caFile"`
-		Insecure bool   `json:"insecure" yaml:"insecure"` // Skip certificate verification
+		Insecure bool   `json:"insecure" yaml:"insecure"`
 	} `json:"tls" yaml:"tls"`
 	
-	// JetStream consumer configuration
 	Consumers ConsumerConfig `json:"consumers" yaml:"consumers"`
-	
-	// NATS connection behavior
 	Connection ConnectionConfig `json:"connection" yaml:"connection"`
-	
-	// Action publish configuration
 	Publish PublishConfig `json:"publish" yaml:"publish"`
 }
 
-// ConsumerConfig defines JetStream consumer behavior and performance settings
 type ConsumerConfig struct {
-	// Performance tuning
-	SubscriberCount int           `json:"subscriberCount" yaml:"subscriberCount"` // Concurrent workers per subscription
-	FetchBatchSize  int           `json:"fetchBatchSize" yaml:"fetchBatchSize"`   // Messages to fetch per pull request
-	FetchTimeout    time.Duration `json:"fetchTimeout" yaml:"fetchTimeout"`       // Max wait time when fetching messages
-	MaxAckPending   int           `json:"maxAckPending" yaml:"maxAckPending"`     // Max unacknowledged messages
-	
-	// Reliability settings
-	AckWaitTimeout time.Duration `json:"ackWaitTimeout" yaml:"ackWaitTimeout"` // Time to wait for ack before redelivery
-	MaxDeliver     int           `json:"maxDeliver" yaml:"maxDeliver"`         // Max redelivery attempts
-	
-	// Delivery behavior
-	DeliverPolicy string `json:"deliverPolicy" yaml:"deliverPolicy"` // all, new, last, by_start_time, by_start_sequence
-	ReplayPolicy  string `json:"replayPolicy" yaml:"replayPolicy"`   // instant, original
+	SubscriberCount int           `json:"subscriberCount" yaml:"subscriberCount"`
+	FetchBatchSize  int           `json:"fetchBatchSize" yaml:"fetchBatchSize"`
+	FetchTimeout    time.Duration `json:"fetchTimeout" yaml:"fetchTimeout"`
+	MaxAckPending   int           `json:"maxAckPending" yaml:"maxAckPending"`
+	AckWaitTimeout time.Duration `json:"ackWaitTimeout" yaml:"ackWaitTimeout"`
+	MaxDeliver     int           `json:"maxDeliver" yaml:"maxDeliver"`
+	DeliverPolicy string `json:"deliverPolicy" yaml:"deliverPolicy"`
+	ReplayPolicy  string `json:"replayPolicy" yaml:"replayPolicy"`
 }
 
-// ConnectionConfig defines NATS connection behavior
 type ConnectionConfig struct {
-	MaxReconnects int           `json:"maxReconnects" yaml:"maxReconnects"` // -1 for unlimited
-	ReconnectWait time.Duration `json:"reconnectWait" yaml:"reconnectWait"` // Wait time between reconnect attempts
+	MaxReconnects int           `json:"maxReconnects" yaml:"maxReconnects"`
+	ReconnectWait time.Duration `json:"reconnectWait" yaml:"reconnectWait"`
 }
 
-// PublishConfig defines how actions are published to NATS
 type PublishConfig struct {
-	// Mode determines publish strategy: "jetstream" or "core"
-	// - jetstream: Publishes to JetStream with ack confirmation (default, reliable)
-	// - core: Publishes to core NATS (faster, fire-and-forget, no persistence guarantee)
 	Mode string `json:"mode" yaml:"mode"`
-	
-	// AckTimeout for JetStream publishes (only used in jetstream mode)
 	AckTimeout time.Duration `json:"ackTimeout" yaml:"ackTimeout"`
-	
-	// MaxRetries for publish operations (applies to both modes)
 	MaxRetries int `json:"maxRetries" yaml:"maxRetries"`
-	
-	// RetryBaseDelay for exponential backoff (applies to both modes)
 	RetryBaseDelay time.Duration `json:"retryBaseDelay" yaml:"retryBaseDelay"`
 }
 
-// KVConfig configures NATS Key-Value store access with local caching support
 type KVConfig struct {
 	Enabled bool     `json:"enabled" yaml:"enabled"`
 	Buckets []string `json:"buckets" yaml:"buckets"`
-	
-	// Local cache configuration for performance optimization
 	LocalCache struct {
-		Enabled bool `json:"enabled" yaml:"enabled"` // Enable/disable local KV caching
+		Enabled bool `json:"enabled" yaml:"enabled"`
 	} `json:"localCache" yaml:"localCache"`
 }
 
 type LogConfig struct {
-	Level      string `json:"level" yaml:"level"`           // debug, info, warn, error
-	OutputPath string `json:"outputPath" yaml:"outputPath"` // file path or "stdout"
-	Encoding   string `json:"encoding" yaml:"encoding"`     // json or console
+	Level      string `json:"level" yaml:"level"`
+	OutputPath string `json:"outputPath" yaml:"outputPath"`
+	Encoding   string `json:"encoding" yaml:"encoding"`
 }
 
 type MetricsConfig struct {
 	Enabled        bool   `json:"enabled" yaml:"enabled"`
 	Address        string `json:"address" yaml:"address"`
 	Path           string `json:"path" yaml:"path"`
-	UpdateInterval string `json:"updateInterval" yaml:"updateInterval"` // Duration string
+	UpdateInterval string `json:"updateInterval" yaml:"updateInterval"`
 }
 
-// Load reads and parses the configuration file
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -121,7 +108,6 @@ func Load(path string) (*Config, error) {
 
 	var config Config
 	
-	// Determine file type by extension
 	ext := strings.ToLower(filepath.Ext(path))
 	var parseErr error
 	
@@ -131,7 +117,6 @@ func Load(path string) (*Config, error) {
 	case ".json":
 		parseErr = json.Unmarshal(data, &config)
 	default:
-		// Try JSON first, then YAML if JSON fails
 		parseErr = json.Unmarshal(data, &config)
 		if parseErr != nil {
 			yamlErr := yaml.Unmarshal(data, &config)
@@ -146,10 +131,8 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", parseErr)
 	}
 
-	// Set defaults
 	setDefaults(&config)
 
-	// Validate the configuration
 	if err := validateConfig(&config); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
@@ -157,7 +140,6 @@ func Load(path string) (*Config, error) {
 	return &config, nil
 }
 
-// setDefaults sets default values for configuration
 func setDefaults(cfg *Config) {
 	// Logging defaults
 	if cfg.Logging.Level == "" {
@@ -186,9 +168,8 @@ func setDefaults(cfg *Config) {
 		cfg.NATS.URLs = []string{"nats://localhost:4222"}
 	}
 
-	// NATS Connection defaults
 	if cfg.NATS.Connection.MaxReconnects == 0 {
-		cfg.NATS.Connection.MaxReconnects = -1 // Unlimited
+		cfg.NATS.Connection.MaxReconnects = -1
 	}
 	if cfg.NATS.Connection.ReconnectWait == 0 {
 		cfg.NATS.Connection.ReconnectWait = 50 * time.Millisecond
@@ -199,7 +180,7 @@ func setDefaults(cfg *Config) {
 		cfg.NATS.Consumers.SubscriberCount = 2
 	}
 	if cfg.NATS.Consumers.FetchBatchSize == 0 {
-		cfg.NATS.Consumers.FetchBatchSize = 1 // Conservative default
+		cfg.NATS.Consumers.FetchBatchSize = 1
 	}
 	if cfg.NATS.Consumers.FetchTimeout == 0 {
 		cfg.NATS.Consumers.FetchTimeout = 5 * time.Second
@@ -222,7 +203,7 @@ func setDefaults(cfg *Config) {
 
 	// Publish defaults
 	if cfg.NATS.Publish.Mode == "" {
-		cfg.NATS.Publish.Mode = "jetstream" // Default to JetStream for reliability
+		cfg.NATS.Publish.Mode = "jetstream"
 	}
 	if cfg.NATS.Publish.AckTimeout == 0 {
 		cfg.NATS.Publish.AckTimeout = 5 * time.Second
@@ -234,21 +215,27 @@ func setDefaults(cfg *Config) {
 		cfg.NATS.Publish.RetryBaseDelay = 50 * time.Millisecond
 	}
 
-	// KV defaults - disabled by default, no buckets
-	// KV Local Cache defaults - enabled by default when KV is enabled
+	// KV defaults
 	if cfg.KV.Enabled {
 		cfg.KV.LocalCache.Enabled = true
 	}
+
+	// NEW: Security defaults
+	if cfg.Security.Verification.PublicKeyHeader == "" {
+		cfg.Security.Verification.PublicKeyHeader = "Nats-Public-Key"
+	}
+	if cfg.Security.Verification.SignatureHeader == "" {
+		cfg.Security.Verification.SignatureHeader = "Nats-Signature"
+	}
 }
 
-// validateConfig performs validation of all configuration values
 func validateConfig(cfg *Config) error {
-	// Validate NATS configuration
+	// NATS validation
 	if len(cfg.NATS.URLs) == 0 {
 		return fmt.Errorf("at least one NATS server URL is required")
 	}
 
-	// Validate authentication options are not conflicting
+	// Authentication validation
 	authCount := 0
 	if cfg.NATS.Username != "" {
 		authCount++
@@ -266,7 +253,7 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("only one NATS authentication method should be specified")
 	}
 
-	// Validate NATS TLS config if enabled
+	// TLS validation
 	if cfg.NATS.TLS.Enable {
 		if cfg.NATS.TLS.CertFile == "" {
 			return fmt.Errorf("NATS TLS cert file is required when TLS is enabled")
@@ -279,14 +266,13 @@ func validateConfig(cfg *Config) error {
 		}
 	}
 
-	// Validate .creds file exists if specified
 	if cfg.NATS.CredsFile != "" {
 		if _, err := os.Stat(cfg.NATS.CredsFile); os.IsNotExist(err) {
 			return fmt.Errorf("NATS creds file does not exist: %s", cfg.NATS.CredsFile)
 		}
 	}
 
-	// Validate consumer configuration
+	// Consumer validation
 	if cfg.NATS.Consumers.SubscriberCount < 1 {
 		return fmt.Errorf("subscriber count must be at least 1")
 	}
@@ -303,7 +289,6 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("max deliver must be at least 1")
 	}
 	
-	// Validate deliver policy
 	validDeliverPolicies := map[string]bool{
 		"all":                true,
 		"new":                true,
@@ -316,7 +301,6 @@ func validateConfig(cfg *Config) error {
 			cfg.NATS.Consumers.DeliverPolicy)
 	}
 	
-	// Validate replay policy
 	validReplayPolicies := map[string]bool{
 		"instant":  true,
 		"original": true,
@@ -326,7 +310,7 @@ func validateConfig(cfg *Config) error {
 			cfg.NATS.Consumers.ReplayPolicy)
 	}
 
-	// Validate publish configuration
+	// Publish validation
 	validPublishModes := map[string]bool{
 		"jetstream": true,
 		"core":      true,
@@ -344,7 +328,7 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("publish retry base delay must be positive")
 	}
 
-	// Validate logging config
+	// Logging validation
 	switch cfg.Logging.Level {
 	case "debug", "info", "warn", "error":
 	default:
@@ -357,27 +341,25 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("invalid log encoding: %s", cfg.Logging.Encoding)
 	}
 
-	// Validate metrics config
+	// Metrics validation
 	if cfg.Metrics.Enabled {
 		if _, err := time.ParseDuration(cfg.Metrics.UpdateInterval); err != nil {
 			return fmt.Errorf("invalid metrics update interval: %w", err)
 		}
 	}
 
-	// Validate KV config
+	// KV validation
 	if cfg.KV.Enabled {
 		if len(cfg.KV.Buckets) == 0 {
 			return fmt.Errorf("KV enabled but no buckets configured")
 		}
 		
-		// Validate bucket names
 		for _, bucket := range cfg.KV.Buckets {
 			if err := validateBucketName(bucket); err != nil {
 				return fmt.Errorf("invalid KV bucket name '%s': %w", bucket, err)
 			}
 		}
 		
-		// Check for duplicate bucket names
 		bucketMap := make(map[string]bool)
 		for _, bucket := range cfg.KV.Buckets {
 			if bucketMap[bucket] {
@@ -387,18 +369,19 @@ func validateConfig(cfg *Config) error {
 		}
 	}
 
+	// NEW: Security validation
+	if cfg.Security.Verification.Enabled {
+		if cfg.Security.Verification.PublicKeyHeader == "" {
+			return fmt.Errorf("security.verification.publicKeyHeader cannot be empty when verification is enabled")
+		}
+		if cfg.Security.Verification.SignatureHeader == "" {
+			return fmt.Errorf("security.verification.signatureHeader cannot be empty when verification is enabled")
+		}
+	}
+
 	return nil
 }
 
-// isLocalCacheExplicitlyConfigured checks if the user explicitly set localCache.enabled
-func isLocalCacheExplicitlyConfigured(cfg *Config) bool {
-	if !cfg.KV.Enabled {
-		return true
-	}
-	return false
-}
-
-// validateBucketName validates NATS KV bucket naming rules
 func validateBucketName(name string) error {
 	if name == "" {
 		return fmt.Errorf("bucket name cannot be empty")
@@ -408,7 +391,6 @@ func validateBucketName(name string) error {
 		return fmt.Errorf("bucket name too long (max 64 characters)")
 	}
 	
-	// NATS bucket names: letters, numbers, dash, underscore
 	for _, char := range name {
 		if !((char >= 'a' && char <= 'z') || 
 			 (char >= 'A' && char <= 'Z') || 
@@ -421,7 +403,6 @@ func validateBucketName(name string) error {
 	return nil
 }
 
-// ApplyOverrides applies command line flag overrides to the configuration
 func (c *Config) ApplyOverrides(metricsAddr, metricsPath string, metricsInterval time.Duration) {
 	if metricsAddr != "" {
 		c.Metrics.Address = metricsAddr

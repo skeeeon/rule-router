@@ -125,6 +125,18 @@ kv:
     # 
     # Set to false to disable caching (useful for troubleshooting or memory constraints)
 
+# Security Configuration
+security:
+  verification:
+    # Enable cryptographic signature verification
+    enabled: true
+    
+    # Header containing signer's NKey public key
+    publicKeyHeader: "Nats-Public-Key"
+    
+    # Header containing Base64-encoded Ed25519 signature
+    signatureHeader: "Nats-Signature"
+
 # Logging Configuration
 logging:
   level: info                 # Options: debug, info, warn, error

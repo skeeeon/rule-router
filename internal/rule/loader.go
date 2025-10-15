@@ -335,6 +335,9 @@ func (l *RulesLoader) isValidOperator(op string) bool {
 		// Array membership operators
 		"in":     true,
 		"not_in": true,
+
+		// Time-based replay protection
+		"recent": true,
 	}
 	return validOperators[op]
 }

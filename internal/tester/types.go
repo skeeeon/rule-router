@@ -9,16 +9,23 @@ import (
 
 // TestConfig holds optional test-specific configurations.
 type TestConfig struct {
-	Subject  string            `json:"subject"`
-	MockTime string            `json:"mockTime,omitempty"`
-	Headers  map[string]string `json:"headers"`
+	Subject       string                 `json:"subject"`
+	MockTime      string                 `json:"mockTime,omitempty"`
+	Headers       map[string]string      `json:"headers"`
+	MockSignature *MockSignatureConfig   `json:"mockSignature,omitempty"` // NEW
+}
+
+// NEW: MockSignatureConfig allows mocking signature verification in tests
+type MockSignatureConfig struct {
+	Valid     bool   `json:"valid"`
+	PublicKey string `json:"publicKey"`
 }
 
 // ExpectedOutput defines the structure for output validation files.
 type ExpectedOutput struct {
 	Subject string            `json:"subject"`
 	Payload json.RawMessage   `json:"payload"`
-	Headers map[string]string `json:"headers,omitempty"` // NEW: For header validation
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // TestResult represents the outcome of a single test.
@@ -53,6 +60,6 @@ type TestJob struct {
 	Processor *rule.Processor
 	TestFile  string
 	Subject   string
-	Headers   map[string]string // Pass headers to worker
+	Headers   map[string]string
 	Verbose   bool
 }
