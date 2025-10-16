@@ -45,6 +45,12 @@ type HTTPClientConfig struct {
 	MaxIdleConns        int           `json:"maxIdleConns" yaml:"maxIdleConns"`
 	MaxIdleConnsPerHost int           `json:"maxIdleConnsPerHost" yaml:"maxIdleConnsPerHost"`
 	IdleConnTimeout     time.Duration `json:"idleConnTimeout" yaml:"idleConnTimeout"`
+	TLS                 HTTPClientTLS `json:"tls,omitempty" yaml:"tls,omitempty"` // NEW: Add TLS config
+}
+
+// NEW: HTTPClientTLS configures TLS settings for the outbound HTTP client
+type HTTPClientTLS struct {
+	InsecureSkipVerify bool `json:"insecureSkipVerify" yaml:"insecureSkipVerify"`
 }
 
 // NATSConfig contains NATS connection and JetStream configuration
@@ -53,11 +59,11 @@ type NATSConfig struct {
 	Username string   `json:"username" yaml:"username"`
 	Password string   `json:"password" yaml:"password"`
 	Token    string   `json:"token" yaml:"token"`
-	
+
 	// NATS-specific authentication
 	NKey      string `json:"nkey" yaml:"nkey"`
 	CredsFile string `json:"credsFile" yaml:"credsFile"`
-	
+
 	TLS struct {
 		Enable   bool   `json:"enable" yaml:"enable"`
 		CertFile string `json:"certFile" yaml:"certFile"`
@@ -65,7 +71,7 @@ type NATSConfig struct {
 		CAFile   string `json:"caFile" yaml:"caFile"`
 		Insecure bool   `json:"insecure" yaml:"insecure"`
 	} `json:"tls" yaml:"tls"`
-	
+
 	Consumers  ConsumerConfig   `json:"consumers" yaml:"consumers"`
 	Connection ConnectionConfig `json:"connection" yaml:"connection"`
 	Publish    PublishConfig    `json:"publish" yaml:"publish"`
@@ -128,9 +134,9 @@ type SecurityConfig struct {
 
 // VerificationConfig contains signature verification settings
 type VerificationConfig struct {
-	Enabled           bool   `json:"enabled" yaml:"enabled"`
-	PublicKeyHeader   string `json:"publicKeyHeader" yaml:"publicKeyHeader"`
-	SignatureHeader   string `json:"signatureHeader" yaml:"signatureHeader"`
+	Enabled         bool   `json:"enabled" yaml:"enabled"`
+	PublicKeyHeader string `json:"publicKeyHeader" yaml:"publicKeyHeader"`
+	SignatureHeader string `json:"signatureHeader" yaml:"signatureHeader"`
 }
 
 // Load reads and parses configuration from a file (JSON or YAML)
@@ -277,6 +283,9 @@ func setDefaults(cfg *Config) {
 	if cfg.HTTP.Client.IdleConnTimeout == 0 {
 		cfg.HTTP.Client.IdleConnTimeout = 90 * time.Second
 	}
+	// NEW: Default for TLS client config
+	// Default is secure: InsecureSkipVerify is false
+	// No need to set it explicitly as the zero value for a bool is false.
 
 	// Logging defaults
 	if cfg.Logging.Level == "" {
@@ -376,11 +385,11 @@ func validateConfig(cfg *Config) error {
 	}
 
 	validDeliverPolicies := map[string]bool{
-		"all":                true,
-		"new":                true,
-		"last":               true,
-		"by_start_time":      true,
-		"by_start_sequence":  true,
+		"all":               true,
+		"new":               true,
+		"last":              true,
+		"by_start_time":     true,
+		"by_start_sequence": true,
 	}
 	if !validDeliverPolicies[cfg.NATS.Consumers.DeliverPolicy] {
 		return fmt.Errorf("invalid deliver policy: %s (valid options: all, new, last, by_start_time, by_start_sequence)",

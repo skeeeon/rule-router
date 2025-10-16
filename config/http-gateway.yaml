@@ -1,3 +1,5 @@
+# file: config/http-gateway.yaml
+
 # Sample HTTP Gateway Configuration
 # This config extends the base config with HTTP-specific settings
 
@@ -8,51 +10,55 @@ http:
     readTimeout: 30s
     writeTimeout: 30s
     idleTimeout: 120s
-    maxHeaderBytes: 1048576  # 1MB
+    maxHeaderBytes: 1048576 # 1MB
     shutdownGracePeriod: 30s
-  
+
   client:
     timeout: 30s
     maxIdleConns: 100
     maxIdleConnsPerHost: 10
     idleConnTimeout: 90s
 
+    tls:
+      # Set to true to disable certificate verification for outbound webhooks.
+      # USE WITH CAUTION: Only for development or trusted internal networks.
+      insecureSkipVerify: false
+
 # NATS Configuration
 nats:
   urls:
     - nats://localhost:4222
-  
-  # Authentication (choose one method)
-  auth:
-    # username: "myuser"
-    # password: "mypassword"
-    # token: "mytoken"
-    # nkeyPath: "/path/to/nkey.seed"
-    # credsPath: "/path/to/user.creds"
-  
+
+  # Authentication (choose one method) - CORRECTED
+  # username: "myuser"
+  # password: "mypassword"
+  # token: "mytoken"
+  # nkey: "seed..."
+  # credsFile: "/path/to/user.creds"
+
   # JetStream Consumer Configuration
   consumers:
-    subscriberCount: 4        # Number of parallel workers per subscription
-    fetchBatchSize: 10        # Messages fetched per batch
-    fetchTimeout: 5s          # Fetch timeout
-    maxAckPending: 1000       # Max unacknowledged messages
-    ackWaitTimeout: 30s       # Time to wait for ACK before redelivery
-    maxDeliver: 3             # Max delivery attempts before message goes to dead letter
-    deliverPolicy: "all"      # all | new | last | by_start_time | by_start_sequence
-    replayPolicy: "instant"   # instant | original
-  
+    subscriberCount: 4      # Number of parallel workers per subscription
+    fetchBatchSize: 10      # Messages fetched per batch
+    fetchTimeout: 5s        # Fetch timeout
+    maxAckPending: 1000     # Max unacknowledged messages
+    ackWaitTimeout: 30s     # Time to wait for ACK before redelivery
+    maxDeliver: 3           # Max delivery attempts before message goes to dead letter
+    deliverPolicy: "all"    # all | new | last | by_start_time | by_start_sequence
+    replayPolicy: "instant" # instant | original
+
   # Publish Configuration
   publish:
-    mode: jetstream           # jetstream | core
-    ackTimeout: 5s            # JetStream publish ACK timeout
-    maxRetries: 3             # Retry attempts for failed publishes
-    retryBaseDelay: 50ms      # Base delay for exponential backoff
+    mode: jetstream         # jetstream | core
+    ackTimeout: 5s          # JetStream publish ACK timeout
+    maxRetries: 3           # Retry attempts for failed publishes
+    retryBaseDelay: 50ms    # Base delay for exponential backoff
 
 # Logging Configuration
 logging:
-  level: info                 # debug | info | warn | error
-  encoding: json              # json | console
-  outputPath: stdout          # stdout | stderr | /path/to/file.log
+  level: info               # debug | info | warn | error
+  encoding: json            # json | console
+  outputPath: stdout        # stdout | stderr | /path/to/file.log
 
 # Metrics Configuration
 metrics:
@@ -69,7 +75,7 @@ kv:
   #   - "device_status"
   #   - "customer_data"
   localCache:
-    enabled: false            # Enable for ~25x faster lookups
+    enabled: false # Enable for ~25x faster lookups
 
 # Security Configuration
 security:

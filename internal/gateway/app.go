@@ -430,7 +430,7 @@ func (app *App) setupOutboundClient() error {
 			AckWaitTimeout:  app.config.NATS.Consumers.AckWaitTimeout,
 			MaxDeliver:      app.config.NATS.Consumers.MaxDeliver,
 		},
-		app.config.HTTP.Client.Timeout,
+		&app.config.HTTP.Client, // CHANGED: Pass the full client config struct
 	)
 
 	// Find all rules with NATS trigger + HTTP action
