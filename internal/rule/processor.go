@@ -12,7 +12,8 @@ import (
 
 type Processor struct {
 	index           *RuleIndex
-	allRules        []*Rule // Store all rules for http-gateway
+	allRules        []*Rule                // Store all rules for http-gateway
+	httpPathIndex   map[string][]*Rule     // NEW: O(1) lookup by HTTP path
 	timeProvider    TimeProvider
 	kvContext       *KVContext
 	logger          *logger.Logger
@@ -34,6 +35,7 @@ func NewProcessor(log *logger.Logger, metrics *metrics.Metrics, kvCtx *KVContext
 	p := &Processor{
 		index:           NewRuleIndex(log),
 		allRules:        make([]*Rule, 0),
+		httpPathIndex:   make(map[string][]*Rule), // NEW: Initialize HTTP path index
 		timeProvider:    NewSystemTimeProvider(),
 		kvContext:       kvCtx,
 		logger:          log,
@@ -58,12 +60,14 @@ func NewProcessor(log *logger.Logger, metrics *metrics.Metrics, kvCtx *KVContext
 	return p
 }
 
-// LoadRules loads rules and separates them by trigger type
+// LoadRules loads rules and indexes them by trigger type
 func (p *Processor) LoadRules(rules []Rule) error {
 	p.logger.Info("loading rules into processor", "ruleCount", len(rules))
 	
+	// Clear existing indexes
 	p.index.Clear()
 	p.allRules = make([]*Rule, 0, len(rules))
+	p.httpPathIndex = make(map[string][]*Rule) // NEW: Clear HTTP index
 	
 	natsCount := 0
 	httpCount := 0
@@ -80,9 +84,15 @@ func (p *Processor) LoadRules(rules []Rule) error {
 			natsCount++
 		}
 		
-		// HTTP-triggered rules are stored in allRules and accessed via linear scan
+		// NEW: Index HTTP-triggered rules by path for O(1) lookup
 		if rule.Trigger.HTTP != nil {
+			path := rule.Trigger.HTTP.Path
+			p.httpPathIndex[path] = append(p.httpPathIndex[path], rule)
 			httpCount++
+			
+			p.logger.Debug("indexed HTTP rule",
+				"path", path,
+				"method", rule.Trigger.HTTP.Method)
 		}
 	}
 	
@@ -93,7 +103,8 @@ func (p *Processor) LoadRules(rules []Rule) error {
 	p.logger.Info("rules loaded",
 		"total", len(rules),
 		"natsRules", natsCount,
-		"httpRules", httpCount)
+		"httpRules", httpCount,
+		"httpPaths", len(p.httpPathIndex)) // NEW: Log unique path count
 	
 	return nil
 }
@@ -105,15 +116,8 @@ func (p *Processor) GetSubjects() []string {
 
 // GetHTTPPaths returns all unique HTTP paths for route setup
 func (p *Processor) GetHTTPPaths() []string {
-	pathSet := make(map[string]bool)
-	for _, rule := range p.allRules {
-		if rule.Trigger.HTTP != nil {
-			pathSet[rule.Trigger.HTTP.Path] = true
-		}
-	}
-	
-	paths := make([]string, 0, len(pathSet))
-	for path := range pathSet {
+	paths := make([]string, 0, len(p.httpPathIndex))
+	for path := range p.httpPathIndex {
 		paths = append(paths, path)
 	}
 	return paths
@@ -161,7 +165,7 @@ func (p *Processor) ProcessNATS(subject string, payload []byte, headers map[stri
 func (p *Processor) ProcessHTTP(path, method string, payload []byte, headers map[string]string) ([]*Action, error) {
 	p.logger.Debug("processing HTTP request", "path", path, "method", method, "payloadSize", len(payload))
 
-	// Find matching HTTP rules
+	// NEW: O(1) lookup by path using index
 	rules := p.findHTTPRules(path, method)
 	if len(rules) == 0 {
 		return nil, nil
@@ -191,26 +195,40 @@ func (p *Processor) ProcessHTTP(path, method string, payload []byte, headers map
 }
 
 // findHTTPRules finds all HTTP rules matching the path and method
-// V1: Linear scan (O(n)). V2: Consider trie-based index for 100+ rules
+// NEW: O(1) lookup using httpPathIndex map
 func (p *Processor) findHTTPRules(path, method string) []*Rule {
-	var matching []*Rule
+	// O(1) lookup by path
+	rulesForPath, exists := p.httpPathIndex[path]
+	if !exists || len(rulesForPath) == 0 {
+		p.logger.Debug("no HTTP rules for path", "path", path)
+		return nil
+	}
 	
-	for _, rule := range p.allRules {
-		if rule.Trigger.HTTP != nil && rule.Trigger.HTTP.Path == path {
-			// Check method if specified in rule
-			if rule.Trigger.HTTP.Method == "" || rule.Trigger.HTTP.Method == method {
-				matching = append(matching, rule)
-				p.logger.Debug("HTTP rule matched",
-					"path", path,
-					"method", method,
-					"ruleMethod", rule.Trigger.HTTP.Method)
-			}
+	// If no method filtering needed, return all rules for this path
+	if method == "" {
+		p.logger.Debug("HTTP rule lookup complete (all methods)",
+			"path", path,
+			"matchedRules", len(rulesForPath))
+		return rulesForPath
+	}
+	
+	// Filter by method if specified in rule
+	// Note: Rules with empty method match ALL methods
+	var matching []*Rule
+	for _, rule := range rulesForPath {
+		if rule.Trigger.HTTP.Method == "" || rule.Trigger.HTTP.Method == method {
+			matching = append(matching, rule)
+			p.logger.Debug("HTTP rule matched",
+				"path", path,
+				"method", method,
+				"ruleMethod", rule.Trigger.HTTP.Method)
 		}
 	}
 	
-	p.logger.Debug("HTTP rule matching complete",
+	p.logger.Debug("HTTP rule lookup complete",
 		"path", path,
 		"method", method,
+		"totalRulesForPath", len(rulesForPath),
 		"matchedRules", len(matching))
 	
 	return matching
