@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -109,7 +110,8 @@ func (app *App) Run(ctx context.Context) error {
 
 	// Update metrics
 	if app.metrics != nil {
-		app.metrics.SetRulesActive(float64(len(app.processor.GetAllRules())))
+		allRules := app.processor.GetAllRules()
+		app.metrics.SetRulesActive(float64(len(allRules)))
 	}
 
 	// Wait for shutdown signal
@@ -246,27 +248,24 @@ func (app *App) setupMetricsServer(reg *prometheus.Registry) error {
 
 // setupNATSBroker initializes the NATS broker with JetStream
 func (app *App) setupNATSBroker() error {
+	app.logger.Info("connecting to NATS JetStream server", "urls", app.config.NATS.URLs)
+
+	// Create NATS broker (automatically initializes connection and KV)
 	var err error
 	app.broker, err = broker.NewNATSBroker(app.config, app.logger, app.metrics)
 	if err != nil {
 		return fmt.Errorf("failed to create NATS broker: %w", err)
 	}
 
-	if err := app.broker.Connect(); err != nil {
-		return fmt.Errorf("failed to connect to NATS: %w", err)
-	}
+	// Initialize local KV cache if enabled
+	if app.config.KV.Enabled && app.config.KV.LocalCache.Enabled {
+		app.logger.Info("initializing local KV cache",
+			"buckets", app.config.KV.Buckets)
 
-	// Load KV buckets if enabled
-	if app.config.KV.Enabled && len(app.config.KV.Buckets) > 0 {
-		if err := app.broker.LoadKVStores(app.config.KV.Buckets); err != nil {
-			return fmt.Errorf("failed to load KV stores: %w", err)
-		}
-
-		if app.config.KV.LocalCache.Enabled {
-			if err := app.broker.InitializeLocalKVCache(); err != nil {
-				return fmt.Errorf("failed to initialize local KV cache: %w", err)
-			}
-
+		if err := app.broker.InitializeKVCache(); err != nil {
+			app.logger.Error("failed to initialize local KV cache", "error", err)
+			app.logger.Info("continuing with direct NATS KV access (degraded performance)")
+		} else {
 			localCache := app.broker.GetLocalKVCache()
 			if localCache != nil && localCache.IsEnabled() {
 				stats := localCache.GetStats()
@@ -330,14 +329,18 @@ func (app *App) setupRules() error {
 			"signatureHeader", app.config.Security.Verification.SignatureHeader)
 	}
 
-	// Create processor
+	// Create processor with correct signature
 	app.processor = rule.NewProcessor(
-		rules,
-		kvContext,
-		sigVerification,
 		app.logger,
 		app.metrics,
+		kvContext,
+		sigVerification,
 	)
+
+	// Load rules into processor
+	if err := app.processor.LoadRules(rules); err != nil {
+		return fmt.Errorf("failed to load rules into processor: %w", err)
+	}
 
 	natsRuleCount := len(app.processor.GetSubjects())
 	httpRuleCount := len(app.processor.GetHTTPPaths())
@@ -362,7 +365,7 @@ func (app *App) setupInboundServer() error {
 			app.metrics,
 			app.processor,
 			app.broker.GetJetStream(),
-			app.broker.GetConnection(),
+			app.broker.GetNATSConn(),
 			&ServerConfig{
 				Address:             app.config.HTTP.Server.Address,
 				ReadTimeout:         app.config.HTTP.Server.ReadTimeout,
@@ -387,7 +390,7 @@ func (app *App) setupInboundServer() error {
 		app.metrics,
 		app.processor,
 		app.broker.GetJetStream(),
-		app.broker.GetConnection(),
+		app.broker.GetNATSConn(),
 		&ServerConfig{
 			Address:             app.config.HTTP.Server.Address,
 			ReadTimeout:         app.config.HTTP.Server.ReadTimeout,
@@ -431,10 +434,10 @@ func (app *App) setupOutboundClient() error {
 	)
 
 	// Find all rules with NATS trigger + HTTP action
-	rules := app.processor.GetAllRules()
+	allRules := app.processor.GetAllRules()
 	outboundRules := make(map[string]bool) // Track unique subjects
 
-	for _, r := range rules {
+	for _, r := range allRules {
 		if r.Trigger.NATS != nil && r.Action.HTTP != nil {
 			subject := r.Trigger.NATS.Subject
 			if outboundRules[subject] {
@@ -443,15 +446,16 @@ func (app *App) setupOutboundClient() error {
 			outboundRules[subject] = true
 
 			// Use StreamResolver to find the stream (just like rule-router)
-			streamName, err := app.broker.GetStreamResolver().FindStreamForSubject(subject)
+			streamResolver := app.broker.GetStreamResolver()
+			streamName, err := streamResolver.FindStreamForSubject(subject)
 			if err != nil {
 				return fmt.Errorf("failed to find stream for subject '%s': %w", subject, err)
 			}
 
 			// Generate consumer name with identical pattern to rule-router
-			consumerName := fmt.Sprintf("http-gateway-%s", sanitizeSubject(subject))
+			consumerName := app.broker.GetConsumerName(subject)
 
-			// Create consumer (reuse broker's method for consistency)
+			// Create consumer using broker's pattern
 			if err := app.createConsumerForOutbound(streamName, consumerName, subject); err != nil {
 				return fmt.Errorf("failed to create consumer for subject '%s': %w", subject, err)
 			}
@@ -474,7 +478,7 @@ func (app *App) setupOutboundClient() error {
 	return nil
 }
 
-// createConsumerForOutbound creates a JetStream consumer for outbound HTTP (mirrors broker pattern)
+// createConsumerForOutbound creates a JetStream consumer for outbound HTTP
 func (app *App) createConsumerForOutbound(streamName, consumerName, subject string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -491,8 +495,20 @@ func (app *App) createConsumerForOutbound(streamName, consumerName, subject stri
 		return nil
 	}
 
-	// Create consumer with same config as rule-router
-	_, err = stream.CreateOrUpdateConsumer(ctx, app.broker.GetConsumerConfig(consumerName, subject))
+	// Create consumer config matching broker's pattern
+	consumerConfig := jetstream.ConsumerConfig{
+		Durable:       consumerName,
+		FilterSubject: subject,
+		AckPolicy:     jetstream.AckExplicitPolicy,
+		AckWait:       app.config.NATS.Consumers.AckWaitTimeout,
+		MaxDeliver:    app.config.NATS.Consumers.MaxDeliver,
+		MaxAckPending: app.config.NATS.Consumers.MaxAckPending,
+		DeliverPolicy: jetstream.DeliverAllPolicy, // Match default from config
+		ReplayPolicy:  jetstream.ReplayInstantPolicy,
+	}
+
+	// Create or update consumer
+	_, err = stream.CreateOrUpdateConsumer(ctx, consumerConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create consumer: %w", err)
 	}

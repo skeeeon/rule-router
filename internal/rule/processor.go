@@ -12,7 +12,7 @@ import (
 
 type Processor struct {
 	index           *RuleIndex
-	httpRules       []*Rule // Linear scan for HTTP rules
+	allRules        []*Rule // Store all rules for http-gateway
 	timeProvider    TimeProvider
 	kvContext       *KVContext
 	logger          *logger.Logger
@@ -33,7 +33,7 @@ type ProcessorStats struct {
 func NewProcessor(log *logger.Logger, metrics *metrics.Metrics, kvCtx *KVContext, sigVerification *SignatureVerification) *Processor {
 	p := &Processor{
 		index:           NewRuleIndex(log),
-		httpRules:       make([]*Rule, 0),
+		allRules:        make([]*Rule, 0),
 		timeProvider:    NewSystemTimeProvider(),
 		kvContext:       kvCtx,
 		logger:          log,
@@ -63,7 +63,7 @@ func (p *Processor) LoadRules(rules []Rule) error {
 	p.logger.Info("loading rules into processor", "ruleCount", len(rules))
 	
 	p.index.Clear()
-	p.httpRules = make([]*Rule, 0)
+	p.allRules = make([]*Rule, 0, len(rules))
 	
 	natsCount := 0
 	httpCount := 0
@@ -71,15 +71,17 @@ func (p *Processor) LoadRules(rules []Rule) error {
 	for i := range rules {
 		rule := &rules[i]
 		
-		// Index NATS-triggered rules
+		// Store ALL rules for GetAllRules()
+		p.allRules = append(p.allRules, rule)
+		
+		// Index NATS-triggered rules for fast lookup
 		if rule.Trigger.NATS != nil {
 			p.index.Add(rule)
 			natsCount++
 		}
 		
-		// Store HTTP-triggered rules separately
+		// HTTP-triggered rules are stored in allRules and accessed via linear scan
 		if rule.Trigger.HTTP != nil {
-			p.httpRules = append(p.httpRules, rule)
 			httpCount++
 		}
 	}
@@ -104,7 +106,7 @@ func (p *Processor) GetSubjects() []string {
 // GetHTTPPaths returns all unique HTTP paths for route setup
 func (p *Processor) GetHTTPPaths() []string {
 	pathSet := make(map[string]bool)
-	for _, rule := range p.httpRules {
+	for _, rule := range p.allRules {
 		if rule.Trigger.HTTP != nil {
 			pathSet[rule.Trigger.HTTP.Path] = true
 		}
@@ -115,6 +117,12 @@ func (p *Processor) GetHTTPPaths() []string {
 		paths = append(paths, path)
 	}
 	return paths
+}
+
+// GetAllRules returns all loaded rules (both NATS and HTTP)
+// Used by http-gateway to enumerate rules for subscription setup
+func (p *Processor) GetAllRules() []*Rule {
+	return p.allRules
 }
 
 // ProcessNATS processes a NATS message through the rule engine
@@ -187,8 +195,8 @@ func (p *Processor) ProcessHTTP(path, method string, payload []byte, headers map
 func (p *Processor) findHTTPRules(path, method string) []*Rule {
 	var matching []*Rule
 	
-	for _, rule := range p.httpRules {
-		if rule.Trigger.HTTP.Path == path {
+	for _, rule := range p.allRules {
+		if rule.Trigger.HTTP != nil && rule.Trigger.HTTP.Path == path {
 			// Check method if specified in rule
 			if rule.Trigger.HTTP.Method == "" || rule.Trigger.HTTP.Method == method {
 				matching = append(matching, rule)

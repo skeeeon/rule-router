@@ -175,6 +175,22 @@ func Load(path string) (*Config, error) {
 	return &config, nil
 }
 
+// LoadHTTPConfig loads configuration and validates that HTTP fields are present
+// This is a convenience function for http-gateway to ensure HTTP config exists
+func LoadHTTPConfig(path string) (*Config, error) {
+	cfg, err := Load(path)
+	if err != nil {
+		return nil, err
+	}
+
+	// Validate that HTTP configuration is present and valid
+	if cfg.HTTP.Server.Address == "" {
+		return nil, fmt.Errorf("HTTP server address is required for http-gateway")
+	}
+
+	return cfg, nil
+}
+
 // setDefaults applies default values to the configuration
 func setDefaults(cfg *Config) {
 	// NATS defaults
