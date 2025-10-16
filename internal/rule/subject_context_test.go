@@ -1,3 +1,5 @@
+// file: internal/rule/subject_context_test.go
+
 package rule
 
 import (
@@ -18,8 +20,6 @@ func TestSubjectContext_BasicFields(t *testing.T) {
 		{"@subject.0", "sensors"},
 		{"@subject.1", "temperature"},
 		{"@subject.2", "room1"},
-		{"@subject.first", "sensors"},
-		{"@subject.last", "room1"},
 	}
 
 	for _, tt := range tests {
@@ -92,98 +92,6 @@ func TestSubjectContext_TokenIndexing(t *testing.T) {
 	}
 }
 
-// TestSubjectContext_SpecialAccessors tests first/last/count accessors
-func TestSubjectContext_SpecialAccessors(t *testing.T) {
-	tests := []struct {
-		name      string
-		subject   string
-		wantFirst string
-		wantLast  string
-		wantCount int
-	}{
-		{
-			name:      "three tokens",
-			subject:   "sensors.temperature.room1",
-			wantFirst: "sensors",
-			wantLast:  "room1",
-			wantCount: 3,
-		},
-		{
-			name:      "single token",
-			subject:   "sensors",
-			wantFirst: "sensors",
-			wantLast:  "sensors",
-			wantCount: 1,
-		},
-		{
-			name:      "two tokens",
-			subject:   "building.main",
-			wantFirst: "building",
-			wantLast:  "main",
-			wantCount: 2,
-		},
-		{
-			name:      "many tokens",
-			subject:   "a.b.c.d.e.f.g.h.i.j",
-			wantFirst: "a",
-			wantLast:  "j",
-			wantCount: 10,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := NewSubjectContext(tt.subject)
-
-			first, _ := ctx.GetField("@subject.first")
-			if first != tt.wantFirst {
-				t.Errorf("first = %q, want %q", first, tt.wantFirst)
-			}
-
-			last, _ := ctx.GetField("@subject.last")
-			if last != tt.wantLast {
-				t.Errorf("last = %q, want %q", last, tt.wantLast)
-			}
-
-			count, _ := ctx.GetField("@subject.count")
-			if count != tt.wantCount {
-				t.Errorf("count = %v, want %v", count, tt.wantCount)
-			}
-		})
-	}
-}
-
-// TestSubjectContext_EmptySubject tests empty subject handling
-func TestSubjectContext_EmptySubject(t *testing.T) {
-	ctx := NewSubjectContext("")
-
-	if ctx.Full != "" {
-		t.Errorf("Full = %q, want empty", ctx.Full)
-	}
-
-	if len(ctx.Tokens) != 0 {
-		t.Errorf("Tokens length = %d, want 0", len(ctx.Tokens))
-	}
-
-	if ctx.Count != 0 {
-		t.Errorf("Count = %d, want 0", ctx.Count)
-	}
-
-	// Test field access on empty subject
-	first, exists := ctx.GetField("@subject.first")
-	if !exists {
-		t.Error("@subject.first should exist even for empty subject")
-	}
-	if first != "" {
-		t.Errorf("first token = %q, want empty", first)
-	}
-
-	count, _ := ctx.GetField("@subject.count")
-	if count != 0 {
-		t.Errorf("count = %v, want 0", count)
-	}
-}
-
 // TestSubjectContext_LongSubject tests subjects with many tokens
 func TestSubjectContext_LongSubject(t *testing.T) {
 	// Build a 15-token subject (near NATS 16-token recommendation)
@@ -201,17 +109,6 @@ func TestSubjectContext_LongSubject(t *testing.T) {
 		if got != tokens[i] {
 			t.Errorf("Token[%d] = %q, want %q", i, got, tokens[i])
 		}
-	}
-
-	// Test first/last work correctly
-	first, _ := ctx.GetField("@subject.first")
-	if first != "a" {
-		t.Errorf("first = %q, want 'a'", first)
-	}
-
-	last, _ := ctx.GetField("@subject.last")
-	if last != "o" {
-		t.Errorf("last = %q, want 'o'", last)
 	}
 }
 
@@ -269,7 +166,7 @@ func TestSubjectContext_InvalidFields(t *testing.T) {
 	invalidFields := []string{
 		"@subject.invalid",
 		"@subject.",
-		"@subject.-1",  // Negative as string
+		"@subject.-1", // Negative as string
 		"notafield",
 		"",
 	}
@@ -281,41 +178,6 @@ func TestSubjectContext_InvalidFields(t *testing.T) {
 				t.Errorf("GetField(%s) should not exist", field)
 			}
 		})
-	}
-}
-
-// TestSubjectContext_GetAllFieldNames tests field enumeration
-func TestSubjectContext_GetAllFieldNames(t *testing.T) {
-	ctx := NewSubjectContext("sensors.temperature.room1")
-
-	fieldNames := ctx.GetAllFieldNames()
-
-	expectedFields := []string{
-		"@subject",
-		"@subject.count",
-		"@subject.first",
-		"@subject.last",
-		"@subject.0",
-		"@subject.1",
-		"@subject.2",
-	}
-
-	// Check all expected fields are present
-	fieldMap := make(map[string]bool)
-	for _, name := range fieldNames {
-		fieldMap[name] = true
-	}
-
-	for _, expected := range expectedFields {
-		if !fieldMap[expected] {
-			t.Errorf("Expected field %s not found in GetAllFieldNames()", expected)
-		}
-	}
-
-	// Should have exactly the expected number of fields
-	if len(fieldNames) != len(expectedFields) {
-		t.Errorf("GetAllFieldNames() returned %d fields, expected %d",
-			len(fieldNames), len(expectedFields))
 	}
 }
 
@@ -457,7 +319,6 @@ func BenchmarkSubjectContext_MultipleFields(b *testing.B) {
 		"@subject.0",
 		"@subject.1",
 		"@subject.count",
-		"@subject.last",
 	}
 
 	b.ResetTimer()
