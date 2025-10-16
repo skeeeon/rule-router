@@ -133,18 +133,18 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 	if err != nil || len(rules) == 0 {
 		return fmt.Errorf("could not load or parse rule file %s: %w", rulePath, err)
 	}
-	rule := rules[0]
-
+	r := rules[0] // Changed from 'rule' to 'r' to avoid shadowing package name
+	
 	// Setup test config based on the actual rule trigger
 	testConfig := &TestConfig{Headers: make(map[string]string)}
-	if rule.Trigger.NATS != nil {
-		testConfig.MockTrigger.NATS = rule.Trigger.NATS
+	if r.Trigger.NATS != nil {
+		testConfig.MockTrigger.NATS = r.Trigger.NATS
 		if subjectOverride != "" {
 			testConfig.MockTrigger.NATS.Subject = subjectOverride
 		}
 		fmt.Printf("▶ Running Quick Check (NATS) on subject: %s\n\n", testConfig.MockTrigger.NATS.Subject)
-	} else if rule.Trigger.HTTP != nil {
-		testConfig.MockTrigger.HTTP = rule.Trigger.HTTP
+	} else if r.Trigger.HTTP != nil {
+		testConfig.MockTrigger.HTTP = r.Trigger.HTTP
 		fmt.Printf("▶ Running Quick Check (HTTP) on path: %s, method: %s\n\n", testConfig.MockTrigger.HTTP.Path, testConfig.MockTrigger.HTTP.Method)
 	} else {
 		return fmt.Errorf("rule has no valid trigger")
