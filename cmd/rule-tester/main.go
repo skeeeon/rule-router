@@ -27,7 +27,7 @@ func run() error {
 	test := flag.Bool("test", false, "Run in Batch Test mode. Requires --rules.")
 	rulePath := flag.String("rule", "", "Path to a single rule file for Quick Check mode.")
 	messagePath := flag.String("message", "", "Path to a single message file for Quick Check mode.")
-	subjectOverride := flag.String("subject", "", "Manually specify a subject for Quick Check mode.")
+	subjectOverride := flag.String("subject", "", "Manually specify a NATS subject for Quick Check mode (for NATS triggers).")
 	rulesDir := flag.String("rules", "", "Path to the root directory for rules.")
 
 	// Additional flags
@@ -52,10 +52,9 @@ func run() error {
 		if *outputFormat == "pretty" {
 			fmt.Printf("▶ RUNNING TESTS in %s\n\n", *rulesDir)
 		}
-		
+
 		summary, err := testRunner.RunBatchTest(*rulesDir)
-		
-		// Output results
+
 		if *outputFormat == "json" {
 			encoder := json.NewEncoder(os.Stdout)
 			encoder.SetIndent("", "  ")
@@ -65,11 +64,11 @@ func run() error {
 		} else {
 			printSummaryPretty(summary)
 		}
-		
+
 		if err != nil {
 			return err
 		}
-		
+
 		if summary.Failed > 0 {
 			return fmt.Errorf("tests failed")
 		}
@@ -82,14 +81,12 @@ func run() error {
 	}
 }
 
-// printSummaryPretty outputs the test summary in a human-readable format.
 func printSummaryPretty(summary tester.TestSummary) {
 	fmt.Println("--- SUMMARY ---")
 	fmt.Printf("Total Tests: %d, Passed: %d, Failed: %d\n",
 		summary.Total, summary.Passed, summary.Failed)
 	fmt.Printf("Duration: %dms\n", summary.DurationMs)
 
-	// If there are failures, print them in detail
 	if summary.Failed > 0 {
 		fmt.Println("\n--- FAILURES ---")
 		for _, result := range summary.Results {
@@ -97,7 +94,6 @@ func printSummaryPretty(summary tester.TestSummary) {
 				fmt.Printf("✖ %s\n", result.File)
 				fmt.Printf("  Error: %s\n", result.Error)
 				if result.Details != "" {
-					// Details are only included if the verbose flag was set during execution
 					fmt.Printf("  Details: %s\n", strings.ReplaceAll(result.Details, "\n", "\n  "))
 				}
 			}
