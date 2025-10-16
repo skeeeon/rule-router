@@ -37,7 +37,8 @@ func (t *Tester) Lint(rulesDir string) error {
 	fmt.Printf("▶ LINTING rules in %s\n\n", rulesDir)
 	var failed bool
 
-	loader := rule.NewRulesLoader(t.Logger, nil)
+	// Use the official loader which contains all validation logic
+	loader := rule.NewRulesLoader(t.Logger, nil) // KV buckets not needed for linting
 
 	err := filepath.Walk(rulesDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -53,6 +54,7 @@ func (t *Tester) Lint(rulesDir string) error {
 		if ext != ".yaml" && ext != ".yml" {
 			return nil
 		}
+		// LoadFromFile now performs all necessary validation
 		if _, err := loader.LoadFromFile(path); err != nil {
 			fmt.Printf("✖ FAIL: %s\n  Error: %v\n", path, err)
 			failed = true
@@ -104,6 +106,7 @@ func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 	}
 	rule := rules[0]
 
+	// Create a test config based on the rule's trigger type
 	testConfig := TestConfig{
 		MockTime: time.Now().Format(time.RFC3339),
 		Headers:  make(map[string]string),
@@ -132,6 +135,7 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 	}
 	rule := rules[0]
 
+	// Setup test config based on the actual rule trigger
 	testConfig := &TestConfig{Headers: make(map[string]string)}
 	if rule.Trigger.NATS != nil {
 		testConfig.MockTrigger.NATS = rule.Trigger.NATS
@@ -156,6 +160,7 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 
 	start := time.Now()
 	var actions []*rule.Action
+	// Dispatch to the correct processor method based on trigger type
 	if testConfig.MockTrigger.NATS != nil {
 		actions, err = processor.ProcessNATS(testConfig.MockTrigger.NATS.Subject, msgBytes, testConfig.Headers)
 	} else {
@@ -283,6 +288,7 @@ func (t *Tester) runTestsParallel(groups []TestGroup) TestSummary {
 	return summary
 }
 
+// runSingleTestCase executes a single test case against the rule processor.
 func (t *Tester) runSingleTestCase(processor *rule.Processor, messagePath string, testConfig *TestConfig) TestResult {
 	start := time.Now()
 	baseName := filepath.Base(messagePath)
@@ -297,6 +303,7 @@ func (t *Tester) runSingleTestCase(processor *rule.Processor, messagePath string
 	}
 
 	var actions []*rule.Action
+	// Dispatch to the correct processor method based on the mock trigger type
 	if testConfig.MockTrigger.NATS != nil {
 		actions, err = processor.ProcessNATS(testConfig.MockTrigger.NATS.Subject, msgBytes, testConfig.Headers)
 	} else if testConfig.MockTrigger.HTTP != nil {
@@ -319,6 +326,7 @@ func (t *Tester) runSingleTestCase(processor *rule.Processor, messagePath string
 		return result
 	}
 
+	// If a match was expected, and an output file exists, validate the action.
 	if matched {
 		outputFile := strings.TrimSuffix(messagePath, ".json") + "_output.json"
 		if _, err := os.Stat(outputFile); !os.IsNotExist(err) {
@@ -333,6 +341,7 @@ func (t *Tester) runSingleTestCase(processor *rule.Processor, messagePath string
 	return result
 }
 
+// validateOutput checks if the generated action matches the expected output file.
 func validateOutput(action *rule.Action, outputFile string) error {
 	expectedBytes, err := os.ReadFile(outputFile)
 	if err != nil {
@@ -343,6 +352,7 @@ func validateOutput(action *rule.Action, outputFile string) error {
 		return fmt.Errorf("could not parse expected output: %w", err)
 	}
 
+	// Dispatch to the correct validation helper based on action type
 	if action.NATS != nil {
 		return validateNATSOutput(action.NATS, &expected)
 	} else if action.HTTP != nil {
@@ -387,6 +397,8 @@ func validatePayload(payload string, passthrough bool, rawPayload []byte, expect
 	}
 	return nil
 }
+
+// --- Helper Functions ---
 
 func (t *Tester) collectTestGroups(rulesDir string) ([]TestGroup, error) {
 	var testGroups []TestGroup
@@ -436,6 +448,7 @@ func setupTestProcessor(rulePath string, kvData map[string]map[string]interface{
 		bucketNames = append(bucketNames, bucket)
 	}
 	loader := rule.NewRulesLoader(log, bucketNames)
+	// Only load the specific rule file for this test group
 	rules, _ := loader.LoadFromFile(rulePath)
 
 	var kvContext *rule.KVContext
