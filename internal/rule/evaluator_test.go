@@ -3,9 +3,11 @@
 package rule
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
+	json "github.com/goccy/go-json"
 	"rule-router/internal/logger"
 )
 
@@ -14,15 +16,34 @@ func newTestEvaluator() *Evaluator {
 	return NewEvaluator(logger.NewNopLogger())
 }
 
-// Helper to create a basic evaluation context for tests.
+// Helper to create a basic evaluation context for NATS-based tests.
 func newTestContext(data map[string]interface{}, subject string) *EvaluationContext {
-	// For most evaluator tests, we don't need real time or KV.
-	timeCtx := NewSystemTimeProvider().GetCurrentContext()
+	// Create a NATS-specific context. The HTTP context is nil.
 	subjectCtx := NewSubjectContext(subject)
+	timeCtx := NewSystemTimeProvider().GetCurrentContext()
 
-	// We can ignore the error here as test data is controlled.
-	ctx, _ := NewEvaluationContext([]byte("{}"), nil, subjectCtx, timeCtx, nil, nil, logger.NewNopLogger())
-	ctx.Msg = data // Directly set the unmarshalled message data.
+	// The payload is marshalled to JSON bytes for the context constructor.
+	payload, err := json.Marshal(data)
+	if err != nil {
+		// In a test, it's safe to panic if test data is invalid.
+		panic(fmt.Sprintf("failed to marshal test data: %v", err))
+	}
+
+	// Call the updated constructor with a nil HTTP context.
+	ctx, err := NewEvaluationContext(
+		payload,
+		nil, // headers
+		subjectCtx,
+		nil, // httpCtx
+		timeCtx,
+		nil, // kvCtx
+		nil, // sigVerification
+		logger.NewNopLogger(),
+	)
+	if err != nil {
+		panic(fmt.Sprintf("failed to create evaluation context: %v", err))
+	}
+
 	return ctx
 }
 
@@ -173,7 +194,7 @@ func TestEvaluateCondition_TimeFields(t *testing.T) {
 	fixedTime := time.Date(2024, 3, 15, 14, 30, 0, 0, time.UTC)
 	timeProvider := NewMockTimeProvider(fixedTime)
 
-	context, _ := NewEvaluationContext([]byte("{}"), nil, NewSubjectContext("test.subject"), timeProvider.GetCurrentContext(), nil, nil, logger.NewNopLogger())
+	context, _ := NewEvaluationContext([]byte("{}"), nil, NewSubjectContext("test.subject"), nil, timeProvider.GetCurrentContext(), nil, nil, logger.NewNopLogger())
 	condition := Condition{Field: "@time.hour", Operator: "eq", Value: 14}
 
 	if !evaluator.evaluateCondition(&condition, context) {
@@ -215,7 +236,7 @@ func TestEvaluateConditions_NestedGroups(t *testing.T) {
 	evaluator := newTestEvaluator()
 	conditions := Conditions{
 		Operator: "and",
-		Items: []Condition{{Field: "active", Operator: "eq", Value: true}},
+		Items:    []Condition{{Field: "active", Operator: "eq", Value: true}},
 		Groups: []Conditions{
 			{
 				Operator: "or",

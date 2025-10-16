@@ -2,6 +2,7 @@ package rule
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	goccyjson "github.com/goccy/go-json"
@@ -358,11 +359,24 @@ func BenchmarkNestedAccess_FourLevel(b *testing.B) {
 
 // Helper to create a context for benchmark tests.
 func newBenchmarkContext(data map[string]interface{}, subject string) *EvaluationContext {
-	ctx, _ := NewEvaluationContext(
-		[]byte("{}"), nil, NewSubjectContext(subject),
-		NewSystemTimeProvider().GetCurrentContext(), nil, nil, logger.NewNopLogger(), 
+	payload, err := goccyjson.Marshal(data)
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal benchmark data: %v", err))
+	}
+
+	ctx, err := NewEvaluationContext(
+		payload,
+		nil, // headers
+		NewSubjectContext(subject),
+		nil, // httpCtx
+		NewSystemTimeProvider().GetCurrentContext(),
+		nil, // kvCtx
+		nil, // sigVerification
+		logger.NewNopLogger(),
 	)
-	ctx.Msg = data
+	if err != nil {
+		panic(fmt.Sprintf("failed to create benchmark context: %v", err))
+	}
 	return ctx
 }
 

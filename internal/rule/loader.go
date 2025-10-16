@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"regexp"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 	"rule-router/internal/logger"
@@ -15,19 +17,20 @@ import (
 
 // RulesLoader handles loading and validating rule definitions from YAML files
 type RulesLoader struct {
-	logger          *logger.Logger
+	logger              *logger.Logger
 	configuredKVBuckets []string
 }
 
 // NewRulesLoader creates a new rules loader
 func NewRulesLoader(log *logger.Logger, kvBuckets []string) *RulesLoader {
 	return &RulesLoader{
-		logger:          log,
+		logger:              log,
 		configuredKVBuckets: kvBuckets,
 	}
 }
 
-// LoadFromDirectory loads all .yaml and .yml files from a directory
+// LoadFromDirectory loads all .yaml and .yml files from a directory, recursively,
+// while skipping any directories with a "_test" suffix.
 func (l *RulesLoader) LoadFromDirectory(dirPath string) ([]Rule, error) {
 	l.logger.Info("loading rules from directory", "path", dirPath)
 
@@ -40,23 +43,44 @@ func (l *RulesLoader) LoadFromDirectory(dirPath string) ([]Rule, error) {
 		return nil, fmt.Errorf("path is not a directory: %s", dirPath)
 	}
 
-	// Find all YAML files
-	files, err := filepath.Glob(filepath.Join(dirPath, "*.y*ml"))
+	var files []string
+	err = filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip directories ending in "_test"
+		if info.IsDir() && strings.HasSuffix(info.Name(), "_test") {
+			l.logger.Debug("skipping test directory", "path", path)
+			return filepath.SkipDir
+		}
+
+		// If it's a regular file and a YAML file, add it to the list
+		if !info.IsDir() {
+			ext := strings.ToLower(filepath.Ext(info.Name()))
+			if ext == ".yaml" || ext == ".yml" {
+				files = append(files, path)
+			}
+		}
+		return nil
+	})
+
 	if err != nil {
-		return nil, fmt.Errorf("failed to glob YAML files: %w", err)
+		return nil, fmt.Errorf("error walking rules directory: %w", err)
 	}
 
 	if len(files) == 0 {
-		return nil, fmt.Errorf("no YAML files found in directory: %s", dirPath)
+		return nil, fmt.Errorf("no YAML rule files found in directory: %s", dirPath)
 	}
 
 	l.logger.Info("found rule files", "count", len(files), "files", files)
 
-	// Load all rules from all files
+	// Load all rules from all found files
 	var allRules []Rule
 	for _, file := range files {
 		rules, err := l.LoadFromFile(file)
 		if err != nil {
+			// Return the first error encountered for immediate feedback
 			return nil, fmt.Errorf("failed to load rules from %s: %w", file, err)
 		}
 		allRules = append(allRules, rules...)
@@ -83,18 +107,18 @@ func (l *RulesLoader) LoadFromFile(filePath string) ([]Rule, error) {
 		return nil, fmt.Errorf("failed to parse YAML: %w", err)
 	}
 
-	l.logger.Info("parsed rules from file",
+	l.logger.Debug("parsed rules from file",
 		"file", filePath,
 		"ruleCount", len(rules))
 
 	// Validate each rule
-	for i, rule := range rules {
-		if err := l.validateRule(&rule, filePath, i); err != nil {
-			return nil, fmt.Errorf("rule %d validation failed: %w", i, err)
+	for i := range rules {
+		if err := l.validateRule(&rules[i], filePath, i); err != nil {
+			return nil, fmt.Errorf("rule %d in %s is invalid: %w", i, filePath, err)
 		}
 	}
 
-	l.logger.Info("all rules validated successfully",
+	l.logger.Debug("all rules validated successfully",
 		"file", filePath,
 		"ruleCount", len(rules))
 
@@ -164,18 +188,12 @@ func (l *RulesLoader) validateTrigger(trigger *Trigger, filePath string, ruleInd
 	}
 
 	if natsCount+httpCount == 0 {
-		return fmt.Errorf("rule must have either NATS or HTTP trigger")
+		return fmt.Errorf("rule must have either a NATS or HTTP trigger")
 	}
 
 	if natsCount+httpCount > 1 {
 		return fmt.Errorf("rule must have exactly one trigger type (found NATS=%d, HTTP=%d)", natsCount, httpCount)
 	}
-
-	l.logger.Debug("trigger validated",
-		"file", filePath,
-		"index", ruleIndex,
-		"nats", natsCount > 0,
-		"http", httpCount > 0)
 
 	return nil
 }
@@ -200,18 +218,12 @@ func (l *RulesLoader) validateAction(action *Action, filePath string, ruleIndex 
 	}
 
 	if natsCount+httpCount == 0 {
-		return fmt.Errorf("rule must have either NATS or HTTP action")
+		return fmt.Errorf("rule must have either a NATS or HTTP action")
 	}
 
 	if natsCount+httpCount > 1 {
 		return fmt.Errorf("rule must have exactly one action type (found NATS=%d, HTTP=%d)", natsCount, httpCount)
 	}
-
-	l.logger.Debug("action validated",
-		"file", filePath,
-		"index", ruleIndex,
-		"nats", natsCount > 0,
-		"http", httpCount > 0)
 
 	return nil
 }
@@ -229,7 +241,7 @@ func (l *RulesLoader) validateNATSAction(action *NATSAction) error {
 
 	// Warn if action subject contains wildcards (usually unintentional)
 	if containsWildcards(action.Subject) {
-		l.logger.Info("NATS action subject contains wildcards - ensure this is intentional",
+		l.logger.Debug("NATS action subject contains wildcards - ensure this is intentional",
 			"actionSubject", action.Subject)
 	}
 
@@ -264,8 +276,8 @@ func (l *RulesLoader) validateHTTPAction(action *HTTPAction) error {
 		return fmt.Errorf("HTTP action URL cannot be empty")
 	}
 
-	// Validate URL format (must start with http:// or https://)
-	if !strings.HasPrefix(action.URL, "http://") && !strings.HasPrefix(action.URL, "https://") {
+	// Validate URL format (must start with http:// or https://, unless it's a template)
+	if !strings.Contains(action.URL, "{") && !strings.HasPrefix(action.URL, "http://") && !strings.HasPrefix(action.URL, "https://") {
 		return fmt.Errorf("HTTP action URL must start with http:// or https://: %s", action.URL)
 	}
 
@@ -315,20 +327,17 @@ func (l *RulesLoader) validateHTTPAction(action *HTTPAction) error {
 	// Validate retry configuration if present
 	if action.Retry != nil {
 		if action.Retry.MaxAttempts < 1 {
-			return fmt.Errorf("retry maxAttempts must be at least 1")
+			action.Retry.MaxAttempts = 1
 		}
-		if action.Retry.InitialDelay == "" {
-			return fmt.Errorf("retry initialDelay cannot be empty")
+		if action.Retry.InitialDelay != "" {
+			if _, err := time.ParseDuration(action.Retry.InitialDelay); err != nil {
+				return fmt.Errorf("invalid retry initialDelay '%s': %w", action.Retry.InitialDelay, err)
+			}
 		}
-		if action.Retry.MaxDelay == "" {
-			return fmt.Errorf("retry maxDelay cannot be empty")
-		}
-		// Validate duration formats
-		if _, err := time.ParseDuration(action.Retry.InitialDelay); err != nil {
-			return fmt.Errorf("invalid retry initialDelay '%s': %w", action.Retry.InitialDelay, err)
-		}
-		if _, err := time.ParseDuration(action.Retry.MaxDelay); err != nil {
-			return fmt.Errorf("invalid retry maxDelay '%s': %w", action.Retry.MaxDelay, err)
+		if action.Retry.MaxDelay != "" {
+			if _, err := time.ParseDuration(action.Retry.MaxDelay); err != nil {
+				return fmt.Errorf("invalid retry maxDelay '%s': %w", action.Retry.MaxDelay, err)
+			}
 		}
 	}
 
@@ -420,16 +429,12 @@ func (l *RulesLoader) validateSubjectField(field string) error {
 	// Check for indexed access: @subject.0, @subject.1, etc.
 	if strings.HasPrefix(field, "@subject.") {
 		indexStr := field[9:] // Remove "@subject."
-		
+
 		// Try to parse as integer
-		var index int
-		if _, err := fmt.Sscanf(indexStr, "%d", &index); err == nil {
-			if index >= 0 {
-				return nil
-			}
-			return fmt.Errorf("subject index must be non-negative")
+		if _, err := strconv.Atoi(indexStr); err == nil {
+			return nil
 		}
-		
+
 		return fmt.Errorf("invalid subject field format (expected @subject.N where N is a non-negative integer)")
 	}
 
@@ -450,16 +455,12 @@ func (l *RulesLoader) validatePathField(field string) error {
 	// Check for indexed access: @path.0, @path.1, etc.
 	if strings.HasPrefix(field, "@path.") {
 		indexStr := field[6:] // Remove "@path."
-		
+
 		// Try to parse as integer
-		var index int
-		if _, err := fmt.Sscanf(indexStr, "%d", &index); err == nil {
-			if index >= 0 {
-				return nil
-			}
-			return fmt.Errorf("path index must be non-negative")
+		if _, err := strconv.Atoi(indexStr); err == nil {
+			return nil
 		}
-		
+
 		return fmt.Errorf("invalid path field format (expected @path.N where N is a non-negative integer)")
 	}
 
@@ -473,23 +474,23 @@ func (l *RulesLoader) validateKVFieldsInTemplate(template string) error {
 	}
 
 	kvFields := l.extractKVFieldsFromTemplate(template)
-	
+
 	for _, field := range kvFields {
 		if err := l.validateKVFieldWithVariables(field); err != nil {
 			return err
 		}
-		
+
 		// Check if the bucket is configured
 		bucket := l.extractBucketFromKVField(field)
 		if bucket != "" && !l.isBucketConfigured(bucket) {
-			l.logger.Warn("KV field references unconfigured bucket",
+			l.logger.Debug("KV field references unconfigured bucket",
 				"field", field,
 				"bucket", bucket,
 				"configuredBuckets", l.configuredKVBuckets,
-				"impact", "This KV lookup will fail at runtime")
+				"impact", "This KV lookup will fail at runtime if KV is enabled")
 		}
 	}
-	
+
 	return nil
 }
 
@@ -497,56 +498,15 @@ func (l *RulesLoader) validateKVFieldsInTemplate(template string) error {
 // Handles nested braces correctly: {@kv.bucket.{key}:{path}}
 func (l *RulesLoader) extractKVFieldsFromTemplate(template string) []string {
 	var fields []string
-
-	i := 0
-	for i < len(template) {
-		// Look for "{@kv."
-		if i+5 <= len(template) && template[i:i+5] == "{@kv." {
-			// Found start of KV field - extract the complete field with brace counting
-			field, endPos := l.extractBracedContent(template, i)
-			if field != "" {
-				// Remove outer braces and the leading @
-				// field is like "{@kv.bucket.key:path}" - we want "@kv.bucket.key:path"
-				if len(field) > 2 {
-					fields = append(fields, field[1:len(field)-1]) // Remove { and }
-				}
-			}
-			i = endPos
-		} else {
-			i++
+	// This regex finds content inside {@kv. ... }
+	re := regexp.MustCompile(`\{@kv\.(.+?)\}`)
+	matches := re.FindAllStringSubmatch(template, -1)
+	for _, match := range matches {
+		if len(match) > 1 {
+			fields = append(fields, "@kv."+match[1])
 		}
 	}
-
 	return fields
-}
-
-// extractBracedContent extracts content within braces starting at startPos
-// Returns the complete braced content and the position after the closing brace
-// Handles nested braces correctly
-func (l *RulesLoader) extractBracedContent(template string, startPos int) (string, int) {
-	if startPos >= len(template) || template[startPos] != '{' {
-		return "", startPos
-	}
-
-	braceDepth := 0
-	i := startPos
-
-	for i < len(template) {
-		switch template[i] {
-		case '{':
-			braceDepth++
-		case '}':
-			braceDepth--
-			if braceDepth == 0 {
-				// Found matching closing brace
-				return template[startPos : i+1], i + 1
-			}
-		}
-		i++
-	}
-
-	// Unclosed brace - return empty
-	return "", startPos
 }
 
 // validateKVFieldWithVariables validates KV fields with colon delimiter syntax
@@ -599,12 +559,6 @@ func (l *RulesLoader) validateKVFieldWithVariables(field string) error {
 		return fmt.Errorf("KV key name cannot be empty in field: %s", field)
 	}
 
-	l.logger.Debug("KV field validated",
-		"field", field,
-		"bucket", bucket,
-		"key", key,
-		"jsonPath", jsonPathPart)
-
 	return nil
 }
 
@@ -625,6 +579,10 @@ func (l *RulesLoader) extractBucketFromKVField(field string) string {
 
 // isBucketConfigured checks if a bucket is in the configured list
 func (l *RulesLoader) isBucketConfigured(bucket string) bool {
+	// If no buckets are configured, we can't validate, so we assume it's ok.
+	if len(l.configuredKVBuckets) == 0 {
+		return true
+	}
 	for _, configured := range l.configuredKVBuckets {
 		if configured == bucket {
 			return true
@@ -651,4 +609,3 @@ func (l *RulesLoader) isValidOperator(op string) bool {
 	}
 	return validOps[op]
 }
-

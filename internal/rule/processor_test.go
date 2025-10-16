@@ -3,10 +3,12 @@
 package rule
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	json "github.com/goccy/go-json"
 	"rule-router/internal/logger"
 )
 
@@ -18,8 +20,27 @@ func newTestTemplateEngine() *TemplateEngine {
 // Helper to create a context for template tests.
 func newTemplateTestContext(data map[string]interface{}, subject string, t time.Time) *EvaluationContext {
 	timeProvider := NewMockTimeProvider(t)
-	ctx, _ := NewEvaluationContext([]byte("{}"), nil, NewSubjectContext(subject), timeProvider.GetCurrentContext(), nil, nil, logger.NewNopLogger())
-	ctx.Msg = data
+	subjectCtx := NewSubjectContext(subject)
+
+	payload, err := json.Marshal(data)
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal test data: %v", err))
+	}
+
+	// Call the updated constructor with a nil HTTP context.
+	ctx, err := NewEvaluationContext(
+		payload,
+		nil, // headers
+		subjectCtx,
+		nil, // httpCtx
+		timeProvider.GetCurrentContext(),
+		nil, // kvCtx
+		nil, // sigVerification
+		logger.NewNopLogger(),
+	)
+	if err != nil {
+		panic(fmt.Sprintf("failed to create evaluation context: %v", err))
+	}
 	return ctx
 }
 
@@ -30,14 +51,19 @@ func TestProcessor_Orchestration(t *testing.T) {
 
 	rules := []Rule{
 		{
-			Subject: "test.subject",
+			// UPDATED: Use the new nested Trigger/Action structure
+			Trigger: Trigger{
+				NATS: &NATSTrigger{Subject: "test.subject"},
+			},
 			Conditions: &Conditions{
 				Operator: "and",
 				Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
 			},
-			Action: &Action{
-				Subject: "out.subject.{device_id}",
-				Payload: `{"id": "{device_id}"}`,
+			Action: Action{
+				NATS: &NATSAction{
+					Subject: "out.subject.{device_id}",
+					Payload: `{"id": "{device_id}"}`,
+				},
 			},
 		},
 	}
@@ -45,6 +71,7 @@ func TestProcessor_Orchestration(t *testing.T) {
 
 	// Case 1: Condition matches
 	payloadMatch := []byte(`{"status": "active", "device_id": "dev123"}`)
+	// The test call itself remains the same as ProcessWithSubject is kept for compatibility
 	actions, err := processor.ProcessWithSubject("test.subject", payloadMatch, nil)
 	if err != nil {
 		t.Fatalf("ProcessWithSubject returned an error: %v", err)
@@ -52,11 +79,12 @@ func TestProcessor_Orchestration(t *testing.T) {
 	if len(actions) != 1 {
 		t.Fatalf("Expected 1 action, got %d", len(actions))
 	}
-	if actions[0].Subject != "out.subject.dev123" {
-		t.Errorf("Unexpected action subject: got %s, want out.subject.dev123", actions[0].Subject)
+	// UPDATED: Access the nested NATS action
+	if actions[0].NATS.Subject != "out.subject.dev123" {
+		t.Errorf("Unexpected action subject: got %s, want out.subject.dev123", actions[0].NATS.Subject)
 	}
-	if actions[0].Payload != `{"id": "dev123"}` {
-		t.Errorf("Unexpected action payload: got %s", actions[0].Payload)
+	if actions[0].NATS.Payload != `{"id": "dev123"}` {
+		t.Errorf("Unexpected action payload: got %s", actions[0].NATS.Payload)
 	}
 
 	// Case 2: Condition does not match
