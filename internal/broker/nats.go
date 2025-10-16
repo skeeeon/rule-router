@@ -3,13 +3,13 @@
 package broker
 
 import (
-	json "github.com/goccy/go-json"
 	"context"
 	"crypto/tls"
 	"fmt"
 	"strings"
 	"time"
 
+	json "github.com/goccy/go-json"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"rule-router/config"
@@ -23,45 +23,45 @@ type NATSBroker struct {
 	logger          *logger.Logger
 	metrics         *metrics.Metrics
 	config          *config.Config
-	
+
 	// NATS connection and JetStream interface
-	natsConn        *nats.Conn
-	jetStream       jetstream.JetStream
-	kvStores        map[string]jetstream.KeyValue
-	
+	natsConn  *nats.Conn
+	jetStream jetstream.JetStream
+	kvStores  map[string]jetstream.KeyValue
+
 	// Local KV cache for performance optimization
-	localKVCache    *rule.LocalKVCache
-	kvWatchers      []jetstream.KeyWatcher
-	
+	localKVCache *rule.LocalKVCache
+	kvWatchers   []jetstream.KeyWatcher
+
 	// Stream resolver for JetStream stream discovery
-	streamResolver  *StreamResolver
-	
+	streamResolver *StreamResolver
+
 	// Subscription manager for message processing
 	subscriptionMgr *SubscriptionManager
-	
+
 	// Consumer management - track created consumers
-	consumers       map[string]string  // subject -> consumer name
-	
+	consumers map[string]string // subject -> consumer name
+
 	// Context for managing watchers and long-running operations
-	ctx             context.Context
-	cancel          context.CancelFunc
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // NewNATSBroker creates a new NATS broker that connects to external NATS servers
 func NewNATSBroker(cfg *config.Config, log *logger.Logger, metrics *metrics.Metrics) (*NATSBroker, error) {
 	// Create cancellable context for broker lifecycle management
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	broker := &NATSBroker{
-		logger:          log,
-		metrics:         metrics,
-		config:          cfg,
-		kvStores:        make(map[string]jetstream.KeyValue),
-		localKVCache:    rule.NewLocalKVCache(log),
-		kvWatchers:      make([]jetstream.KeyWatcher, 0),
-		consumers:       make(map[string]string),
-		ctx:             ctx,
-		cancel:          cancel,
+		logger:       log,
+		metrics:      metrics,
+		config:       cfg,
+		kvStores:     make(map[string]jetstream.KeyValue),
+		localKVCache: rule.NewLocalKVCache(log),
+		kvWatchers:   make([]jetstream.KeyWatcher, 0),
+		consumers:    make(map[string]string),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 
 	// Initialize NATS connection
@@ -72,7 +72,7 @@ func NewNATSBroker(cfg *config.Config, log *logger.Logger, metrics *metrics.Metr
 
 	// Initialize stream resolver for JetStream stream discovery
 	broker.streamResolver = NewStreamResolver(broker.jetStream, log)
-	
+
 	// Discover streams immediately
 	if err := broker.streamResolver.Discover(ctx); err != nil {
 		cancel()
@@ -115,8 +115,8 @@ func (b *NATSBroker) CreateConsumerForSubject(subject string) error {
 
 	// Check if consumer already exists for this subject
 	if existingConsumer, exists := b.consumers[subject]; exists {
-		b.logger.Debug("consumer already exists for subject", 
-			"subject", subject, 
+		b.logger.Debug("consumer already exists for subject",
+			"subject", subject,
 			"consumer", existingConsumer)
 		return nil
 	}
@@ -157,7 +157,7 @@ func (b *NATSBroker) CreateConsumerForSubject(subject string) error {
 	// Use CreateOrUpdateConsumer for idempotent behavior
 	ctx, cancel := context.WithTimeout(b.ctx, 10*time.Second)
 	defer cancel()
-	
+
 	consumer, err := b.jetStream.CreateOrUpdateConsumer(ctx, streamName, consumerConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create consumer '%s' on stream '%s' for subject '%s': %w",
@@ -249,8 +249,9 @@ func (b *NATSBroker) generateConsumerName(subject string) string {
 	sanitized = strings.ReplaceAll(sanitized, "*", "wildcard")
 	sanitized = strings.ReplaceAll(sanitized, ">", "multi-wildcard")
 	sanitized = strings.ReplaceAll(sanitized, " ", "-")
-	
-	return fmt.Sprintf("rule-router-%s", sanitized)
+
+	// Use the configured prefix to avoid collisions
+	return fmt.Sprintf("%s-%s", b.config.NATS.Consumers.ConsumerPrefix, sanitized)
 }
 
 // ValidateSubjects checks if all subjects can be mapped to streams
@@ -296,7 +297,7 @@ func (b *NATSBroker) InitializeKVCache() error {
 		return nil
 	}
 
-	b.logger.Info("local KV cache initialized successfully", 
+	b.logger.Info("local KV cache initialized successfully",
 		"cacheEnabled", b.localKVCache.IsEnabled(),
 		"stats", b.localKVCache.GetStats())
 
@@ -306,10 +307,10 @@ func (b *NATSBroker) InitializeKVCache() error {
 // populateKVCache loads all existing KV data into the local cache
 func (b *NATSBroker) populateKVCache() error {
 	b.logger.Info("populating local KV cache", "buckets", b.config.KV.Buckets)
-	
+
 	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
 	defer cancel()
-	
+
 	totalLoaded := 0
 	for _, bucketName := range b.config.KV.Buckets {
 		loaded, err := b.loadBucketIntoCache(ctx, bucketName)
@@ -319,11 +320,11 @@ func (b *NATSBroker) populateKVCache() error {
 		}
 		totalLoaded += loaded
 	}
-	
-	b.logger.Info("KV cache population complete", 
+
+	b.logger.Info("KV cache population complete",
 		"totalBuckets", len(b.config.KV.Buckets),
 		"totalKeysLoaded", totalLoaded)
-	
+
 	return nil
 }
 
@@ -344,7 +345,7 @@ func (b *NATSBroker) loadBucketIntoCache(ctx context.Context, bucketName string)
 	for key := range lister.Keys() {
 		entry, err := store.Get(ctx, key)
 		if err != nil {
-			b.logger.Debug("failed to get key during cache population", 
+			b.logger.Debug("failed to get key during cache population",
 				"bucket", bucketName, "key", key, "error", err)
 			continue
 		}
@@ -354,7 +355,7 @@ func (b *NATSBroker) loadBucketIntoCache(ctx context.Context, bucketName string)
 		if len(rawValue) > 0 {
 			if err := json.Unmarshal(rawValue, &parsedValue); err != nil {
 				parsedValue = string(rawValue)
-				b.logger.Debug("stored non-JSON value as string", 
+				b.logger.Debug("stored non-JSON value as string",
 					"bucket", bucketName, "key", key)
 			}
 		} else {
@@ -365,29 +366,29 @@ func (b *NATSBroker) loadBucketIntoCache(ctx context.Context, bucketName string)
 		loadedCount++
 
 		if loadedCount%100 == 0 {
-			b.logger.Debug("cache loading progress", 
+			b.logger.Debug("cache loading progress",
 				"bucket", bucketName, "loaded", loadedCount)
 		}
 	}
 
-	b.logger.Info("loaded bucket into cache", 
-		"bucket", bucketName, 
+	b.logger.Info("loaded bucket into cache",
+		"bucket", bucketName,
 		"loadedKeys", loadedCount)
-	
+
 	return loadedCount, nil
 }
 
 // subscribeToKVChanges subscribes to KV change streams using the new Watch API
 func (b *NATSBroker) subscribeToKVChanges() error {
 	b.logger.Info("subscribing to KV changes using Watch API", "buckets", len(b.config.KV.Buckets))
-	
+
 	for _, bucketName := range b.config.KV.Buckets {
 		if err := b.watchKVBucket(bucketName); err != nil {
 			b.logger.Error("failed to watch KV bucket", "bucket", bucketName, "error", err)
 			// Continue with other buckets
 		}
 	}
-	
+
 	b.logger.Info("KV watch subscriptions established", "watchers", len(b.kvWatchers))
 	return nil
 }
@@ -398,42 +399,42 @@ func (b *NATSBroker) watchKVBucket(bucketName string) error {
 	if !exists {
 		return fmt.Errorf("bucket not found: %s", bucketName)
 	}
-	
+
 	// Watch all keys in the bucket using ">" pattern
 	// Context from broker ensures watcher stops when broker closes
 	watcher, err := store.Watch(b.ctx, ">")
 	if err != nil {
 		return fmt.Errorf("failed to create watcher for bucket %s: %w", bucketName, err)
 	}
-	
+
 	b.kvWatchers = append(b.kvWatchers, watcher)
-	
+
 	// Start goroutine to process watch updates
 	go b.processKVWatchUpdates(bucketName, watcher)
-	
-	b.logger.Info("created KV watcher", 
+
+	b.logger.Info("created KV watcher",
 		"bucket", bucketName)
-	
+
 	return nil
 }
 
 // processKVWatchUpdates processes updates from a KV watcher
 func (b *NATSBroker) processKVWatchUpdates(bucketName string, watcher jetstream.KeyWatcher) {
 	b.logger.Debug("starting KV watch processor", "bucket", bucketName)
-	
+
 	for {
 		select {
 		case <-b.ctx.Done():
 			b.logger.Debug("stopping KV watch processor", "bucket", bucketName)
 			return
-			
+
 		case entry := <-watcher.Updates():
 			if entry == nil {
 				// Initial values sent, now receiving updates
 				b.logger.Debug("KV watcher initial sync complete", "bucket", bucketName)
 				continue
 			}
-			
+
 			b.handleKVUpdate(bucketName, entry)
 		}
 	}
@@ -442,32 +443,32 @@ func (b *NATSBroker) processKVWatchUpdates(bucketName string, watcher jetstream.
 // handleKVUpdate processes a single KV update from the watcher
 func (b *NATSBroker) handleKVUpdate(bucketName string, entry jetstream.KeyValueEntry) {
 	key := entry.Key()
-	
+
 	// Check for delete operation
 	if entry.Operation() == jetstream.KeyValueDelete || entry.Operation() == jetstream.KeyValuePurge {
 		b.localKVCache.Delete(bucketName, key)
 		b.logger.Debug("deleted from KV cache", "bucket", bucketName, "key", key, "operation", entry.Operation())
 		return
 	}
-	
+
 	// Process normal update/create
 	var parsedValue interface{}
 	rawValue := entry.Value()
-	
+
 	if len(rawValue) > 0 {
 		if err := json.Unmarshal(rawValue, &parsedValue); err != nil {
 			parsedValue = string(rawValue)
-			b.logger.Debug("stored non-JSON KV update as string", 
+			b.logger.Debug("stored non-JSON KV update as string",
 				"bucket", bucketName, "key", key, "error", err)
 		}
 	} else {
 		parsedValue = nil
 	}
-	
+
 	b.localKVCache.Set(bucketName, key, parsedValue)
-	b.logger.Debug("updated KV cache from watcher", 
-		"bucket", bucketName, 
-		"key", key, 
+	b.logger.Debug("updated KV cache from watcher",
+		"bucket", bucketName,
+		"key", key,
 		"revision", entry.Revision())
 }
 
@@ -486,8 +487,8 @@ func (b *NATSBroker) initializeNATSConnection() error {
 	}
 
 	urlString := strings.Join(b.config.NATS.URLs, ",")
-	
-	b.logger.Debug("connecting to NATS with failover URLs", 
+
+	b.logger.Debug("connecting to NATS with failover URLs",
 		"urlCount", len(b.config.NATS.URLs),
 		"urlString", urlString)
 
@@ -497,7 +498,7 @@ func (b *NATSBroker) initializeNATSConnection() error {
 	}
 
 	connectedURL := b.natsConn.ConnectedUrl()
-	b.logger.Info("NATS connection established successfully", 
+	b.logger.Info("NATS connection established successfully",
 		"connectedURL", connectedURL,
 		"availableURLs", len(b.config.NATS.URLs))
 
@@ -531,27 +532,27 @@ func (b *NATSBroker) initializeKVStores(ctx context.Context) error {
 
 	for _, bucketName := range b.config.KV.Buckets {
 		b.logger.Debug("connecting to KV bucket", "bucket", bucketName)
-		
+
 		kvCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		
+
 		kv, err := b.jetStream.KeyValue(kvCtx, bucketName)
 		cancel()
-		
+
 		if err != nil {
 			if err == jetstream.ErrBucketNotFound {
 				b.logger.Info("KV bucket not found, creating", "bucket", bucketName)
-				
+
 				createCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 				kv, err = b.jetStream.CreateKeyValue(createCtx, jetstream.KeyValueConfig{
 					Bucket:      bucketName,
 					Description: fmt.Sprintf("Rule-router KV bucket: %s", bucketName),
 				})
 				cancel()
-				
+
 				if err != nil {
 					return fmt.Errorf("failed to create KV bucket '%s': %w", bucketName, err)
 				}
-				
+
 				b.logger.Info("created KV bucket successfully", "bucket", bucketName)
 			} else {
 				return fmt.Errorf("failed to access KV bucket '%s': %w", bucketName, err)
@@ -611,7 +612,7 @@ func (b *NATSBroker) buildNATSOptions() ([]nats.Option, error) {
 
 	if b.config.NATS.TLS.Enable {
 		b.logger.Info("enabling TLS for NATS connection", "insecure", b.config.NATS.TLS.Insecure)
-		
+
 		tlsConfig := &tls.Config{
 			InsecureSkipVerify: b.config.NATS.TLS.Insecure,
 		}
@@ -648,20 +649,20 @@ func (b *NATSBroker) GetKVStores() map[string]jetstream.KeyValue {
 // Helper
 // GetJetStream returns the JetStream interface
 func (b *NATSBroker) GetJetStream() jetstream.JetStream {
-    return b.jetStream
+	return b.jetStream
 }
 
 // GetNATSConn returns the NATS connection
 func (b *NATSBroker) GetNATSConn() *nats.Conn {
-    return b.natsConn
+	return b.natsConn
 }
 
 // GetConsumerName returns the consumer name for a subject
 func (b *NATSBroker) GetConsumerName(subject string) string {
-    if name, exists := b.consumers[subject]; exists {
-        return name
-    }
-    return b.generateConsumerName(subject)
+	if name, exists := b.consumers[subject]; exists {
+		return name
+	}
+	return b.generateConsumerName(subject)
 }
 
 // Close shuts down the broker connections

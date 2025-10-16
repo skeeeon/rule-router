@@ -29,7 +29,7 @@ nats:
   urls:
     - nats://localhost:4222
 
-  # Authentication (choose one method) - CORRECTED
+  # Authentication (choose one method)
   # username: "myuser"
   # password: "mypassword"
   # token: "mytoken"
@@ -38,6 +38,7 @@ nats:
 
   # JetStream Consumer Configuration
   consumers:
+    consumerPrefix: "http-gateway" # NEW: Unique prefix for this application's consumers
     subscriberCount: 4      # Number of parallel workers per subscription
     fetchBatchSize: 10      # Messages fetched per batch
     fetchTimeout: 5s        # Fetch timeout

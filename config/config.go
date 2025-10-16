@@ -45,10 +45,10 @@ type HTTPClientConfig struct {
 	MaxIdleConns        int           `json:"maxIdleConns" yaml:"maxIdleConns"`
 	MaxIdleConnsPerHost int           `json:"maxIdleConnsPerHost" yaml:"maxIdleConnsPerHost"`
 	IdleConnTimeout     time.Duration `json:"idleConnTimeout" yaml:"idleConnTimeout"`
-	TLS                 HTTPClientTLS `json:"tls,omitempty" yaml:"tls,omitempty"` // NEW: Add TLS config
+	TLS                 HTTPClientTLS `json:"tls,omitempty" yaml:"tls,omitempty"`
 }
 
-// NEW: HTTPClientTLS configures TLS settings for the outbound HTTP client
+// HTTPClientTLS configures TLS settings for the outbound HTTP client
 type HTTPClientTLS struct {
 	InsecureSkipVerify bool `json:"insecureSkipVerify" yaml:"insecureSkipVerify"`
 }
@@ -79,6 +79,7 @@ type NATSConfig struct {
 
 // ConsumerConfig contains JetStream consumer configuration
 type ConsumerConfig struct {
+	ConsumerPrefix  string        `json:"consumerPrefix" yaml:"consumerPrefix"` // NEW: Prefix for durable consumer names
 	SubscriberCount int           `json:"subscriberCount" yaml:"subscriberCount"`
 	FetchBatchSize  int           `json:"fetchBatchSize" yaml:"fetchBatchSize"`
 	FetchTimeout    time.Duration `json:"fetchTimeout" yaml:"fetchTimeout"`
@@ -211,6 +212,9 @@ func setDefaults(cfg *Config) {
 	}
 
 	// Consumer defaults
+	if cfg.NATS.Consumers.ConsumerPrefix == "" {
+		cfg.NATS.Consumers.ConsumerPrefix = "rule-router" // Default to old behavior for backward compatibility
+	}
 	if cfg.NATS.Consumers.SubscriberCount == 0 {
 		cfg.NATS.Consumers.SubscriberCount = 2
 	}
@@ -283,9 +287,6 @@ func setDefaults(cfg *Config) {
 	if cfg.HTTP.Client.IdleConnTimeout == 0 {
 		cfg.HTTP.Client.IdleConnTimeout = 90 * time.Second
 	}
-	// NEW: Default for TLS client config
-	// Default is secure: InsecureSkipVerify is false
-	// No need to set it explicitly as the zero value for a bool is false.
 
 	// Logging defaults
 	if cfg.Logging.Level == "" {

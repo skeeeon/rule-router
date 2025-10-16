@@ -8,11 +8,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
-	"github.com/nats-io/nats.go/jetstream"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -430,7 +428,7 @@ func (app *App) setupOutboundClient() error {
 			AckWaitTimeout:  app.config.NATS.Consumers.AckWaitTimeout,
 			MaxDeliver:      app.config.NATS.Consumers.MaxDeliver,
 		},
-		&app.config.HTTP.Client, // CHANGED: Pass the full client config struct
+		&app.config.HTTP.Client,
 	)
 
 	// Find all rules with NATS trigger + HTTP action
@@ -445,20 +443,20 @@ func (app *App) setupOutboundClient() error {
 			}
 			outboundRules[subject] = true
 
-			// Use StreamResolver to find the stream (just like rule-router)
+			// CORRECTED: Delegate consumer creation entirely to the broker, which has the correct, full logic.
+			if err := app.broker.CreateConsumerForSubject(subject); err != nil {
+				return fmt.Errorf("failed to create consumer for subject '%s': %w", subject, err)
+			}
+
+			// Now, get the stream and consumer names from the broker to configure the subscription.
 			streamResolver := app.broker.GetStreamResolver()
 			streamName, err := streamResolver.FindStreamForSubject(subject)
 			if err != nil {
+				// This check is slightly redundant since CreateConsumerForSubject would have failed,
+				// but it's good defensive programming.
 				return fmt.Errorf("failed to find stream for subject '%s': %w", subject, err)
 			}
-
-			// Generate consumer name with identical pattern to rule-router
 			consumerName := app.broker.GetConsumerName(subject)
-
-			// Create consumer using broker's pattern
-			if err := app.createConsumerForOutbound(streamName, consumerName, subject); err != nil {
-				return fmt.Errorf("failed to create consumer for subject '%s': %w", subject, err)
-			}
 
 			// Add subscription to outbound client
 			workers := app.config.NATS.Consumers.SubscriberCount
@@ -476,51 +474,4 @@ func (app *App) setupOutboundClient() error {
 
 	app.logger.Info("outbound client configured", "subscriptions", len(outboundRules))
 	return nil
-}
-
-// createConsumerForOutbound creates a JetStream consumer for outbound HTTP
-func (app *App) createConsumerForOutbound(streamName, consumerName, subject string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	stream, err := app.broker.GetJetStream().Stream(ctx, streamName)
-	if err != nil {
-		return fmt.Errorf("failed to get stream: %w", err)
-	}
-
-	// Check if consumer already exists
-	_, err = stream.Consumer(ctx, consumerName)
-	if err == nil {
-		app.logger.Debug("consumer already exists", "consumer", consumerName, "stream", streamName)
-		return nil
-	}
-
-	// Create consumer config matching broker's pattern
-	consumerConfig := jetstream.ConsumerConfig{
-		Durable:       consumerName,
-		FilterSubject: subject,
-		AckPolicy:     jetstream.AckExplicitPolicy,
-		AckWait:       app.config.NATS.Consumers.AckWaitTimeout,
-		MaxDeliver:    app.config.NATS.Consumers.MaxDeliver,
-		MaxAckPending: app.config.NATS.Consumers.MaxAckPending,
-		DeliverPolicy: jetstream.DeliverAllPolicy, // Match default from config
-		ReplayPolicy:  jetstream.ReplayInstantPolicy,
-	}
-
-	// Create or update consumer
-	_, err = stream.CreateOrUpdateConsumer(ctx, consumerConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create consumer: %w", err)
-	}
-
-	app.logger.Info("consumer created", "consumer", consumerName, "stream", streamName, "subject", subject)
-	return nil
-}
-
-// sanitizeSubject converts a NATS subject to a valid consumer name (identical to rule-router)
-func sanitizeSubject(subject string) string {
-	s := strings.ReplaceAll(subject, ".", "-")
-	s = strings.ReplaceAll(s, "*", "wildcard")
-	s = strings.ReplaceAll(s, ">", "multi")
-	return s
 }
