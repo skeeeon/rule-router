@@ -138,10 +138,7 @@ func (app *App) Close() error {
 		}
 	}
 
-	// Close processor
-	if app.processor != nil {
-		app.processor.Close()
-	}
+	// NOTE: Processor doesn't need cleanup - it's stateless with no connections or goroutines
 
 	// Sync logger
 	if app.logger != nil {

@@ -76,30 +76,21 @@ func NewSubscriptionManager(
 }
 
 // AddSubscription creates a consumer handle for a subject.
-func (sm *SubscriptionManager) AddSubscription(
-	streamName string,
-	consumerName string,
-	subject string,
-	workers int,
-) error {
+func (sm *SubscriptionManager) AddSubscription(streamName, consumerName, subject string, workers int) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	sm.logger.Info("creating consumer handle",
-		"subject", subject,
-		"stream", streamName,
-		"consumer", consumerName,
-		"workers", workers)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	consumer, err := sm.jetStream.Consumer(ctx, streamName, consumerName)
+	stream, err := sm.jetStream.Stream(context.Background(), streamName)
 	if err != nil {
-		return fmt.Errorf("failed to get consumer handle for %s: %w", subject, err)
+		return fmt.Errorf("failed to get stream '%s': %w", streamName, err)
 	}
 
-	subscription := &Subscription{
+	consumer, err := stream.Consumer(context.Background(), consumerName)
+	if err != nil {
+		return fmt.Errorf("failed to get consumer '%s': %w", consumerName, err)
+	}
+
+	sub := &Subscription{
 		Subject:      subject,
 		ConsumerName: consumerName,
 		StreamName:   streamName,
@@ -109,114 +100,90 @@ func (sm *SubscriptionManager) AddSubscription(
 		consumerCfg:  sm.consumerCfg,
 	}
 
-	sm.subscriptions = append(sm.subscriptions, subscription)
+	sm.subscriptions = append(sm.subscriptions, sub)
 
-	sm.logger.Info("consumer handle created",
-		"subject", subject,
+	sm.logger.Info("subscription added",
 		"stream", streamName,
 		"consumer", consumerName,
-		"fetchBatchSize", sm.consumerCfg.FetchBatchSize,
-		"fetchTimeout", sm.consumerCfg.FetchTimeout)
+		"subject", subject,
+		"workers", workers)
 
 	return nil
 }
 
-// Start begins processing messages on all subscriptions using the Shared Fetch Channel pattern.
+// Start begins consuming messages from all subscriptions.
 func (sm *SubscriptionManager) Start(ctx context.Context) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
 
 	if len(sm.subscriptions) == 0 {
 		return fmt.Errorf("no subscriptions configured")
 	}
 
-	sm.logger.Info("starting all subscriptions", "count", len(sm.subscriptions))
+	sm.logger.Info("starting subscription manager",
+		"subscriptions", len(sm.subscriptions),
+		"fetchBatchSize", sm.consumerCfg.FetchBatchSize,
+		"fetchTimeout", sm.consumerCfg.FetchTimeout)
 
 	for _, sub := range sm.subscriptions {
 		subCtx, cancel := context.WithCancel(ctx)
 		sub.cancel = cancel
 
-		// Create a buffered channel to decouple fetching from processing.
-		// The buffer size acts as an in-memory queue, allowing the fetcher to pull
-		// new messages while workers are busy.
-		msgChan := make(chan jetstream.Msg, sub.consumerCfg.FetchBatchSize)
+		msgChan := make(chan jetstream.Msg, sm.consumerCfg.FetchBatchSize*2)
 
-		// Start the pool of processing workers. They will block until the fetcher provides messages.
+		sm.wg.Add(1)
+		go sm.fetcher(subCtx, sub, msgChan)
+
 		for i := 0; i < sub.Workers; i++ {
 			sm.wg.Add(1)
 			go sm.processingWorker(subCtx, msgChan, i, sub.Subject)
 		}
 
-		// Start a SINGLE fetcher goroutine for this subscription.
-		// This is the only goroutine that communicates with NATS for this consumer.
-		sm.wg.Add(1)
-		go sm.fetcher(subCtx, sub, msgChan)
-
-		sm.logger.Info("started fetcher and workers for subscription",
+		sm.logger.Info("subscription started",
 			"subject", sub.Subject,
+			"stream", sub.StreamName,
+			"consumer", sub.ConsumerName,
 			"workers", sub.Workers)
 	}
 
 	return nil
 }
 
-// fetcher is a dedicated goroutine that continuously pulls messages from NATS
-// using the optimized Messages() iterator and pushes them onto a channel for the processing workers.
+// fetcher pulls messages from JetStream and feeds them to the processing workers.
 func (sm *SubscriptionManager) fetcher(ctx context.Context, sub *Subscription, msgChan chan<- jetstream.Msg) {
 	defer sm.wg.Done()
-	// Closing the channel signals to all worker goroutines that no more messages will be sent.
 	defer close(msgChan)
 
-	sub.logger.Debug("fetcher started", "subject", sub.Subject, "batchSize", sub.consumerCfg.FetchBatchSize)
-
-	iteratorOpts := []jetstream.PullMessagesOpt{
-		jetstream.PullMaxMessages(sub.consumerCfg.FetchBatchSize),
-		jetstream.PullExpiry(sub.consumerCfg.FetchTimeout),
-	}
-
-	const heartbeatThreshold = 2 * time.Second
-
-	if sub.consumerCfg.FetchTimeout >= heartbeatThreshold {
-		heartbeatInterval := sub.consumerCfg.FetchTimeout / 2
-		iteratorOpts = append(iteratorOpts, jetstream.PullHeartbeat(heartbeatInterval))
-		sub.logger.Debug("Enabling JetStream heartbeat for long poll",
-			"subject", sub.Subject,
-			"fetchTimeout", sub.consumerCfg.FetchTimeout,
-			"heartbeat", heartbeatInterval)
-	} else {
-		sub.logger.Debug("Omitting JetStream heartbeat for short poll",
-			"subject", sub.Subject,
-			"fetchTimeout", sub.consumerCfg.FetchTimeout)
-	}
-
-	iterator, err := sub.Consumer.Messages(iteratorOpts...)
-	if err != nil {
-		sub.logger.Error("failed to create messages iterator, terminating fetcher", "subject", sub.Subject, "error", err)
-		return
-	}
-
-	go func() {
-		<-ctx.Done()
-		iterator.Stop()
-	}()
+	sub.logger.Debug("fetcher started",
+		"subject", sub.Subject,
+		"batchSize", sub.consumerCfg.FetchBatchSize)
 
 	for {
-		msg, err := iterator.Next()
-		if err != nil {
-			if ctx.Err() != nil {
-				sub.logger.Debug("fetcher shutting down gracefully", "subject", sub.Subject)
-			} else {
-				sub.logger.Error("iterator.Next() failed, terminating fetcher", "subject", sub.Subject, "error", err)
-			}
+		select {
+		case <-ctx.Done():
+			sub.logger.Debug("fetcher shutting down", "subject", sub.Subject)
 			return
+		default:
 		}
 
-		select {
-		case msgChan <- msg:
-			// Message successfully passed to a worker.
-		case <-ctx.Done():
-			sub.logger.Debug("fetcher shutting down during message queuing", "subject", sub.Subject)
-			return
+		msgs, err := sub.Consumer.FetchNoWait(sub.consumerCfg.FetchBatchSize)
+		if err != nil {
+			if errors.Is(err, jetstream.ErrNoMessages) {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			sub.logger.Error("fetch failed", "subject", sub.Subject, "error", err)
+			time.Sleep(time.Second)
+			continue
+		}
+
+		for msg := range msgs.Messages() {
+			select {
+			case msgChan <- msg:
+			case <-ctx.Done():
+				sub.logger.Debug("fetcher shutting down during message queuing", "subject", sub.Subject)
+				return
+			}
 		}
 	}
 }
@@ -308,6 +275,7 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 
 	sm.logger.Debug("processing message", "subject", msg.Subject(), "size", len(msg.Data()))
 
+	// Extract headers
 	headers := make(map[string]string)
 	if msg.Headers() != nil {
 		for key, values := range msg.Headers() {
@@ -317,24 +285,39 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 		}
 	}
 
+	// Process through rule engine (uses ProcessNATS internally via backward compatibility layer)
 	actions, err := sm.processor.ProcessWithSubject(msg.Subject(), msg.Data(), headers)
 	if err != nil {
 		// This error will be caught by the caller (processingWorker) and handled appropriately.
 		return fmt.Errorf("rule processing failed: %w", err)
 	}
 
+	// Publish all matched actions
 	for _, action := range actions {
-		if err := sm.publishActionWithRetry(ctx, action); err != nil {
-			sm.logger.Error("failed to publish action after retries", "actionSubject", action.Subject, "error", err)
-			if sm.metrics != nil {
-				sm.metrics.IncActionsTotal("error")
+		// PHASE 2 UPDATE: Check for NATS action (new format)
+		if action.NATS != nil {
+			if err := sm.publishActionWithRetry(ctx, action.NATS); err != nil {
+				sm.logger.Error("failed to publish NATS action after retries",
+					"actionSubject", action.NATS.Subject,
+					"error", err)
+				if sm.metrics != nil {
+					sm.metrics.IncActionsTotal("error")
+				}
+				// Return the error to allow the message to be NAK'd, as the action failed.
+				return fmt.Errorf("failed to publish NATS action: %w", err)
 			}
-			// Return the error to allow the message to be NAK'd, as the action failed.
-			return fmt.Errorf("failed to publish action: %w", err)
-		}
-		if sm.metrics != nil {
-			sm.metrics.IncActionsTotal("success")
-			sm.metrics.IncRuleMatches()
+			if sm.metrics != nil {
+				sm.metrics.IncActionsTotal("success")
+				sm.metrics.IncRuleMatches()
+			}
+		} else if action.HTTP != nil {
+			// PHASE 3: HTTP actions will be handled by http-gateway
+			sm.logger.Warn("HTTP action detected in rule-router - HTTP actions not supported in this application",
+				"actionURL", action.HTTP.URL,
+				"hint", "Use http-gateway for HTTP actions")
+		} else {
+			sm.logger.Error("action has neither NATS nor HTTP configuration - this should never happen",
+				"subject", msg.Subject())
 		}
 	}
 
@@ -343,8 +326,8 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 	return nil
 }
 
-// publishActionWithRetry publishes an action with exponential backoff and jitter.
-func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, action *rule.Action) error {
+// publishActionWithRetry publishes a NATS action with exponential backoff and jitter.
+func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, action *rule.NATSAction) error {
 	maxRetries := sm.publishCfg.MaxRetries
 	baseDelay := sm.publishCfg.RetryBaseDelay
 	publishMode := sm.publishCfg.Mode
@@ -377,6 +360,7 @@ func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, actio
 			break
 		}
 
+		// Exponential backoff with jitter
 		delay := baseDelay * time.Duration(1<<attempt)
 		jitter := time.Duration(rand.Intn(25)) * time.Millisecond
 
@@ -391,7 +375,8 @@ func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, actio
 }
 
 // publishJetStream publishes to JetStream using the async model for high throughput.
-func (sm *SubscriptionManager) publishJetStream(ctx context.Context, action *rule.Action) error {
+func (sm *SubscriptionManager) publishJetStream(ctx context.Context, action *rule.NATSAction) error {
+	// Prepare payload
 	var payloadBytes []byte
 	if action.Passthrough {
 		payloadBytes = action.RawPayload
@@ -399,11 +384,11 @@ func (sm *SubscriptionManager) publishJetStream(ctx context.Context, action *rul
 		payloadBytes = []byte(action.Payload)
 	}
 
-	// Create a new NATS message with the specified subject and payload.
+	// Create NATS message
 	msg := nats.NewMsg(action.Subject)
 	msg.Data = payloadBytes
 
-	// If the processed action has headers, add them to the message.
+	// Add headers if present
 	if len(action.Headers) > 0 {
 		msg.Header = make(nats.Header)
 		for key, value := range action.Headers {
@@ -411,14 +396,14 @@ func (sm *SubscriptionManager) publishJetStream(ctx context.Context, action *rul
 		}
 	}
 
-	// Use PublishMsgAsync to send the complete message object.
+	// Publish async
 	ackF, err := sm.jetStream.PublishMsgAsync(msg)
 	if err != nil {
 		// This error occurs if the async buffer is full (backpressure).
 		return fmt.Errorf("jetstream async publish failed on send: %w", err)
 	}
 
-	// Block and wait for the acknowledgement for this specific attempt, respecting the configured timeout.
+	// Wait for acknowledgement with timeout
 	pubCtx, cancel := context.WithTimeout(ctx, sm.publishCfg.AckTimeout)
 	defer cancel()
 
@@ -438,7 +423,8 @@ func (sm *SubscriptionManager) publishJetStream(ctx context.Context, action *rul
 }
 
 // publishCore publishes to core NATS (fire-and-forget, no ack).
-func (sm *SubscriptionManager) publishCore(ctx context.Context, action *rule.Action) error {
+func (sm *SubscriptionManager) publishCore(ctx context.Context, action *rule.NATSAction) error {
+	// Prepare payload
 	var payloadBytes []byte
 	if action.Passthrough {
 		payloadBytes = action.RawPayload
@@ -501,13 +487,11 @@ func (sm *SubscriptionManager) GetSubscriptionCount() int {
 func isTerminalError(err error) bool {
 	// A JSON unmarshalling error is a classic terminal error, as the message
 	// payload is fundamentally invalid and will never be successfully processed.
-	if strings.Contains(err.Error(), "unmarshal") {
+	if strings.Contains(err.Error(), "invalid character") ||
+		strings.Contains(err.Error(), "unexpected end of JSON") {
 		return true
 	}
 
-	// Future terminal errors could be added here. For example:
-	// - A cryptographic signature validation failure.
-	// - A business logic validation error (e.g., "missing required field 'transaction_id'").
-
+	// Add more terminal error patterns as needed based on production experience.
 	return false
 }

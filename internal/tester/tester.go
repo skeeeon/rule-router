@@ -32,12 +32,13 @@ func New(log *logger.Logger, verbose bool, parallel int) *Tester {
 	}
 }
 
-// --- Mode Implementations ---
-
-// Lint runs the linter mode.
+// Lint runs the linter mode. It validates the syntax of all rule files in a directory.
 func (t *Tester) Lint(rulesDir string) error {
 	fmt.Printf("▶ LINTING rules in %s\n\n", rulesDir)
 	var failed bool
+
+	// Use the official loader which contains all validation logic
+	loader := rule.NewRulesLoader(t.Logger, nil) // KV buckets not needed for linting
 
 	err := filepath.Walk(rulesDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -50,10 +51,11 @@ func (t *Tester) Lint(rulesDir string) error {
 			return nil
 		}
 		ext := strings.ToLower(filepath.Ext(path))
-		if ext != ".json" && ext != ".yaml" && ext != ".yml" {
+		if ext != ".yaml" && ext != ".yml" {
 			return nil
 		}
-		if _, err := loadSingleRuleFile(path); err != nil {
+		// LoadFromFile now performs all necessary validation
+		if _, err := loader.LoadFromFile(path); err != nil {
 			fmt.Printf("✖ FAIL: %s\n  Error: %v\n", path, err)
 			failed = true
 		} else {
@@ -72,7 +74,7 @@ func (t *Tester) Lint(rulesDir string) error {
 	return nil
 }
 
-// Scaffold runs the scaffold mode.
+// Scaffold runs the scaffold mode, generating a test directory for a rule.
 func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 	if !strings.HasSuffix(rulePath, ".yaml") && !strings.HasSuffix(rulePath, ".yml") {
 		return fmt.Errorf("--scaffold requires a path to a .yaml rule file")
@@ -80,15 +82,12 @@ func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 
 	testDir := strings.TrimSuffix(rulePath, filepath.Ext(rulePath)) + "_test"
 
-	// Restore the overwrite protection and user prompt logic.
 	if _, err := os.Stat(testDir); !os.IsNotExist(err) {
 		if noOverwrite {
 			return fmt.Errorf("test directory already exists: %s (use without --no-overwrite to proceed)", testDir)
 		}
-
 		fmt.Printf("⚠️  Test directory already exists: %s\n", testDir)
 		fmt.Printf("   Overwrite? (y/N): ")
-
 		var response string
 		fmt.Scanln(&response)
 		if strings.ToLower(strings.TrimSpace(response)) != "y" {
@@ -101,51 +100,57 @@ func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 		return fmt.Errorf("failed to create directory %s: %w", testDir, err)
 	}
 
-	rules, _ := loadSingleRuleFile(rulePath)
-	subject := "subject"
-	if len(rules) > 0 {
-		ruleSubject := rules[0].Subject
-		if !strings.Contains(ruleSubject, "*") && !strings.Contains(ruleSubject, ">") {
-			subject = ruleSubject
-		}
+	rules, err := loadSingleRuleFile(rulePath)
+	if err != nil || len(rules) == 0 {
+		return fmt.Errorf("could not load rule file to determine trigger type: %w", err)
 	}
+	rule := rules[0]
 
+	// Create a test config based on the rule's trigger type
 	testConfig := TestConfig{
-		Subject:  subject,
 		MockTime: time.Now().Format(time.RFC3339),
 		Headers:  make(map[string]string),
 	}
-	configBytes, _ := json.MarshalIndent(testConfig, "", "  ")
 
+	if rule.Trigger.NATS != nil {
+		testConfig.MockTrigger.NATS = rule.Trigger.NATS
+	} else if rule.Trigger.HTTP != nil {
+		testConfig.MockTrigger.HTTP = rule.Trigger.HTTP
+	}
+
+	configBytes, _ := json.MarshalIndent(testConfig, "", "  ")
 	os.WriteFile(filepath.Join(testDir, "_test_config.json"), configBytes, 0644)
 	os.WriteFile(filepath.Join(testDir, "match_1.json"), []byte("{}\n"), 0644)
 	os.WriteFile(filepath.Join(testDir, "not_match_1.json"), []byte("{}\n"), 0644)
 
 	fmt.Printf("✔ Scaffolded test directory at: %s\n", testDir)
-	fmt.Println("  - _test_config.json (includes 'headers' field)")
 	return nil
 }
 
-// QuickCheck runs the quick check mode.
+// QuickCheck runs the quick check mode for interactive testing.
 func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath string) error {
-	var testSubject string
-	if subjectOverride != "" {
-		testSubject = subjectOverride
+	rules, err := loadSingleRuleFile(rulePath)
+	if err != nil || len(rules) == 0 {
+		return fmt.Errorf("could not load or parse rule file %s: %w", rulePath, err)
+	}
+	r := rules[0] // Changed from 'rule' to 'r' to avoid shadowing package name
+	
+	// Setup test config based on the actual rule trigger
+	testConfig := &TestConfig{Headers: make(map[string]string)}
+	if r.Trigger.NATS != nil {
+		testConfig.MockTrigger.NATS = r.Trigger.NATS
+		if subjectOverride != "" {
+			testConfig.MockTrigger.NATS.Subject = subjectOverride
+		}
+		fmt.Printf("▶ Running Quick Check (NATS) on subject: %s\n\n", testConfig.MockTrigger.NATS.Subject)
+	} else if r.Trigger.HTTP != nil {
+		testConfig.MockTrigger.HTTP = r.Trigger.HTTP
+		fmt.Printf("▶ Running Quick Check (HTTP) on path: %s, method: %s\n\n", testConfig.MockTrigger.HTTP.Path, testConfig.MockTrigger.HTTP.Method)
 	} else {
-		rules, err := loadSingleRuleFile(rulePath)
-		if err != nil || len(rules) == 0 {
-			return fmt.Errorf("could not load or parse rule file %s: %w", rulePath, err)
-		}
-		ruleSubject := rules[0].Subject
-		if strings.Contains(ruleSubject, "*") || strings.Contains(ruleSubject, ">") {
-			testSubject = "subject" // Placeholder
-		} else {
-			testSubject = ruleSubject
-		}
+		return fmt.Errorf("rule has no valid trigger")
 	}
 
 	kvData := loadMockKV(kvMockPath)
-	testConfig := &TestConfig{Subject: testSubject}
 	processor := setupTestProcessor(rulePath, kvData, testConfig, t.Verbose)
 
 	msgBytes, err := os.ReadFile(messagePath)
@@ -153,9 +158,14 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 		return fmt.Errorf("failed to read message file %s: %w", messagePath, err)
 	}
 
-	fmt.Printf("▶ Running Quick Check on subject: %s\n\n", testSubject)
 	start := time.Now()
-	actions, err := processor.ProcessWithSubject(testConfig.Subject, msgBytes, nil)
+	var actions []*rule.Action
+	// Dispatch to the correct processor method based on trigger type
+	if testConfig.MockTrigger.NATS != nil {
+		actions, err = processor.ProcessNATS(testConfig.MockTrigger.NATS.Subject, msgBytes, testConfig.Headers)
+	} else {
+		actions, err = processor.ProcessHTTP(testConfig.MockTrigger.HTTP.Path, testConfig.MockTrigger.HTTP.Method, msgBytes, testConfig.Headers)
+	}
 	duration := time.Since(start)
 
 	if err != nil {
@@ -167,11 +177,23 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 		fmt.Printf("Processing Time: %v\n", duration)
 		for i, action := range actions {
 			fmt.Printf("\n--- Rendered Action %d ---\n", i+1)
-			fmt.Printf("Subject: %s\n", action.Subject)
-			if action.Passthrough {
-				fmt.Printf("Payload: %s (passthrough)\n", string(action.RawPayload))
-			} else {
-				fmt.Printf("Payload: %s\n", action.Payload)
+			if action.NATS != nil {
+				fmt.Printf("Type: NATS\n")
+				fmt.Printf("Subject: %s\n", action.NATS.Subject)
+				if action.NATS.Passthrough {
+					fmt.Printf("Payload: %s (passthrough)\n", string(action.NATS.RawPayload))
+				} else {
+					fmt.Printf("Payload: %s\n", action.NATS.Payload)
+				}
+			} else if action.HTTP != nil {
+				fmt.Printf("Type: HTTP\n")
+				fmt.Printf("URL: %s\n", action.HTTP.URL)
+				fmt.Printf("Method: %s\n", action.HTTP.Method)
+				if action.HTTP.Passthrough {
+					fmt.Printf("Payload: %s (passthrough)\n", string(action.HTTP.RawPayload))
+				} else {
+					fmt.Printf("Payload: %s\n", action.HTTP.Payload)
+				}
 			}
 			fmt.Println("-----------------------")
 		}
@@ -182,8 +204,7 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 	return nil
 }
 
-// --- Batch Test Logic ---
-
+// RunBatchTest executes all test suites found in a directory.
 func (t *Tester) RunBatchTest(rulesDir string) (TestSummary, error) {
 	startTime := time.Now()
 	testGroups, err := t.collectTestGroups(rulesDir)
@@ -208,7 +229,7 @@ func (t *Tester) runTestsSequential(groups []TestGroup) TestSummary {
 		for _, testFile := range group.TestFiles {
 			baseName := filepath.Base(testFile)
 			summary.Total++
-			result := t.runSingleTestCase(processor, testFile, group.TestConfig.Subject, group.TestConfig.Headers)
+			result := t.runSingleTestCase(processor, testFile, group.TestConfig)
 			summary.Results = append(summary.Results, result)
 			if result.Passed {
 				summary.Passed++
@@ -232,7 +253,7 @@ func (t *Tester) runTestsParallel(groups []TestGroup) TestSummary {
 		go func() {
 			defer wg.Done()
 			for j := range jobs {
-				results <- t.runSingleTestCase(j.Processor, j.TestFile, j.Subject, j.Headers)
+				results <- t.runSingleTestCase(j.Processor, j.TestFile, j.Config)
 			}
 		}()
 	}
@@ -241,8 +262,10 @@ func (t *Tester) runTestsParallel(groups []TestGroup) TestSummary {
 			processor := setupTestProcessor(group.RulePath, group.KVData, group.TestConfig, false)
 			for _, testFile := range group.TestFiles {
 				jobs <- TestJob{
-					Processor: processor, TestFile: testFile, Subject: group.TestConfig.Subject,
-					Headers: group.TestConfig.Headers, Verbose: t.Verbose,
+					Processor: processor,
+					TestFile:  testFile,
+					Config:    group.TestConfig,
+					Verbose:   t.Verbose,
 				}
 			}
 		}
@@ -265,28 +288,45 @@ func (t *Tester) runTestsParallel(groups []TestGroup) TestSummary {
 	return summary
 }
 
-func (t *Tester) runSingleTestCase(processor *rule.Processor, messagePath, subject string, headers map[string]string) TestResult {
+// runSingleTestCase executes a single test case against the rule processor.
+func (t *Tester) runSingleTestCase(processor *rule.Processor, messagePath string, testConfig *TestConfig) TestResult {
 	start := time.Now()
 	baseName := filepath.Base(messagePath)
 	shouldMatch := strings.HasPrefix(baseName, "match_")
 	result := TestResult{File: baseName}
+
 	msgBytes, err := os.ReadFile(messagePath)
 	if err != nil {
 		result.Error = fmt.Sprintf("could not read message file: %v", err)
 		result.DurationMs = time.Since(start).Milliseconds()
 		return result
 	}
-	actions, err := processor.ProcessWithSubject(subject, msgBytes, headers)
+
+	var actions []*rule.Action
+	// Dispatch to the correct processor method based on the mock trigger type
+	if testConfig.MockTrigger.NATS != nil {
+		actions, err = processor.ProcessNATS(testConfig.MockTrigger.NATS.Subject, msgBytes, testConfig.Headers)
+	} else if testConfig.MockTrigger.HTTP != nil {
+		actions, err = processor.ProcessHTTP(testConfig.MockTrigger.HTTP.Path, testConfig.MockTrigger.HTTP.Method, msgBytes, testConfig.Headers)
+	} else {
+		result.Error = "no mock trigger specified in test config"
+		result.DurationMs = time.Since(start).Milliseconds()
+		return result
+	}
 	result.DurationMs = time.Since(start).Milliseconds()
+
 	if err != nil {
 		result.Error = fmt.Sprintf("processing error: %v", err)
 		return result
 	}
+
 	matched := len(actions) > 0
 	if matched != shouldMatch {
 		result.Error = fmt.Sprintf("expected match=%v, got match=%v", shouldMatch, matched)
 		return result
 	}
+
+	// If a match was expected, and an output file exists, validate the action.
 	if matched {
 		outputFile := strings.TrimSuffix(messagePath, ".json") + "_output.json"
 		if _, err := os.Stat(outputFile); !os.IsNotExist(err) {
@@ -296,27 +336,69 @@ func (t *Tester) runSingleTestCase(processor *rule.Processor, messagePath, subje
 			}
 		}
 	}
+
 	result.Passed = true
 	return result
 }
 
-func loadTestConfig(path string) *TestConfig {
-	config := &TestConfig{
-		Subject: "test.subject",
-		Headers: make(map[string]string),
-	}
-	bytes, err := os.ReadFile(path)
+// validateOutput checks if the generated action matches the expected output file.
+func validateOutput(action *rule.Action, outputFile string) error {
+	expectedBytes, err := os.ReadFile(outputFile)
 	if err != nil {
-		return config
+		return err
 	}
-	json.Unmarshal(bytes, &config)
-	if config.Headers == nil {
-		config.Headers = make(map[string]string)
+	var expected ExpectedOutput
+	if err := json.Unmarshal(expectedBytes, &expected); err != nil {
+		return fmt.Errorf("could not parse expected output: %w", err)
 	}
-	return config
+
+	// Dispatch to the correct validation helper based on action type
+	if action.NATS != nil {
+		return validateNATSOutput(action.NATS, &expected)
+	} else if action.HTTP != nil {
+		return validateHTTPOutput(action.HTTP, &expected)
+	}
+	return fmt.Errorf("action has no NATS or HTTP configuration")
 }
 
-// --- Other helper functions ---
+func validateNATSOutput(action *rule.NATSAction, expected *ExpectedOutput) error {
+	if expected.Subject != "" && action.Subject != expected.Subject {
+		return fmt.Errorf("subject mismatch: got '%s', want '%s'", action.Subject, expected.Subject)
+	}
+	return validatePayload(action.Payload, action.Passthrough, action.RawPayload, expected.Payload)
+}
+
+func validateHTTPOutput(action *rule.HTTPAction, expected *ExpectedOutput) error {
+	if expected.URL != "" && action.URL != expected.URL {
+		return fmt.Errorf("URL mismatch: got '%s', want '%s'", action.URL, expected.URL)
+	}
+	if expected.Method != "" && action.Method != expected.Method {
+		return fmt.Errorf("method mismatch: got '%s', want '%s'", action.Method, expected.Method)
+	}
+	return validatePayload(action.Payload, action.Passthrough, action.RawPayload, expected.Payload)
+}
+
+func validatePayload(payload string, passthrough bool, rawPayload []byte, expectedPayload json.RawMessage) error {
+	var actualPayload, expectedParsed interface{}
+	payloadBytes := []byte(payload)
+	if passthrough {
+		payloadBytes = rawPayload
+	}
+	if err := json.Unmarshal(payloadBytes, &actualPayload); err != nil {
+		return fmt.Errorf("could not unmarshal actual payload: %w", err)
+	}
+	if err := json.Unmarshal(expectedPayload, &expectedParsed); err != nil {
+		return fmt.Errorf("could not unmarshal expected payload: %w", err)
+	}
+	actualCanon, _ := json.Marshal(actualPayload)
+	expectedCanon, _ := json.Marshal(expectedParsed)
+	if string(actualCanon) != string(expectedCanon) {
+		return fmt.Errorf("payload mismatch:\ngot:  %s\nwant: %s", string(actualCanon), string(expectedCanon))
+	}
+	return nil
+}
+
+// --- Helper Functions ---
 
 func (t *Tester) collectTestGroups(rulesDir string) ([]TestGroup, error) {
 	var testGroups []TestGroup
@@ -331,7 +413,7 @@ func (t *Tester) collectTestGroups(rulesDir string) ([]TestGroup, error) {
 			return nil
 		}
 		ext := strings.ToLower(filepath.Ext(path))
-		if ext != ".json" && ext != ".yaml" && ext != ".yml" {
+		if ext != ".yaml" && ext != ".yml" {
 			return nil
 		}
 		testDir := strings.TrimSuffix(path, filepath.Ext(path)) + "_test"
@@ -359,85 +441,16 @@ func (t *Tester) collectTestGroups(rulesDir string) ([]TestGroup, error) {
 	return testGroups, err
 }
 
-func validateOutput(action *rule.Action, outputFile string) error {
-	expectedBytes, err := os.ReadFile(outputFile)
-	if err != nil {
-		return err
-	}
-	var expected ExpectedOutput
-	if err := json.Unmarshal(expectedBytes, &expected); err != nil {
-		return fmt.Errorf("could not parse expected output file %s: %w", outputFile, err)
-	}
-
-	// 1. Validate Subject
-	if action.Subject != expected.Subject {
-		return fmt.Errorf("subject mismatch: got '%s', want '%s'", action.Subject, expected.Subject)
-	}
-
-	// 2. Validate Payload
-	var actualPayload, expectedPayload interface{}
-	payloadBytes := []byte(action.Payload)
-	if action.Passthrough {
-		payloadBytes = action.RawPayload
-	}
-	if err := json.Unmarshal(payloadBytes, &actualPayload); err != nil {
-		return fmt.Errorf("could not unmarshal actual action payload: %w", err)
-	}
-	if err := json.Unmarshal(expected.Payload, &expectedPayload); err != nil {
-		return fmt.Errorf("could not unmarshal expected payload from output file: %w", err)
-	}
-	actualCanon, _ := json.Marshal(actualPayload)
-	expectedCanon, _ := json.Marshal(expectedPayload)
-	if string(actualCanon) != string(expectedCanon) {
-		return fmt.Errorf("payload mismatch:\ngot:  %s\nwant: %s", string(actualCanon), string(expectedCanon))
-	}
-
-	// 3. Validate Headers
-	if expected.Headers != nil {
-		if action.Headers == nil {
-			return fmt.Errorf("output validation failed: expected headers but got none")
-		}
-
-		// Check for missing headers and mismatched values
-		for key, expectedValue := range expected.Headers {
-			actualValue, exists := action.Headers[key]
-			if !exists {
-				return fmt.Errorf("output validation failed: missing expected header '%s'", key)
-			}
-			if actualValue != expectedValue {
-				return fmt.Errorf("output validation failed: header '%s' mismatch: got '%s', want '%s'",
-					key, actualValue, expectedValue)
-			}
-		}
-
-		// Check for unexpected extra headers
-		if len(action.Headers) != len(expected.Headers) {
-			for key := range action.Headers {
-				if _, isExpected := expected.Headers[key]; !isExpected {
-					return fmt.Errorf("output validation failed: unexpected header found '%s'", key)
-				}
-			}
-		}
-	} else if len(action.Headers) > 0 {
-		return fmt.Errorf("output validation failed: expected no headers, but got %d headers", len(action.Headers))
-	}
-
-	return nil
-}
-
 func setupTestProcessor(rulePath string, kvData map[string]map[string]interface{}, testConfig *TestConfig, verbose bool) *rule.Processor {
 	log := logger.NewNopLogger()
-	
-	// Extract bucket names from KV data
 	var bucketNames []string
 	for bucket := range kvData {
 		bucketNames = append(bucketNames, bucket)
 	}
-	
 	loader := rule.NewRulesLoader(log, bucketNames)
-	rules, _ := loader.LoadFromDirectory(filepath.Dir(rulePath))
-	
-	// Setup KV context with local cache
+	// Only load the specific rule file for this test group
+	rules, _ := loader.LoadFromFile(rulePath)
+
 	var kvContext *rule.KVContext
 	if kvData != nil {
 		cache := rule.NewLocalKVCache(log)
@@ -448,51 +461,35 @@ func setupTestProcessor(rulePath string, kvData map[string]map[string]interface{
 		}
 		kvContext = rule.NewKVContext(nil, log, cache)
 	}
-	
-	// NEW: Setup signature verification for testing
+
 	var sigVerification *rule.SignatureVerification
 	if testConfig.MockSignature != nil {
-		// Enable signature verification with default header names
-		sigVerification = rule.NewSignatureVerification(
-			true,
-			"Nats-Public-Key",
-			"Nats-Signature",
-		)
-		
-		// Add mock headers to test config headers
-		if testConfig.Headers == nil {
-			testConfig.Headers = make(map[string]string)
-		}
-		
-		// Set the public key header
-		testConfig.Headers["Nats-Public-Key"] = testConfig.MockSignature.PublicKey
-		
-		// Set a dummy signature header (will be validated based on MockSignature.Valid)
-		// In a real test, you could generate an actual signature, but for simplicity
-		// we're just setting a placeholder. The mock logic would need to be more sophisticated
-		// to actually verify signatures in tests - for now this just enables the @signature fields
-		testConfig.Headers["Nats-Signature"] = "dGVzdC1zaWduYXR1cmU=" // base64 "test-signature"
-		
-		// NOTE: For true signature verification testing, you would need to:
-		// 1. Generate a real NKey pair
-		// 2. Sign the test message payload with the private key
-		// 3. Put the real signature in the header
-		// For offline testing, you can verify @signature.pubkey access works
-		// but @signature.valid will always be false unless you generate real signatures
+		sigVerification = rule.NewSignatureVerification(true, "Nats-Public-Key", "Nats-Signature")
 	}
-	
-	// Create processor with signature verification
+
 	processor := rule.NewProcessor(log, nil, kvContext, sigVerification)
 	processor.LoadRules(rules)
-	
-	// Setup mock time provider if specified
+
 	if testConfig.MockTime != "" {
 		if t, err := time.Parse(time.RFC3339, testConfig.MockTime); err == nil {
 			processor.SetTimeProvider(rule.NewMockTimeProvider(t))
 		}
 	}
-	
+
 	return processor
+}
+
+func loadTestConfig(path string) *TestConfig {
+	config := &TestConfig{Headers: make(map[string]string)}
+	bytes, err := os.ReadFile(path)
+	if err != nil {
+		return config
+	}
+	json.Unmarshal(bytes, &config)
+	if config.Headers == nil {
+		config.Headers = make(map[string]string)
+	}
+	return config
 }
 
 func loadSingleRuleFile(path string) ([]rule.Rule, error) {

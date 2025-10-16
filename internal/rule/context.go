@@ -3,90 +3,148 @@
 package rule
 
 import (
+	json "github.com/goccy/go-json"
 	"encoding/base64"
-	"fmt"
 	"strings"
 	"sync"
 
-	json "github.com/goccy/go-json"
 	"github.com/nats-io/nkeys"
 	"rule-router/internal/logger"
 )
 
-// EvaluationContext holds all data for a single message evaluation.
-// It is created once per message and is treated as immutable.
+// EvaluationContext provides all data needed for condition evaluation and template processing
+// Supports both NATS and HTTP contexts
 type EvaluationContext struct {
+	// Message data
 	Msg        map[string]interface{}
 	RawPayload []byte
 	Headers    map[string]string
-	Subject    *SubjectContext
-	Time       *TimeContext
-	KV         *KVContext
-	traverser  *JSONPathTraverser
+
+	// Context (NATS or HTTP, one will be nil)
+	Subject *SubjectContext
+	HTTP    *HTTPRequestContext
+
+	// Shared contexts
+	Time      *TimeContext
+	KV        *KVContext
+	traverser *JSONPathTraverser
 
 	// Signature verification (lazy evaluation)
 	sigVerification *SignatureVerification
-	logger          *logger.Logger
 	sigMu           sync.Mutex
 	sigChecked      bool
 	sigValid        bool
 	signerPublicKey string
+	logger          *logger.Logger
 }
 
-// NewEvaluationContext creates a new context for a message.
+// NewEvaluationContext creates a new evaluation context
+// Either subjectCtx OR httpCtx should be provided (not both)
 func NewEvaluationContext(
 	payload []byte,
 	headers map[string]string,
-	subject *SubjectContext,
-	time *TimeContext,
-	kv *KVContext,
+	subjectCtx *SubjectContext,
+	httpCtx *HTTPRequestContext,
+	timeCtx *TimeContext,
+	kvCtx *KVContext,
 	sigVerification *SignatureVerification,
 	logger *logger.Logger,
 ) (*EvaluationContext, error) {
-	var msg map[string]interface{}
+	var msgData map[string]interface{}
 	if len(payload) > 0 {
-		if err := json.Unmarshal(payload, &msg); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal message: %w", err)
+		if err := json.Unmarshal(payload, &msgData); err != nil {
+			return nil, err
 		}
+	} else {
+		msgData = make(map[string]interface{})
 	}
 
 	return &EvaluationContext{
-		Msg:             msg,
+		Msg:             msgData,
 		RawPayload:      payload,
 		Headers:         headers,
-		Subject:         subject,
-		Time:            time,
-		KV:              kv,
+		Subject:         subjectCtx,
+		HTTP:            httpCtx,
+		Time:            timeCtx,
+		KV:              kvCtx,
 		traverser:       NewJSONPathTraverser(),
 		sigVerification: sigVerification,
 		logger:          logger,
 	}, nil
 }
 
-// ResolveValue is the central point for variable lookup.
-// It understands all prefixes like {@subject.}, {@kv.}, {@header.}, {@signature.}, and {msg.field}.
+// ResolveValue resolves a field value from the context
+// Supports message fields, system fields (@subject, @path, @header, @time, @kv, @signature)
 func (c *EvaluationContext) ResolveValue(path string) (interface{}, bool) {
+	// System fields start with @
 	if strings.HasPrefix(path, "@") {
-		// System variable
-		if strings.HasPrefix(path, "@subject") {
+		return c.resolveSystemField(path)
+	}
+
+	// Message field - traverse JSON
+	value, err := c.traverser.TraversePathString(c.Msg, path)
+	if err != nil {
+		return nil, false
+	}
+	return value, true
+}
+
+// resolveSystemField handles all @ prefixed system fields
+func (c *EvaluationContext) resolveSystemField(path string) (interface{}, bool) {
+	// Subject fields (NATS context)
+	if strings.HasPrefix(path, "@subject") {
+		if c.Subject != nil {
 			return c.Subject.GetField(path)
 		}
-		if strings.HasPrefix(path, "@time") || strings.HasPrefix(path, "@date") || strings.HasPrefix(path, "@timestamp") {
+		return nil, false
+	}
+
+	// HTTP path fields (HTTP context)
+	if strings.HasPrefix(path, "@path") {
+		if c.HTTP != nil {
+			return c.HTTP.GetField(path)
+		}
+		return nil, false
+	}
+
+	// HTTP method field (HTTP context)
+	if path == "@method" {
+		if c.HTTP != nil {
+			return c.HTTP.Method, true
+		}
+		return nil, false
+	}
+
+	// Header fields (both contexts)
+	if strings.HasPrefix(path, "@header.") {
+		headerName := path[8:] // Remove "@header."
+		if c.Headers != nil {
+			if value, ok := c.Headers[headerName]; ok {
+				return value, true
+			}
+		}
+		return nil, false
+	}
+
+	// Time fields (both contexts)
+	if strings.HasPrefix(path, "@time") || strings.HasPrefix(path, "@day") || strings.HasPrefix(path, "@date") {
+		if c.Time != nil {
 			return c.Time.GetField(path)
 		}
-		if strings.HasPrefix(path, "@kv") && c.KV != nil {
+		return nil, false
+	}
+
+	// KV fields (both contexts)
+	if strings.HasPrefix(path, "@kv.") {
+		if c.KV != nil {
 			return c.KV.GetFieldWithContext(path, c.Msg, c.Time, c.Subject)
 		}
-		if strings.HasPrefix(path, "@header.") {
-			if c.Headers == nil {
-				return nil, false
-			}
-			headerName := path[8:] // remove "@header."
-			val, exists := c.Headers[headerName]
-			return val, exists
-		}
-		// NEW: Signature fields
-		if strings.HasPrefix(path, "@signature.") {
+		return nil, false
+	}
+
+	// Signature fields (both contexts)
+	if strings.HasPrefix(path, "@signature.") {
+		if c.sigVerification != nil && c.sigVerification.Enabled {
 			c.verifySignature() // Lazy verification
 			switch path {
 			case "@signature.valid":
@@ -102,16 +160,11 @@ func (c *EvaluationContext) ResolveValue(path string) (interface{}, bool) {
 		return nil, false
 	}
 
-	// Message field
-	value, err := c.traverser.TraversePathString(c.Msg, path)
-	if err != nil {
-		return nil, false
-	}
-	return value, true
+	return nil, false
 }
 
-// verifySignature performs NKey signature verification with lazy evaluation.
-// This method is thread-safe and only runs once per message, only when requested.
+// verifySignature performs NKey signature verification with lazy evaluation
+// This method is thread-safe and only runs once per message, only when requested
 func (c *EvaluationContext) verifySignature() {
 	c.sigMu.Lock()
 	defer c.sigMu.Unlock()
@@ -173,15 +226,20 @@ func (c *EvaluationContext) verifySignature() {
 	if err := user.Verify(c.RawPayload, sig); err == nil {
 		c.sigValid = true
 		if c.logger != nil {
+			var contextType string
+			if c.Subject != nil {
+				contextType = "nats"
+			} else if c.HTTP != nil {
+				contextType = "http"
+			}
 			c.logger.Info("signature verified successfully",
 				"pubkey", pubKeyStr[:16]+"...",
-				"subject", c.Subject.Full)
+				"contextType", contextType)
 		}
 	} else {
 		if c.logger != nil {
 			c.logger.Warn("signature verification failed",
 				"pubkey", pubKeyStr[:16]+"...",
-				"subject", c.Subject.Full,
 				"error", err.Error())
 		}
 	}

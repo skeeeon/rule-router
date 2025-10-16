@@ -1,4 +1,4 @@
-//file: internal/rule/loader.go
+// file: internal/rule/loader.go
 
 package rule
 
@@ -6,193 +6,251 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
+	"time"
 
-	json "github.com/goccy/go-json"
 	"gopkg.in/yaml.v3"
 	"rule-router/internal/logger"
 )
 
-// Enhanced regex patterns for KV field validation with colon delimiter
-var (
-	// Matches variable placeholders: {variable_name}
-	variablePattern = regexp.MustCompile(`\{([^}]+)\}`)
-)
-
-// RulesLoader handles loading and validation of rules from the filesystem
+// RulesLoader handles loading and validating rule definitions from YAML files
 type RulesLoader struct {
-	logger            *logger.Logger
-	configuredBuckets map[string]bool // KV buckets configured in config.yaml
+	logger          *logger.Logger
+	configuredKVBuckets []string
 }
 
-// NewRulesLoader creates a new rules loader instance
+// NewRulesLoader creates a new rules loader
 func NewRulesLoader(log *logger.Logger, kvBuckets []string) *RulesLoader {
-	if log == nil {
-		return nil
-	}
-
-	// Build bucket lookup map for validation
-	buckets := make(map[string]bool)
-	for _, bucket := range kvBuckets {
-		buckets[bucket] = true
-	}
-
-	log.Info("rules loader initialized with colon delimiter syntax",
-		"kvBucketsConfigured", len(buckets),
-		"buckets", kvBuckets,
-		"syntax", "@kv.bucket.key:path")
-
 	return &RulesLoader{
-		logger:            log,
-		configuredBuckets: buckets,
+		logger:          log,
+		configuredKVBuckets: kvBuckets,
 	}
 }
 
-// LoadFromDirectory loads all rule files from the specified directory
-func (l *RulesLoader) LoadFromDirectory(path string) ([]Rule, error) {
-	l.logger.Debug("loading rules from directory", "path", path)
+// LoadFromDirectory loads all .yaml and .yml files from a directory
+func (l *RulesLoader) LoadFromDirectory(dirPath string) ([]Rule, error) {
+	l.logger.Info("loading rules from directory", "path", dirPath)
 
-	var validRules []Rule
-	var errorCount int
-
-	err := filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
-		if err != nil {
-			return fmt.Errorf("error accessing path %s: %w", filePath, err)
-		}
-
-		// If the entry is a directory and ends with "_test", skip it entirely.
-		if info.IsDir() && strings.HasSuffix(info.Name(), "_test") {
-			l.logger.Debug("skipping test directory", "path", filePath)
-			return filepath.SkipDir
-		}
-
-		if info.IsDir() {
-			return nil
-		}
-
-		ext := strings.ToLower(filepath.Ext(filePath))
-		if ext != ".json" && ext != ".yaml" && ext != ".yml" {
-			return nil
-		}
-
-		l.logger.Debug("loading rule file", "path", filePath)
-
-		data, err := os.ReadFile(filePath)
-		if err != nil {
-			l.logger.Error("failed to read rule file", "path", filePath, "error", err)
-			return fmt.Errorf("failed to read rule file %s: %w", filePath, err)
-		}
-
-		var ruleSet []Rule
-		var parseErr error
-
-		// Determine parser based on file extension
-		switch ext {
-		case ".json":
-			parseErr = json.Unmarshal(data, &ruleSet)
-		case ".yaml", ".yml":
-			parseErr = yaml.Unmarshal(data, &ruleSet)
-		}
-
-		if parseErr != nil {
-			l.logger.Error("failed to parse rule file", "path", filePath, "error", parseErr)
-			return fmt.Errorf("failed to parse rule file %s: %w", filePath, parseErr)
-		}
-
-		l.logger.Debug("parsed rule file successfully", "path", filePath, "rulesFound", len(ruleSet))
-
-		// Validate and filter rules
-		for i, rule := range ruleSet {
-			if err := l.validateRule(&rule, filePath, i); err != nil {
-				l.logger.Error("skipping invalid rule", "file", filePath, "index", i, "subject", rule.Subject, "error", err)
-				errorCount++
-				continue
-			}
-
-			validRules = append(validRules, rule)
-			l.logger.Debug("validated rule successfully", "file", filePath, "index", i, "subject", rule.Subject, "isPattern", containsWildcards(rule.Subject))
-		}
-
-		return nil
-	})
-
+	// Check if directory exists
+	info, err := os.Stat(dirPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load rules: %w", err)
+		return nil, fmt.Errorf("failed to access rules directory: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("path is not a directory: %s", dirPath)
 	}
 
-	// Log summary
-	if errorCount > 0 {
-		l.logger.Info("rule loading completed with some validation errors", "validRules", len(validRules), "errorCount", errorCount)
+	// Find all YAML files
+	files, err := filepath.Glob(filepath.Join(dirPath, "*.y*ml"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to glob YAML files: %w", err)
 	}
 
-	l.logger.Info("rules loaded successfully", "count", len(validRules))
-	return validRules, nil
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no YAML files found in directory: %s", dirPath)
+	}
+
+	l.logger.Info("found rule files", "count", len(files), "files", files)
+
+	// Load all rules from all files
+	var allRules []Rule
+	for _, file := range files {
+		rules, err := l.LoadFromFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load rules from %s: %w", file, err)
+		}
+		allRules = append(allRules, rules...)
+	}
+
+	l.logger.Info("successfully loaded all rules",
+		"totalRules", len(allRules),
+		"fileCount", len(files))
+
+	return allRules, nil
 }
 
-// validateRule performs comprehensive validation of rule configuration including wildcard patterns and KV fields
-func (l *RulesLoader) validateRule(rule *Rule, filePath string, ruleIndex int) error {
-	if rule == nil {
-		return fmt.Errorf("rule cannot be nil")
+// LoadFromFile loads rules from a single YAML file
+func (l *RulesLoader) LoadFromFile(filePath string) ([]Rule, error) {
+	l.logger.Debug("loading rules from file", "path", filePath)
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
 
-	if rule.Subject == "" {
-		return fmt.Errorf("rule subject cannot be empty")
+	var rules []Rule
+	if err := yaml.Unmarshal(data, &rules); err != nil {
+		return nil, fmt.Errorf("failed to parse YAML: %w", err)
 	}
 
-	// Validate wildcard patterns if present
-	if containsWildcards(rule.Subject) {
-		if err := l.validateWildcardPattern(rule.Subject); err != nil {
-			return fmt.Errorf("invalid wildcard pattern '%s': %w", rule.Subject, err)
+	l.logger.Info("parsed rules from file",
+		"file", filePath,
+		"ruleCount", len(rules))
+
+	// Validate each rule
+	for i, rule := range rules {
+		if err := l.validateRule(&rule, filePath, i); err != nil {
+			return nil, fmt.Errorf("rule %d validation failed: %w", i, err)
 		}
-
-		l.logger.Debug("validated wildcard pattern", "subject", rule.Subject, "file", filePath, "index", ruleIndex)
 	}
 
-	if rule.Action == nil {
-		return fmt.Errorf("rule action cannot be nil")
+	l.logger.Info("all rules validated successfully",
+		"file", filePath,
+		"ruleCount", len(rules))
+
+	return rules, nil
+}
+
+// validateRule validates a complete rule with new trigger/action format
+func (l *RulesLoader) validateRule(rule *Rule, filePath string, ruleIndex int) error {
+	// Validate trigger (must have exactly one)
+	if err := l.validateTrigger(&rule.Trigger, filePath, ruleIndex); err != nil {
+		return err
 	}
 
-	if rule.Action.Subject == "" {
-		return fmt.Errorf("action subject cannot be empty")
+	// Validate action (must have exactly one)
+	if err := l.validateAction(&rule.Action, filePath, ruleIndex); err != nil {
+		return err
 	}
 
-	// Validate passthrough vs payload mutual exclusivity
-	if err := l.validateActionPayload(rule.Action); err != nil {
-		return fmt.Errorf("invalid action configuration: %w", err)
-	}
-
-	// Validate action subject for wildcard patterns too
-	if containsWildcards(rule.Action.Subject) {
-		l.logger.Info("action subject contains wildcards - ensure this is intentional", "actionSubject", rule.Action.Subject, "ruleSubject", rule.Subject, "file", filePath, "index", ruleIndex)
-	}
-
-	// Validate KV field references in action payload (with colon delimiter)
-	if err := l.validateKVFieldsInTemplate(rule.Action.Payload); err != nil {
-		return fmt.Errorf("invalid KV field in action payload: %w", err)
-	}
-
-	// Validate KV field references in action subject template
-	if err := l.validateKVFieldsInTemplate(rule.Action.Subject); err != nil {
-		return fmt.Errorf("invalid KV field in action subject: %w", err)
-	}
-
+	// Validate conditions if present
 	if rule.Conditions != nil {
 		if err := l.validateConditions(rule.Conditions); err != nil {
 			return fmt.Errorf("invalid conditions: %w", err)
 		}
 	}
 
-	// NEW: Validate headers
-	if rule.Action.Headers != nil {
-		for key, value := range rule.Action.Headers {
+	return nil
+}
+
+// validateTrigger ensures exactly one trigger type is specified
+func (l *RulesLoader) validateTrigger(trigger *Trigger, filePath string, ruleIndex int) error {
+	natsCount := 0
+	httpCount := 0
+
+	if trigger.NATS != nil {
+		natsCount++
+		if trigger.NATS.Subject == "" {
+			return fmt.Errorf("NATS trigger subject cannot be empty")
+		}
+		// Validate NATS subject pattern
+		if err := l.validateWildcardPattern(trigger.NATS.Subject); err != nil {
+			return fmt.Errorf("invalid NATS subject pattern: %w", err)
+		}
+	}
+
+	if trigger.HTTP != nil {
+		httpCount++
+		if trigger.HTTP.Path == "" {
+			return fmt.Errorf("HTTP trigger path cannot be empty")
+		}
+		// Validate HTTP path format
+		if !strings.HasPrefix(trigger.HTTP.Path, "/") {
+			return fmt.Errorf("HTTP path must start with '/': %s", trigger.HTTP.Path)
+		}
+		// Validate HTTP method if specified
+		if trigger.HTTP.Method != "" {
+			validMethods := map[string]bool{
+				"GET": true, "POST": true, "PUT": true, "PATCH": true,
+				"DELETE": true, "HEAD": true, "OPTIONS": true,
+			}
+			method := strings.ToUpper(trigger.HTTP.Method)
+			if !validMethods[method] {
+				return fmt.Errorf("invalid HTTP method: %s", trigger.HTTP.Method)
+			}
+			// Normalize to uppercase
+			trigger.HTTP.Method = method
+		}
+	}
+
+	if natsCount+httpCount == 0 {
+		return fmt.Errorf("rule must have either NATS or HTTP trigger")
+	}
+
+	if natsCount+httpCount > 1 {
+		return fmt.Errorf("rule must have exactly one trigger type (found NATS=%d, HTTP=%d)", natsCount, httpCount)
+	}
+
+	l.logger.Debug("trigger validated",
+		"file", filePath,
+		"index", ruleIndex,
+		"nats", natsCount > 0,
+		"http", httpCount > 0)
+
+	return nil
+}
+
+// validateAction ensures exactly one action type is specified
+func (l *RulesLoader) validateAction(action *Action, filePath string, ruleIndex int) error {
+	natsCount := 0
+	httpCount := 0
+
+	if action.NATS != nil {
+		natsCount++
+		if err := l.validateNATSAction(action.NATS); err != nil {
+			return fmt.Errorf("invalid NATS action: %w", err)
+		}
+	}
+
+	if action.HTTP != nil {
+		httpCount++
+		if err := l.validateHTTPAction(action.HTTP); err != nil {
+			return fmt.Errorf("invalid HTTP action: %w", err)
+		}
+	}
+
+	if natsCount+httpCount == 0 {
+		return fmt.Errorf("rule must have either NATS or HTTP action")
+	}
+
+	if natsCount+httpCount > 1 {
+		return fmt.Errorf("rule must have exactly one action type (found NATS=%d, HTTP=%d)", natsCount, httpCount)
+	}
+
+	l.logger.Debug("action validated",
+		"file", filePath,
+		"index", ruleIndex,
+		"nats", natsCount > 0,
+		"http", httpCount > 0)
+
+	return nil
+}
+
+// validateNATSAction validates a NATS action configuration
+func (l *RulesLoader) validateNATSAction(action *NATSAction) error {
+	if action.Subject == "" {
+		return fmt.Errorf("NATS action subject cannot be empty")
+	}
+
+	// Validate payload configuration
+	if action.Passthrough && action.Payload != "" {
+		return fmt.Errorf("cannot specify both 'payload' and 'passthrough: true' - choose one")
+	}
+
+	// Warn if action subject contains wildcards (usually unintentional)
+	if containsWildcards(action.Subject) {
+		l.logger.Info("NATS action subject contains wildcards - ensure this is intentional",
+			"actionSubject", action.Subject)
+	}
+
+	// Validate KV fields in action payload
+	if err := l.validateKVFieldsInTemplate(action.Payload); err != nil {
+		return fmt.Errorf("invalid KV field in payload: %w", err)
+	}
+
+	// Validate KV fields in action subject template
+	if err := l.validateKVFieldsInTemplate(action.Subject); err != nil {
+		return fmt.Errorf("invalid KV field in subject: %w", err)
+	}
+
+	// Validate headers
+	if action.Headers != nil {
+		for key, value := range action.Headers {
 			if key == "" {
 				return fmt.Errorf("header name cannot be empty")
 			}
-			// Reuse existing template validation logic for header values
 			if err := l.validateKVFieldsInTemplate(value); err != nil {
-				return fmt.Errorf("invalid template in header value for '%s': %w", key, err)
+				return fmt.Errorf("invalid template in header '%s': %w", key, err)
 			}
 		}
 	}
@@ -200,17 +258,80 @@ func (l *RulesLoader) validateRule(rule *Rule, filePath string, ruleIndex int) e
 	return nil
 }
 
-// CORRECTED: validateActionPayload ensures action payload configuration is valid
-func (l *RulesLoader) validateActionPayload(action *Action) error {
-	// The only truly invalid state is when passthrough is true AND a non-empty payload is also defined.
-	// An empty payload ("") is a valid configuration for a templated action.
+// validateHTTPAction validates an HTTP action configuration
+func (l *RulesLoader) validateHTTPAction(action *HTTPAction) error {
+	if action.URL == "" {
+		return fmt.Errorf("HTTP action URL cannot be empty")
+	}
+
+	// Validate URL format (must start with http:// or https://)
+	if !strings.HasPrefix(action.URL, "http://") && !strings.HasPrefix(action.URL, "https://") {
+		return fmt.Errorf("HTTP action URL must start with http:// or https://: %s", action.URL)
+	}
+
+	if action.Method == "" {
+		return fmt.Errorf("HTTP action method cannot be empty")
+	}
+
+	// Validate HTTP method
+	validMethods := map[string]bool{
+		"GET": true, "POST": true, "PUT": true, "PATCH": true,
+		"DELETE": true, "HEAD": true, "OPTIONS": true,
+	}
+	method := strings.ToUpper(action.Method)
+	if !validMethods[method] {
+		return fmt.Errorf("invalid HTTP method: %s", action.Method)
+	}
+	// Normalize to uppercase
+	action.Method = method
+
+	// Validate payload configuration
 	if action.Passthrough && action.Payload != "" {
 		return fmt.Errorf("cannot specify both 'payload' and 'passthrough: true' - choose one")
 	}
 
-	// The check for "neither specified" from the original plan was flawed because it couldn't
-	// distinguish between an omitted payload and an explicitly empty one (`payload: ""`),
-	// causing it to reject valid rules. An action that produces an empty message is a valid use case.
+	// Validate KV fields in action payload
+	if err := l.validateKVFieldsInTemplate(action.Payload); err != nil {
+		return fmt.Errorf("invalid KV field in payload: %w", err)
+	}
+
+	// Validate KV fields in URL template
+	if err := l.validateKVFieldsInTemplate(action.URL); err != nil {
+		return fmt.Errorf("invalid KV field in URL: %w", err)
+	}
+
+	// Validate headers
+	if action.Headers != nil {
+		for key, value := range action.Headers {
+			if key == "" {
+				return fmt.Errorf("header name cannot be empty")
+			}
+			if err := l.validateKVFieldsInTemplate(value); err != nil {
+				return fmt.Errorf("invalid template in header '%s': %w", key, err)
+			}
+		}
+	}
+
+	// Validate retry configuration if present
+	if action.Retry != nil {
+		if action.Retry.MaxAttempts < 1 {
+			return fmt.Errorf("retry maxAttempts must be at least 1")
+		}
+		if action.Retry.InitialDelay == "" {
+			return fmt.Errorf("retry initialDelay cannot be empty")
+		}
+		if action.Retry.MaxDelay == "" {
+			return fmt.Errorf("retry maxDelay cannot be empty")
+		}
+		// Validate duration formats
+		if _, err := time.ParseDuration(action.Retry.InitialDelay); err != nil {
+			return fmt.Errorf("invalid retry initialDelay '%s': %w", action.Retry.InitialDelay, err)
+		}
+		if _, err := time.ParseDuration(action.Retry.MaxDelay); err != nil {
+			return fmt.Errorf("invalid retry maxDelay '%s': %w", action.Retry.MaxDelay, err)
+		}
+	}
+
 	return nil
 }
 
@@ -260,6 +381,13 @@ func (l *RulesLoader) validateConditions(conditions *Conditions) error {
 			}
 		}
 
+		// Validate path field references if present
+		if strings.HasPrefix(condition.Field, "@path") {
+			if err := l.validatePathField(condition.Field); err != nil {
+				return fmt.Errorf("invalid path field '%s' at index %d: %w", condition.Field, i, err)
+			}
+		}
+
 		// Validate KV field references with colon delimiter
 		if strings.HasPrefix(condition.Field, "@kv") {
 			if err := l.validateKVFieldWithVariables(condition.Field); err != nil {
@@ -278,91 +406,95 @@ func (l *RulesLoader) validateConditions(conditions *Conditions) error {
 	return nil
 }
 
-// **FIX START**
 // validateSubjectField validates subject field references like @subject.1, @subject.count
-// This version correctly parses any non-negative integer for token indices.
 func (l *RulesLoader) validateSubjectField(field string) error {
-	// Allow the full subject itself, e.g., "@subject"
-	if field == "@subject" {
+	validFields := map[string]bool{
+		"@subject":       true,
+		"@subject.count": true,
+	}
+
+	if validFields[field] {
 		return nil
 	}
 
-	// For token access, the field must start with the correct prefix.
-	if !strings.HasPrefix(field, "@subject.") {
-		return fmt.Errorf("invalid subject field format: %s", field)
-	}
-
-	// Extract the accessor part (e.g., "0", "10", "count", "first").
-	suffix := field[9:] // Remove "@subject."
-
-	// Check for special keyword accessors.
-	switch suffix {
-	case "count", "first", "last":
-		return nil
-	}
-
-	// If it's not a keyword, it must be a numeric index.
-	if index, err := strconv.Atoi(suffix); err == nil {
-		// Ensure the index is not negative.
-		if index < 0 {
-			return fmt.Errorf("subject token index cannot be negative, got: %d", index)
+	// Check for indexed access: @subject.0, @subject.1, etc.
+	if strings.HasPrefix(field, "@subject.") {
+		indexStr := field[9:] // Remove "@subject."
+		
+		// Try to parse as integer
+		var index int
+		if _, err := fmt.Sscanf(indexStr, "%d", &index); err == nil {
+			if index >= 0 {
+				return nil
+			}
+			return fmt.Errorf("subject index must be non-negative")
 		}
-		return nil // The format is valid.
+		
+		return fmt.Errorf("invalid subject field format (expected @subject.N where N is a non-negative integer)")
 	}
 
-	// If it's not a recognized keyword and not a valid non-negative integer, it's an error.
-	return fmt.Errorf("invalid subject field token accessor '%s'; must be a non-negative integer, 'first', 'last', or 'count'", suffix)
+	return fmt.Errorf("invalid subject field (must be @subject, @subject.count, or @subject.N)")
 }
 
-// **FIX END**
-
-// isValidOperator checks if the operator is supported
-func (l *RulesLoader) isValidOperator(op string) bool {
-	validOperators := map[string]bool{
-		// Comparison operators
-		"eq":     true,
-		"neq":    true,
-		"gt":     true,
-		"lt":     true,
-		"gte":    true,
-		"lte":    true,
-		"exists": true,
-
-		// String/Array operators
-		"contains":     true,
-		"not_contains": true,
-
-		// Array membership operators
-		"in":     true,
-		"not_in": true,
-
-		// Time-based replay protection
-		"recent": true,
+// validatePathField validates HTTP path field references like @path.1, @path.count
+func (l *RulesLoader) validatePathField(field string) error {
+	validFields := map[string]bool{
+		"@path":       true,
+		"@path.count": true,
 	}
-	return validOperators[op]
+
+	if validFields[field] {
+		return nil
+	}
+
+	// Check for indexed access: @path.0, @path.1, etc.
+	if strings.HasPrefix(field, "@path.") {
+		indexStr := field[6:] // Remove "@path."
+		
+		// Try to parse as integer
+		var index int
+		if _, err := fmt.Sscanf(indexStr, "%d", &index); err == nil {
+			if index >= 0 {
+				return nil
+			}
+			return fmt.Errorf("path index must be non-negative")
+		}
+		
+		return fmt.Errorf("invalid path field format (expected @path.N where N is a non-negative integer)")
+	}
+
+	return fmt.Errorf("invalid path field (must be @path, @path.count, or @path.N)")
 }
 
-// validateKVFieldsInTemplate validates all KV field references in a template string
+// validateKVFieldsInTemplate extracts and validates all KV field references in a template
 func (l *RulesLoader) validateKVFieldsInTemplate(template string) error {
-	// Extract all {@kv...} fields using brace-aware parsing
-	kvFields := l.extractKVFieldsFromTemplate(template)
-
-	for _, field := range kvFields {
-		// Check for colon in the field
-		if !strings.Contains(field, ":") {
-			return fmt.Errorf("KV field in template must use ':' delimiter (format: @kv.bucket.key:path), got: {%s}", field)
-		}
-
-		if err := l.validateKVFieldWithVariables(field); err != nil {
-			return fmt.Errorf("invalid KV field '%s' in template: %w", field, err)
-		}
+	if template == "" {
+		return nil
 	}
 
+	kvFields := l.extractKVFieldsFromTemplate(template)
+	
+	for _, field := range kvFields {
+		if err := l.validateKVFieldWithVariables(field); err != nil {
+			return err
+		}
+		
+		// Check if the bucket is configured
+		bucket := l.extractBucketFromKVField(field)
+		if bucket != "" && !l.isBucketConfigured(bucket) {
+			l.logger.Warn("KV field references unconfigured bucket",
+				"field", field,
+				"bucket", bucket,
+				"configuredBuckets", l.configuredKVBuckets,
+				"impact", "This KV lookup will fail at runtime")
+		}
+	}
+	
 	return nil
 }
 
-// extractKVFieldsFromTemplate extracts all {@kv...} field references from a template
-// Uses brace-counting to handle nested variables like {@kv.bucket.{key}:{path}}
+// extractKVFieldsFromTemplate finds all KV field references in a template
+// Handles nested braces correctly: {@kv.bucket.{key}:{path}}
 func (l *RulesLoader) extractKVFieldsFromTemplate(template string) []string {
 	var fields []string
 
@@ -420,8 +552,6 @@ func (l *RulesLoader) extractBracedContent(template string, startPos int) (strin
 // validateKVFieldWithVariables validates KV fields with colon delimiter syntax
 // Supports variable substitution in keys and paths
 // Format: @kv.bucket.key:json.path where key and path can contain {variables}
-//
-// FIXED: Now uses SplitPathRespectingBraces to handle variables with dots like {sensor.choice}
 func (l *RulesLoader) validateKVFieldWithVariables(field string) error {
 	l.logger.Debug("validating KV field with colon delimiter", "field", field)
 
@@ -461,131 +591,64 @@ func (l *RulesLoader) validateKVFieldWithVariables(field string) error {
 	bucket := bucketKeyParts[0]
 	key := bucketKeyParts[1]
 
-	// Validate bucket name format (must be literal, not a variable)
+	// Validate bucket and key are not empty (after removing potential variables)
 	if bucket == "" {
 		return fmt.Errorf("KV bucket name cannot be empty in field: %s", field)
 	}
-
-	// Check for variables in bucket name (not allowed)
-	if strings.Contains(bucket, "{") {
-		return fmt.Errorf("variables in bucket names are not supported, got: %s", field)
-	}
-
-	// Validate bucket name characters and existence
-	if err := l.validateBucketNameFormat(bucket); err != nil {
-		return fmt.Errorf("invalid bucket name '%s' in field '%s': %w", bucket, field, err)
-	}
-
-	// CRITICAL: Check that the bucket is configured
-	if !l.configuredBuckets[bucket] {
-		availableBuckets := make([]string, 0, len(l.configuredBuckets))
-		for b := range l.configuredBuckets {
-			availableBuckets = append(availableBuckets, b)
-		}
-		return fmt.Errorf("KV bucket '%s' not configured (available: %v)", bucket, availableBuckets)
-	}
-
-	// Validate key (can be a variable or literal)
 	if key == "" {
 		return fmt.Errorf("KV key name cannot be empty in field: %s", field)
 	}
 
-	// If key contains variables, validate variable syntax
-	if strings.Contains(key, "{") {
-		if err := l.validateVariableSyntax(key); err != nil {
-			return fmt.Errorf("invalid variable syntax in key '%s': %w", key, err)
-		}
-		l.logger.Debug("validated KV field with variables in key", "field", field, "bucket", bucket, "key", key)
-	}
-
-	// FIXED: Parse JSON path using brace-aware splitting
-	// This allows variables like {sensor.choice} to be treated as single tokens
-	jsonPath, err := SplitPathRespectingBraces(jsonPathPart)
-	if err != nil {
-		return fmt.Errorf("invalid JSON path '%s' in field %s: %w", jsonPathPart, field, err)
-	}
-
-	// Validate each path segment
-	for i, segment := range jsonPath {
-		if segment == "" {
-			return fmt.Errorf("empty JSON path segment at position %d in field: %s", i, field)
-		}
-
-		// If segment contains variables, validate syntax
-		if strings.Contains(segment, "{") {
-			if err := l.validateVariableSyntax(segment); err != nil {
-				return fmt.Errorf("invalid variable syntax in JSON path segment '%s': %w", segment, err)
-			}
-		} else {
-			// Validate literal segments
-			if err := l.validateJSONPathSegment(segment); err != nil {
-				return fmt.Errorf("invalid JSON path segment '%s' in field %s: %w", segment, field, err)
-			}
-		}
-	}
-
-	l.logger.Debug("successfully validated KV field with colon delimiter", "field", field, "bucket", bucket, "jsonPath", jsonPath)
-	return nil
-}
-
-// validateVariableSyntax ensures variable placeholders are properly formatted
-func (l *RulesLoader) validateVariableSyntax(text string) error {
-	// Find all variable patterns in the text
-	matches := variablePattern.FindAllStringSubmatch(text, -1)
-
-	for _, match := range matches {
-		if len(match) != 2 {
-			continue
-		}
-
-		varName := match[1]
-		if varName == "" {
-			return fmt.Errorf("empty variable name in: %s", text)
-		}
-
-		// Basic validation - variable names should be reasonable
-		if strings.Contains(varName, "{") || strings.Contains(varName, "}") {
-			return fmt.Errorf("nested braces not allowed in variable name: %s", varName)
-		}
-
-		l.logger.Debug("validated variable syntax", "variable", varName, "context", text)
-	}
+	l.logger.Debug("KV field validated",
+		"field", field,
+		"bucket", bucket,
+		"key", key,
+		"jsonPath", jsonPathPart)
 
 	return nil
 }
 
-// validateJSONPathSegment validates individual JSON path segments
-func (l *RulesLoader) validateJSONPathSegment(segment string) error {
-	// Allow alphanumeric, underscore, dash, and numbers (for array indices)
-	for _, char := range segment {
-		if !((char >= 'a' && char <= 'z') ||
-			(char >= 'A' && char <= 'Z') ||
-			(char >= '0' && char <= '9') ||
-			char == '_' || char == '-') {
-			return fmt.Errorf("invalid character '%c' in JSON path segment", char)
-		}
+// extractBucketFromKVField extracts the bucket name from a KV field
+func (l *RulesLoader) extractBucketFromKVField(field string) string {
+	if !strings.HasPrefix(field, "@kv.") {
+		return ""
 	}
-	return nil
+
+	remainder := field[4:]
+	parts := strings.SplitN(remainder, ".", 2)
+	if len(parts) > 0 {
+		return parts[0]
+	}
+
+	return ""
 }
 
-// validateBucketNameFormat validates NATS KV bucket naming rules
-func (l *RulesLoader) validateBucketNameFormat(name string) error {
-	if len(name) == 0 {
-		return fmt.Errorf("bucket name cannot be empty")
-	}
-	if len(name) > 64 {
-		return fmt.Errorf("bucket name too long (max 64 characters)")
-	}
-
-	// NATS bucket names: letters, numbers, dash, underscore
-	for _, char := range name {
-		if !((char >= 'a' && char <= 'z') ||
-			(char >= 'A' && char <= 'Z') ||
-			(char >= '0' && char <= '9') ||
-			char == '-' || char == '_') {
-			return fmt.Errorf("invalid character '%c' (allowed: a-z, A-Z, 0-9, -, _)", char)
+// isBucketConfigured checks if a bucket is in the configured list
+func (l *RulesLoader) isBucketConfigured(bucket string) bool {
+	for _, configured := range l.configuredKVBuckets {
+		if configured == bucket {
+			return true
 		}
 	}
-
-	return nil
+	return false
 }
+
+// isValidOperator checks if an operator is valid
+func (l *RulesLoader) isValidOperator(op string) bool {
+	validOps := map[string]bool{
+		"eq":           true,
+		"neq":          true,
+		"gt":           true,
+		"lt":           true,
+		"gte":          true,
+		"lte":          true,
+		"contains":     true,
+		"not_contains": true,
+		"in":           true,
+		"not_in":       true,
+		"exists":       true,
+		"recent":       true,
+	}
+	return validOps[op]
+}
+

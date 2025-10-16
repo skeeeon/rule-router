@@ -1,9 +1,8 @@
-//file: internal/metrics/collector.go
+// file: internal/metrics/collector.go
 
 package metrics
 
 import (
-	"runtime"
 	"sync"
 	"time"
 )
@@ -21,7 +20,7 @@ func NewMetricsCollector(metrics *Metrics, updateInterval time.Duration) *Metric
 	return &MetricsCollector{
 		metrics:        metrics,
 		updateInterval: updateInterval,
-		stopChan:      make(chan struct{}),
+		stopChan:       make(chan struct{}),
 	}
 }
 
@@ -49,18 +48,8 @@ func (mc *MetricsCollector) collect() {
 		case <-mc.stopChan:
 			return
 		case <-ticker.C:
-			mc.updateSystemMetrics()
+			// Update system metrics (goroutines, memory)
+			mc.metrics.UpdateSystemMetrics()
 		}
 	}
-}
-
-// updateSystemMetrics collects and updates system-level metrics
-func (mc *MetricsCollector) updateSystemMetrics() {
-	var memStats runtime.MemStats
-	runtime.ReadMemStats(&memStats)
-
-	mc.metrics.SetProcessMetrics(
-		float64(runtime.NumGoroutine()),
-		float64(memStats.Alloc),
-	)
 }

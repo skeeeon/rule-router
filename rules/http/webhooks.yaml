@@ -1,0 +1,257 @@
+# HTTP Gateway Example Rules
+# Demonstrates HTTP ↔ NATS bidirectional integration
+
+# ============================================================================
+# INBOUND WEBHOOKS (HTTP → NATS)
+# ============================================================================
+
+# Example 1: GitHub Pull Request Webhook
+- trigger:
+    http:
+      path: "/webhooks/github/pr"
+      method: "POST"
+  conditions:
+    operator: and
+    items:
+      - field: "@header.X-GitHub-Event"
+        operator: eq
+        value: "pull_request"
+      - field: "action"
+        operator: eq
+        value: "opened"
+  action:
+    nats:
+      subject: "github.pr.{repository.name}.opened"
+      payload: |
+        {
+          "event": "pr_opened",
+          "repo": "{repository.name}",
+          "pr_number": {number},
+          "author": "{user.login}",
+          "title": "{pull_request.title}",
+          "url": "{pull_request.html_url}",
+          "timestamp": "{@timestamp()}",
+          "event_id": "{@uuid7()}"
+        }
+      headers:
+        X-Source: "github-webhook"
+        X-Event-Type: "pull_request"
+
+# Example 2: Generic Webhook Router
+- trigger:
+    http:
+      path: "/webhooks/generic"
+      method: "POST"
+  action:
+    nats:
+      subject: "webhooks.received.{@method}"
+      payload: |
+        {
+          "path": "{@path}",
+          "method": "{@method}",
+          "data": {data},
+          "received_at": "{@timestamp()}"
+        }
+
+# Example 3: Stripe Webhook
+- trigger:
+    http:
+      path: "/webhooks/stripe"
+      method: "POST"
+  conditions:
+    operator: and
+    items:
+      - field: "type"
+        operator: eq
+        value: "payment_intent.succeeded"
+  action:
+    nats:
+      subject: "payments.stripe.success"
+      payload: |
+        {
+          "payment_id": "{data.object.id}",
+          "amount": {data.object.amount},
+          "currency": "{data.object.currency}",
+          "customer": "{data.object.customer}",
+          "timestamp": "{@timestamp()}"
+        }
+
+# Example 4: Multi-tenant webhook with path tokens
+- trigger:
+    http:
+      path: "/webhooks/tenant-a/events"
+      method: "POST"
+  action:
+    nats:
+      subject: "tenants.{@path.1}.events"
+      payload: |
+        {
+          "tenant": "{@path.1}",
+          "event_type": "{type}",
+          "data": {data},
+          "timestamp": "{@timestamp()}"
+        }
+      headers:
+        X-Tenant-ID: "{@path.1}"
+
+# ============================================================================
+# OUTBOUND WEBHOOKS (NATS → HTTP)
+# ============================================================================
+
+# Example 5: Critical Alerts to PagerDuty
+- trigger:
+    nats:
+      subject: "alerts.critical.>"
+  conditions:
+    operator: and
+    items:
+      - field: "severity"
+        operator: gte
+        value: 9
+      # Only during business hours
+      - field: "@time.hour"
+        operator: gte
+        value: 9
+      - field: "@time.hour"
+        operator: lt
+        value: 17
+  action:
+    http:
+      url: "https://events.pagerduty.com/v2/enqueue"
+      method: "POST"
+      headers:
+        Content-Type: "application/json"
+        Authorization: "Token token=YOUR_PAGERDUTY_TOKEN"
+      payload: |
+        {
+          "routing_key": "YOUR_ROUTING_KEY",
+          "event_action": "trigger",
+          "payload": {
+            "summary": "{message}",
+            "severity": "critical",
+            "source": "{@subject}",
+            "timestamp": "{@timestamp()}",
+            "custom_details": {
+              "alert_id": "{alert_id}",
+              "service": "{service}",
+              "host": "{host}"
+            }
+          }
+        }
+      retry:
+        maxAttempts: 3
+        initialDelay: "1s"
+        maxDelay: "10s"
+
+# Example 6: Slack Notifications
+- trigger:
+    nats:
+      subject: "notifications.slack.>"
+  action:
+    http:
+      url: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+      method: "POST"
+      headers:
+        Content-Type: "application/json"
+      payload: |
+        {
+          "text": "📢 {message}",
+          "blocks": [
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": "*Alert*: {message}\n*Time*: {@timestamp()}"
+              }
+            }
+          ]
+        }
+      retry:
+        maxAttempts: 3
+        initialDelay: "500ms"
+        maxDelay: "5s"
+
+# Example 7: Webhook with KV Enrichment
+- trigger:
+    nats:
+      subject: "orders.premium.>"
+  conditions:
+    operator: and
+    items:
+      - field: "@kv.customers.{customer_id}:tier"
+        operator: eq
+        value: "premium"
+  action:
+    http:
+      url: "https://api.example.com/orders"
+      method: "POST"
+      headers:
+        Content-Type: "application/json"
+        X-API-Key: "YOUR_API_KEY"
+        X-Customer-Tier: "premium"
+      payload: |
+        {
+          "order_id": "{order_id}",
+          "customer_id": "{customer_id}",
+          "customer_name": "{@kv.customers.{customer_id}:name}",
+          "account_manager": "{@kv.customers.{customer_id}:account_manager}",
+          "amount": {amount},
+          "timestamp": "{@timestamp()}"
+        }
+      retry:
+        maxAttempts: 5
+        initialDelay: "1s"
+        maxDelay: "30s"
+
+# Example 8: Passthrough Webhook (forward unchanged)
+- trigger:
+    nats:
+      subject: "webhooks.forward.>"
+  action:
+    http:
+      url: "https://api.downstream.com/events"
+      method: "POST"
+      passthrough: true
+      headers:
+        Authorization: "Bearer YOUR_TOKEN"
+        X-Forwarded-From: "http-gateway"
+      retry:
+        maxAttempts: 3
+        initialDelay: "1s"
+        maxDelay: "10s"
+
+# Example 9: Time-based webhook delivery
+- trigger:
+    nats:
+      subject: "reports.daily"
+  conditions:
+    operator: and
+    items:
+      # Only at 9 AM
+      - field: "@time.hour"
+        operator: eq
+        value: 9
+      - field: "@time.minute"
+        operator: lt
+        value: 5
+      # Weekdays only
+      - field: "@day.name"
+        operator: not_in
+        value: ["saturday", "sunday"]
+  action:
+    http:
+      url: "https://api.example.com/reports"
+      method: "POST"
+      headers:
+        Content-Type: "application/json"
+      payload: |
+        {
+          "report_date": "{@date.iso}",
+          "report_type": "daily_summary",
+          "data": {data},
+          "generated_at": "{@timestamp()}"
+        }
+      retry:
+        maxAttempts: 3
+        initialDelay: "2s"
+        maxDelay: "20s"
