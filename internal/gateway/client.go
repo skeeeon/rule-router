@@ -89,6 +89,14 @@ func NewOutboundClient(
 	}
 }
 
+func (c *OutboundClient) GetSubscriptions() []*OutboundSubscription {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	subs := make([]*OutboundSubscription, len(c.subscriptions))
+	copy(subs, c.subscriptions)
+	return subs
+}
+
 // AddSubscription adds a NATS subscription for outbound HTTP
 func (c *OutboundClient) AddSubscription(streamName, consumerName, subject string, workers int) error {
 	c.mu.Lock()

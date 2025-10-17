@@ -1,4 +1,4 @@
-//file: internal/app/app.go
+// file: internal/app/router.go
 
 package app
 
@@ -13,13 +13,17 @@ import (
 
 	"rule-router/config"
 	"rule-router/internal/broker"
+	"rule-router/internal/lifecycle"
 	"rule-router/internal/logger"
 	"rule-router/internal/metrics"
 	"rule-router/internal/rule"
 )
 
-// App represents the main application with all its components including KV support
-type App struct {
+// Verify RouterApp implements lifecycle.Application interface at compile time
+var _ lifecycle.Application = (*RouterApp)(nil)
+
+// RouterApp represents the rule-router application with all its components including KV support
+type RouterApp struct {
 	config           *config.Config
 	rulesPath        string
 	logger           *logger.Logger
@@ -30,11 +34,16 @@ type App struct {
 	metricsCollector *metrics.MetricsCollector
 }
 
-// NewApp creates a new application instance with all components initialized
-func NewApp(cfg *config.Config, rulesPath string) (*App, error) {
-	app := &App{
+// NewRouterApp creates a new rule-router application instance with all components initialized
+func NewRouterApp(cfg *config.Config, rulesPath string) (*RouterApp, error) {
+	app := &RouterApp{
 		config:    cfg,
 		rulesPath: rulesPath,
+	}
+
+	// Validate router-specific configuration requirements
+	if len(cfg.NATS.URLs) == 0 {
+		return nil, fmt.Errorf("at least one NATS URL is required")
 	}
 
 	// Initialize components in dependency order
@@ -68,8 +77,8 @@ func NewApp(cfg *config.Config, rulesPath string) (*App, error) {
 }
 
 // Run starts the application and waits for shutdown signal
-func (app *App) Run(ctx context.Context) error {
-	// Setup signal handling
+func (app *RouterApp) Run(ctx context.Context) error {
+	// Setup signal handling (lifecycle package will handle SIGHUP)
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer cancel()
 
@@ -112,7 +121,7 @@ func (app *App) Run(ctx context.Context) error {
 }
 
 // Close gracefully shuts down all application components
-func (app *App) Close() error {
+func (app *RouterApp) Close() error {
 	app.logger.Info("closing application components")
 
 	var errors []error

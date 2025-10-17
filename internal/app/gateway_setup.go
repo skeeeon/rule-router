@@ -1,182 +1,23 @@
-// file: internal/gateway/app.go
+// file: internal/app/gateway_setup.go
 
-package gateway
+package app
 
 import (
-	"context"
 	"fmt"
 	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"rule-router/config"
 	"rule-router/internal/broker"
+	"rule-router/internal/gateway"
 	"rule-router/internal/logger"
 	"rule-router/internal/metrics"
 	"rule-router/internal/rule"
 )
 
-// App represents the http-gateway application with all its components
-type App struct {
-	config           *config.Config
-	rulesPath        string
-	logger           *logger.Logger
-	metrics          *metrics.Metrics
-	processor        *rule.Processor
-	broker           *broker.NATSBroker
-	inboundServer    *InboundServer
-	outboundClient   *OutboundClient
-	metricsServer    *http.Server
-	metricsCollector *metrics.MetricsCollector
-}
-
-// NewApp creates a new http-gateway application instance
-func NewApp(cfg *config.Config, rulesPath string) (*App, error) {
-	app := &App{
-		config:    cfg,
-		rulesPath: rulesPath,
-	}
-
-	// Initialize components in dependency order
-	if err := app.setupLogger(); err != nil {
-		return nil, fmt.Errorf("failed to setup logger: %w", err)
-	}
-
-	if err := app.setupMetrics(); err != nil {
-		return nil, fmt.Errorf("failed to setup metrics: %w", err)
-	}
-
-	// Setup NATS broker first (needed for KV stores and stream resolution)
-	if err := app.setupNATSBroker(); err != nil {
-		return nil, fmt.Errorf("failed to setup NATS broker: %w", err)
-	}
-
-	// Setup rules after broker (so KV stores are available)
-	if err := app.setupRules(); err != nil {
-		return nil, fmt.Errorf("failed to setup rules: %w", err)
-	}
-
-	// Setup inbound server (HTTP → NATS)
-	if err := app.setupInboundServer(); err != nil {
-		return nil, fmt.Errorf("failed to setup inbound server: %w", err)
-	}
-
-	// Setup outbound client (NATS → HTTP)
-	if err := app.setupOutboundClient(); err != nil {
-		return nil, fmt.Errorf("failed to setup outbound client: %w", err)
-	}
-
-	return app, nil
-}
-
-// Run starts the application and waits for shutdown signal
-func (app *App) Run(ctx context.Context) error {
-	// Setup signal handling
-	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	defer cancel()
-
-	// Get HTTP paths and outbound subscription count
-	httpPaths := app.processor.GetHTTPPaths()
-	outboundSubCount := len(app.outboundClient.subscriptions)
-
-	app.logger.Info("starting http-gateway",
-		"natsUrls", app.config.NATS.URLs,
-		"httpAddress", app.config.HTTP.Server.Address,
-		"httpPaths", len(httpPaths),
-		"outboundSubscriptions", outboundSubCount,
-		"metricsEnabled", app.config.Metrics.Enabled,
-		"kvEnabled", app.config.KV.Enabled)
-
-	// Start inbound HTTP server
-	if err := app.inboundServer.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start inbound server: %w", err)
-	}
-
-	// Start outbound client
-	if err := app.outboundClient.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start outbound client: %w", err)
-	}
-
-	app.logger.Info("http-gateway started successfully",
-		"inboundPaths", httpPaths,
-		"outboundSubjects", outboundSubCount)
-
-	// Update metrics
-	if app.metrics != nil {
-		allRules := app.processor.GetAllRules()
-		app.metrics.SetRulesActive(float64(len(allRules)))
-	}
-
-	// Wait for shutdown signal
-	<-ctx.Done()
-	app.logger.Info("shutting down gracefully...")
-
-	// Create shutdown context with timeout
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), app.config.HTTP.Server.ShutdownGracePeriod)
-	defer shutdownCancel()
-
-	// Stop inbound server
-	if err := app.inboundServer.Stop(shutdownCtx); err != nil {
-		app.logger.Error("failed to stop inbound server", "error", err)
-	}
-
-	// Stop outbound client
-	if err := app.outboundClient.Stop(); err != nil {
-		app.logger.Error("failed to stop outbound client", "error", err)
-	}
-
-	app.logger.Info("shutdown complete")
-	return nil
-}
-
-// Close gracefully shuts down all application components
-func (app *App) Close() error {
-	app.logger.Info("closing application components")
-
-	var errors []error
-
-	// Stop metrics collector
-	if app.metricsCollector != nil {
-		app.metricsCollector.Stop()
-	}
-
-	// Shutdown metrics server
-	if app.metricsServer != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := app.metricsServer.Shutdown(shutdownCtx); err != nil {
-			errors = append(errors, fmt.Errorf("failed to shutdown metrics server: %w", err))
-		}
-	}
-
-	// Close NATS broker
-	if app.broker != nil {
-		if err := app.broker.Close(); err != nil {
-			errors = append(errors, fmt.Errorf("failed to close NATS broker: %w", err))
-		}
-	}
-
-	// Sync logger
-	if app.logger != nil {
-		if err := app.logger.Sync(); err != nil {
-			app.logger.Debug("logger sync completed", "error", err)
-		}
-	}
-
-	if len(errors) > 0 {
-		return fmt.Errorf("cleanup errors: %v", errors)
-	}
-
-	return nil
-}
-
-// setupLogger initializes the logger
-func (app *App) setupLogger() error {
+func (app *GatewayApp) setupLogger() error {
 	var err error
 	app.logger, err = logger.NewLogger(&app.config.Logging)
 	if err != nil {
@@ -185,8 +26,7 @@ func (app *App) setupLogger() error {
 	return nil
 }
 
-// setupMetrics initializes metrics collection
-func (app *App) setupMetrics() error {
+func (app *GatewayApp) setupMetrics() error {
 	if !app.config.Metrics.Enabled {
 		app.logger.Info("metrics disabled")
 		return nil
@@ -219,8 +59,7 @@ func (app *App) setupMetrics() error {
 	return nil
 }
 
-// setupMetricsServer creates the Prometheus metrics HTTP server
-func (app *App) setupMetricsServer(reg *prometheus.Registry) error {
+func (app *GatewayApp) setupMetricsServer(reg *prometheus.Registry) error {
 	mux := http.NewServeMux()
 	mux.Handle(app.config.Metrics.Path, promhttp.HandlerFor(reg, promhttp.HandlerOpts{
 		Registry:          reg,
@@ -244,8 +83,7 @@ func (app *App) setupMetricsServer(reg *prometheus.Registry) error {
 	return nil
 }
 
-// setupNATSBroker initializes the NATS broker with JetStream
-func (app *App) setupNATSBroker() error {
+func (app *GatewayApp) setupNATSBroker() error {
 	app.logger.Info("connecting to NATS JetStream server", "urls", app.config.NATS.URLs)
 
 	// Create NATS broker (automatically initializes connection and KV)
@@ -287,8 +125,7 @@ func (app *App) setupNATSBroker() error {
 	return nil
 }
 
-// setupRules loads rules and creates the processor
-func (app *App) setupRules() error {
+func (app *GatewayApp) setupRules() error {
 	kvBuckets := []string{}
 	if app.config.KV.Enabled {
 		kvBuckets = app.config.KV.Buckets
@@ -327,7 +164,7 @@ func (app *App) setupRules() error {
 			"signatureHeader", app.config.Security.Verification.SignatureHeader)
 	}
 
-	// Create processor with correct signature
+	// Create processor
 	app.processor = rule.NewProcessor(
 		app.logger,
 		app.metrics,
@@ -351,20 +188,19 @@ func (app *App) setupRules() error {
 	return nil
 }
 
-// setupInboundServer creates the HTTP inbound server (HTTP → NATS)
-func (app *App) setupInboundServer() error {
+func (app *GatewayApp) setupInboundServer() error {
 	// Check if there are any HTTP-triggered rules
 	httpPaths := app.processor.GetHTTPPaths()
 	if len(httpPaths) == 0 {
 		app.logger.Info("no HTTP inbound rules configured, skipping inbound server")
 		// Create a minimal server for health checks only
-		app.inboundServer = NewInboundServer(
+		app.inboundServer = gateway.NewInboundServer(
 			app.logger,
 			app.metrics,
 			app.processor,
 			app.broker.GetJetStream(),
 			app.broker.GetNATSConn(),
-			&ServerConfig{
+			&gateway.ServerConfig{
 				Address:             app.config.HTTP.Server.Address,
 				ReadTimeout:         app.config.HTTP.Server.ReadTimeout,
 				WriteTimeout:        app.config.HTTP.Server.WriteTimeout,
@@ -372,7 +208,7 @@ func (app *App) setupInboundServer() error {
 				MaxHeaderBytes:      app.config.HTTP.Server.MaxHeaderBytes,
 				ShutdownGracePeriod: app.config.HTTP.Server.ShutdownGracePeriod,
 			},
-			&PublishConfig{
+			&gateway.PublishConfig{
 				Mode:           app.config.NATS.Publish.Mode,
 				AckTimeout:     app.config.NATS.Publish.AckTimeout,
 				MaxRetries:     app.config.NATS.Publish.MaxRetries,
@@ -383,13 +219,13 @@ func (app *App) setupInboundServer() error {
 	}
 
 	// Create inbound server
-	app.inboundServer = NewInboundServer(
+	app.inboundServer = gateway.NewInboundServer(
 		app.logger,
 		app.metrics,
 		app.processor,
 		app.broker.GetJetStream(),
 		app.broker.GetNATSConn(),
-		&ServerConfig{
+		&gateway.ServerConfig{
 			Address:             app.config.HTTP.Server.Address,
 			ReadTimeout:         app.config.HTTP.Server.ReadTimeout,
 			WriteTimeout:        app.config.HTTP.Server.WriteTimeout,
@@ -397,7 +233,7 @@ func (app *App) setupInboundServer() error {
 			MaxHeaderBytes:      app.config.HTTP.Server.MaxHeaderBytes,
 			ShutdownGracePeriod: app.config.HTTP.Server.ShutdownGracePeriod,
 		},
-		&PublishConfig{
+		&gateway.PublishConfig{
 			Mode:           app.config.NATS.Publish.Mode,
 			AckTimeout:     app.config.NATS.Publish.AckTimeout,
 			MaxRetries:     app.config.NATS.Publish.MaxRetries,
@@ -412,15 +248,14 @@ func (app *App) setupInboundServer() error {
 	return nil
 }
 
-// setupOutboundClient creates the HTTP outbound client (NATS → HTTP)
-func (app *App) setupOutboundClient() error {
+func (app *GatewayApp) setupOutboundClient() error {
 	// Create outbound client
-	app.outboundClient = NewOutboundClient(
+	app.outboundClient = gateway.NewOutboundClient(
 		app.logger,
 		app.metrics,
 		app.processor,
 		app.broker.GetJetStream(),
-		&ConsumerConfig{
+		&gateway.ConsumerConfig{
 			SubscriberCount: app.config.NATS.Consumers.SubscriberCount,
 			FetchBatchSize:  app.config.NATS.Consumers.FetchBatchSize,
 			FetchTimeout:    app.config.NATS.Consumers.FetchTimeout,
@@ -443,17 +278,15 @@ func (app *App) setupOutboundClient() error {
 			}
 			outboundRules[subject] = true
 
-			// CORRECTED: Delegate consumer creation entirely to the broker, which has the correct, full logic.
+			// Delegate consumer creation to the broker
 			if err := app.broker.CreateConsumerForSubject(subject); err != nil {
 				return fmt.Errorf("failed to create consumer for subject '%s': %w", subject, err)
 			}
 
-			// Now, get the stream and consumer names from the broker to configure the subscription.
+			// Get stream and consumer names from broker
 			streamResolver := app.broker.GetStreamResolver()
 			streamName, err := streamResolver.FindStreamForSubject(subject)
 			if err != nil {
-				// This check is slightly redundant since CreateConsumerForSubject would have failed,
-				// but it's good defensive programming.
 				return fmt.Errorf("failed to find stream for subject '%s': %w", subject, err)
 			}
 			consumerName := app.broker.GetConsumerName(subject)

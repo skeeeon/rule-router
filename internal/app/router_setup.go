@@ -1,4 +1,4 @@
-// file: internal/app/setup.go
+// file: internal/app/router_setup.go
 
 package app
 
@@ -17,7 +17,7 @@ import (
 	"rule-router/internal/rule"
 )
 
-func (a *App) setupLogger() error {
+func (a *RouterApp) setupLogger() error {
 	var err error
 	a.logger, err = logger.NewLogger(&a.config.Logging)
 	if err != nil {
@@ -26,7 +26,7 @@ func (a *App) setupLogger() error {
 	return nil
 }
 
-func (a *App) setupMetrics() error {
+func (a *RouterApp) setupMetrics() error {
 	if !a.config.Metrics.Enabled {
 		a.logger.Info("metrics disabled")
 		return nil
@@ -59,7 +59,7 @@ func (a *App) setupMetrics() error {
 	return nil
 }
 
-func (a *App) setupMetricsServer(reg *prometheus.Registry) error {
+func (a *RouterApp) setupMetricsServer(reg *prometheus.Registry) error {
 	mux := http.NewServeMux()
 	mux.Handle(a.config.Metrics.Path, promhttp.HandlerFor(reg, promhttp.HandlerOpts{
 		Registry:          reg,
@@ -83,12 +83,12 @@ func (a *App) setupMetricsServer(reg *prometheus.Registry) error {
 	return nil
 }
 
-func (a *App) setupRules() error {
+func (a *RouterApp) setupRules() error {
 	kvBuckets := []string{}
 	if a.config.KV.Enabled {
 		kvBuckets = a.config.KV.Buckets
 	}
-	
+
 	rulesLoader := rule.NewRulesLoader(a.logger, kvBuckets)
 	rules, err := rulesLoader.LoadFromDirectory(a.rulesPath)
 	if err != nil {
@@ -99,17 +99,17 @@ func (a *App) setupRules() error {
 	if a.config.KV.Enabled && a.broker != nil {
 		kvStores := a.broker.GetKVStores()
 		localKVCache := a.broker.GetLocalKVCache()
-		
+
 		kvContext = rule.NewKVContext(kvStores, a.logger, localKVCache)
-		
-		a.logger.Info("KV context created with local cache support", 
+
+		a.logger.Info("KV context created with local cache support",
 			"bucketCount", len(kvStores),
 			"localCacheEnabled", localKVCache.IsEnabled())
 	} else {
 		a.logger.Info("KV support disabled or NATS broker not ready")
 	}
 
-	// NEW: Create signature verification config
+	// Create signature verification config
 	var sigVerification *rule.SignatureVerification
 	if a.config.Security.Verification.Enabled {
 		sigVerification = rule.NewSignatureVerification(
@@ -139,20 +139,20 @@ func (a *App) setupRules() error {
 	return nil
 }
 
-func (a *App) setupNATSBroker() error {
+func (a *RouterApp) setupNATSBroker() error {
 	a.logger.Info("connecting to NATS JetStream server", "urls", a.config.NATS.URLs)
-	
+
 	natsBroker, err := broker.NewNATSBroker(a.config, a.logger, a.metrics)
 	if err != nil {
 		return fmt.Errorf("failed to connect to NATS JetStream server: %w", err)
 	}
 	a.broker = natsBroker
-	
+
 	if a.config.KV.Enabled {
-		a.logger.Info("initializing local KV cache", 
+		a.logger.Info("initializing local KV cache",
 			"buckets", a.config.KV.Buckets,
 			"localCacheEnabled", a.config.KV.LocalCache.Enabled)
-		
+
 		if err := a.broker.InitializeKVCache(); err != nil {
 			a.logger.Error("failed to initialize local KV cache", "error", err)
 			a.logger.Info("continuing with direct NATS KV access (degraded performance)")
@@ -164,23 +164,23 @@ func (a *App) setupNATSBroker() error {
 			}
 		}
 	}
-	
+
 	if a.config.KV.Enabled {
 		kvStores := a.broker.GetKVStores()
 		localCache := a.broker.GetLocalKVCache()
-		
-		a.logger.Info("NATS JetStream connected with KV support", 
+
+		a.logger.Info("NATS JetStream connected with KV support",
 			"kvBuckets", len(kvStores),
 			"configuredBuckets", a.config.KV.Buckets,
 			"localCacheEnabled", localCache != nil && localCache.IsEnabled())
 	} else {
 		a.logger.Info("NATS JetStream connected without KV support")
 	}
-	
+
 	return nil
 }
 
-func (a *App) setupSubscriptions() error {
+func (a *RouterApp) setupSubscriptions() error {
 	subjects := a.processor.GetSubjects()
 	a.logger.Info("setting up subscriptions for rule subjects", "subjectCount", len(subjects))
 
@@ -203,7 +203,7 @@ func (a *App) setupSubscriptions() error {
 		}
 
 		a.logger.Info("subscription configured", "subject", subject)
-		
+
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("timeout during subscription setup")
