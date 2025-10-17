@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
-	"rule-router/config" // NEW: Import config package
+	"rule-router/config"
 	"rule-router/internal/logger"
 	"rule-router/internal/metrics"
 	"rule-router/internal/rule"
@@ -44,6 +44,7 @@ type OutboundSubscription struct {
 	StreamName   string
 	Consumer     jetstream.Consumer
 	Workers      int
+	iterator     jetstream.MessagesContext // Messages() iterator
 	cancel       context.CancelFunc
 	logger       *logger.Logger
 }
@@ -65,7 +66,7 @@ func NewOutboundClient(
 	processor *rule.Processor,
 	js jetstream.JetStream,
 	consumerCfg *ConsumerConfig,
-	httpClientCfg *config.HTTPClientConfig, // CHANGED: Pass the full client config struct
+	httpClientCfg *config.HTTPClientConfig,
 ) *OutboundClient {
 	return &OutboundClient{
 		logger:        logger,
@@ -75,13 +76,12 @@ func NewOutboundClient(
 		consumerCfg:   consumerCfg,
 		subscriptions: make([]*OutboundSubscription, 0),
 		httpClient: &http.Client{
-			Timeout: httpClientCfg.Timeout, // Use timeout from config
+			Timeout: httpClientCfg.Timeout,
 			Transport: &http.Transport{
 				MaxIdleConns:        httpClientCfg.MaxIdleConns,
 				MaxIdleConnsPerHost: httpClientCfg.MaxIdleConnsPerHost,
 				IdleConnTimeout:     httpClientCfg.IdleConnTimeout,
 				TLSClientConfig: &tls.Config{
-					// CHANGED: Use the configurable value
 					InsecureSkipVerify: httpClientCfg.TLS.InsecureSkipVerify,
 				},
 			},
@@ -89,6 +89,7 @@ func NewOutboundClient(
 	}
 }
 
+// GetSubscriptions returns a copy of all subscriptions
 func (c *OutboundClient) GetSubscriptions() []*OutboundSubscription {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -142,155 +143,185 @@ func (c *OutboundClient) Start(ctx context.Context) error {
 		return nil
 	}
 
-	c.logger.Info("starting outbound client",
+	c.logger.Info("starting outbound client with Messages() iterator",
 		"subscriptions", len(c.subscriptions),
-		"fetchBatchSize", c.consumerCfg.FetchBatchSize)
+		"fetchBatchSize", c.consumerCfg.FetchBatchSize,
+		"fetchTimeout", c.consumerCfg.FetchTimeout)
 
 	for _, sub := range c.subscriptions {
-		subCtx, cancel := context.WithCancel(ctx)
-		sub.cancel = cancel
+		if err := c.startSubscription(ctx, sub); err != nil {
+			return fmt.Errorf("failed to start subscription for '%s': %w", sub.Subject, err)
+		}
+	}
 
-		msgChan := make(chan jetstream.Msg, c.consumerCfg.FetchBatchSize*2)
+	c.logger.Info("all outbound subscriptions started successfully")
+	return nil
+}
 
-		// Start fetcher
+// startSubscription initializes a Messages() iterator and worker pool for a single subscription
+func (c *OutboundClient) startSubscription(ctx context.Context, sub *OutboundSubscription) error {
+	subCtx, cancel := context.WithCancel(ctx)
+	sub.cancel = cancel
+
+	// Calculate heartbeat duration: half of fetch timeout, minimum 1 second
+	heartbeatDuration := c.consumerCfg.FetchTimeout / 2
+	if heartbeatDuration < 1*time.Second {
+		heartbeatDuration = 1 * time.Second
+	}
+
+	c.logger.Debug("creating Messages() iterator for outbound subscription",
+		"subject", sub.Subject,
+		"pullMaxMessages", c.consumerCfg.FetchBatchSize,
+		"pullExpiry", c.consumerCfg.FetchTimeout,
+		"heartbeat", heartbeatDuration)
+
+	// Create Messages() iterator - event-driven, no polling
+	iter, err := sub.Consumer.Messages(
+		jetstream.PullMaxMessages(c.consumerCfg.FetchBatchSize),
+		jetstream.PullExpiry(c.consumerCfg.FetchTimeout),
+		jetstream.PullHeartbeat(heartbeatDuration),
+	)
+	if err != nil {
+		cancel()
+		return fmt.Errorf("failed to create Messages() iterator: %w", err)
+	}
+
+	// Store iterator for cleanup during shutdown
+	sub.iterator = iter
+
+	c.logger.Info("Messages() iterator created successfully for outbound subscription",
+		"subject", sub.Subject,
+		"stream", sub.StreamName,
+		"consumer", sub.ConsumerName,
+		"pullMaxMessages", c.consumerCfg.FetchBatchSize,
+		"pullExpiry", c.consumerCfg.FetchTimeout,
+		"heartbeat", heartbeatDuration)
+
+	// Start worker pool - each worker calls iter.Next() in blocking loop
+	for i := 0; i < sub.Workers; i++ {
 		c.wg.Add(1)
-		go c.fetcher(subCtx, sub, msgChan)
-
-		// Start workers
-		for i := 0; i < sub.Workers; i++ {
-			c.wg.Add(1)
-			go c.processingWorker(subCtx, msgChan, i, sub.Subject)
-		}
-
-		c.logger.Info("outbound subscription started",
-			"subject", sub.Subject,
-			"stream", sub.StreamName,
-			"consumer", sub.ConsumerName,
-			"workers", sub.Workers)
+		go c.messageWorker(subCtx, sub, i)
 	}
+
+	c.logger.Info("outbound subscription started with worker pool",
+		"subject", sub.Subject,
+		"workers", sub.Workers)
 
 	return nil
 }
 
-// Stop gracefully shuts down all outbound subscriptions
-func (c *OutboundClient) Stop() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.logger.Info("stopping outbound client", "subscriptions", len(c.subscriptions))
-
-	// Cancel all contexts
-	for _, sub := range c.subscriptions {
-		if sub.cancel != nil {
-			sub.cancel()
-		}
-	}
-
-	// Wait for all goroutines
-	c.wg.Wait()
-	c.logger.Info("outbound client stopped")
-	return nil
-}
-
-// fetcher pulls messages from JetStream
-func (c *OutboundClient) fetcher(ctx context.Context, sub *OutboundSubscription, msgChan chan<- jetstream.Msg) {
+// messageWorker continuously pulls messages from the iterator and processes them
+// This replaces the old fetcher + processingWorker pattern with a simpler approach
+func (c *OutboundClient) messageWorker(ctx context.Context, sub *OutboundSubscription, workerID int) {
 	defer c.wg.Done()
-	defer close(msgChan)
 
-	sub.logger.Debug("outbound fetcher started", "subject", sub.Subject)
+	c.logger.Debug("outbound message worker started",
+		"subject", sub.Subject,
+		"workerID", workerID)
 
 	for {
+		// Check for context cancellation before blocking on Next()
 		select {
 		case <-ctx.Done():
-			sub.logger.Debug("outbound fetcher shutting down", "subject", sub.Subject)
+			c.logger.Debug("outbound message worker context cancelled, shutting down",
+				"subject", sub.Subject,
+				"workerID", workerID)
 			return
 		default:
 		}
 
-		msgs, err := sub.Consumer.FetchNoWait(c.consumerCfg.FetchBatchSize)
+		// Block until message available (NO MORE POLLING!)
+		// JetStream handles all buffering, pre-fetching, and optimization internally
+		msg, err := sub.iterator.Next()
+
 		if err != nil {
-			if errors.Is(err, jetstream.ErrNoMessages) {
-				time.Sleep(100 * time.Millisecond)
-				continue
+			// Check for normal shutdown conditions first
+			if ctx.Err() != nil {
+				c.logger.Debug("outbound message worker detected context cancellation",
+					"subject", sub.Subject,
+					"workerID", workerID)
+				return
 			}
-			sub.logger.Error("fetch failed", "subject", sub.Subject, "error", err)
-			time.Sleep(time.Second)
+
+			// Check for iterator closed/stopped (normal shutdown)
+			if errors.Is(err, jetstream.ErrMsgIteratorClosed) {
+				c.logger.Info("outbound message iterator closed",
+					"subject", sub.Subject,
+					"workerID", workerID)
+				return
+			}
+
+			// Log other errors but continue - JetStream will reconnect automatically
+			c.logger.Error("failed to get next message from iterator",
+				"subject", sub.Subject,
+				"workerID", workerID,
+				"error", err,
+				"errorType", fmt.Sprintf("%T", err))
+
+			// Brief sleep on persistent errors to avoid tight loop
+			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 
-		for msg := range msgs.Messages() {
-			select {
-			case msgChan <- msg:
-			case <-ctx.Done():
-				sub.logger.Debug("fetcher shutting down during message queuing", "subject", sub.Subject)
-				return
-			}
-		}
+		// Process message with full error handling and panic recovery
+		c.processMessageWithRecovery(ctx, msg, sub.Subject, workerID)
 	}
 }
 
-// processingWorker processes messages and makes HTTP requests
-func (c *OutboundClient) processingWorker(ctx context.Context, msgChan <-chan jetstream.Msg, workerID int, subject string) {
-	defer c.wg.Done()
+// processMessageWithRecovery wraps message processing with panic recovery and error handling
+// This ensures a single malformed message cannot crash the entire worker
+func (c *OutboundClient) processMessageWithRecovery(ctx context.Context, msg jetstream.Msg, subject string, workerID int) {
+	// Defer panic recovery to catch any panics during message processing
+	defer func() {
+		if r := recover(); r != nil {
+			c.logger.Error("panic recovered in outbound message worker",
+				"panic", r,
+				"subject", subject,
+				"workerID", workerID,
+				"stack", string(debug.Stack()))
 
-	c.logger.Debug("outbound worker started", "subject", subject, "workerID", workerID)
-
-	for msg := range msgChan {
-		currentMsg := msg
-
-		func() {
-			// Panic recovery
-			defer func() {
-				if r := recover(); r != nil {
-					c.logger.Error("panic recovered in outbound worker",
-						"panic", r,
-						"subject", currentMsg.Subject(),
-						"stack", string(debug.Stack()))
-
-					if termErr := currentMsg.Term(); termErr != nil {
-						c.logger.Error("failed to terminate message after panic",
-							"subject", currentMsg.Subject(),
-							"error", termErr)
-					}
-
-					if c.metrics != nil {
-						c.metrics.IncMessagesTotal("error")
-					}
-				}
-			}()
-
-			// Process message
-			if err := c.processMessage(ctx, currentMsg); err != nil {
-				c.logger.Error("failed to process outbound message",
-					"subject", currentMsg.Subject(),
-					"error", err)
-
-				// NAK on failure (will retry up to maxDeliver)
-				if nakErr := currentMsg.Nak(); nakErr != nil {
-					c.logger.Error("failed to NAK message",
-						"subject", currentMsg.Subject(),
-						"error", nakErr)
-				}
-
-				if c.metrics != nil {
-					c.metrics.IncMessagesTotal("error")
-				}
-			} else {
-				// ACK on success
-				if ackErr := currentMsg.Ack(); ackErr != nil {
-					c.logger.Error("failed to ACK message",
-						"subject", currentMsg.Subject(),
-						"error", ackErr)
-				}
-
-				if c.metrics != nil {
-					c.metrics.IncMessagesTotal("processed")
-				}
+			// Terminate poison message to prevent redelivery loop
+			if termErr := msg.Term(); termErr != nil {
+				c.logger.Error("failed to terminate message after panic",
+					"subject", subject,
+					"error", termErr)
 			}
-		}()
-	}
 
-	c.logger.Debug("outbound worker finished", "subject", subject, "workerID", workerID)
+			if c.metrics != nil {
+				c.metrics.IncMessagesTotal("error")
+			}
+		}
+	}()
+
+	// Process the message
+	if err := c.processMessage(ctx, msg); err != nil {
+		c.logger.Error("failed to process outbound message",
+			"subject", subject,
+			"workerID", workerID,
+			"error", err)
+
+		// NAK on failure (will retry up to maxDeliver)
+		if nakErr := msg.Nak(); nakErr != nil {
+			c.logger.Error("failed to NAK message",
+				"subject", subject,
+				"error", nakErr)
+		}
+
+		if c.metrics != nil {
+			c.metrics.IncMessagesTotal("error")
+		}
+	} else {
+		// ACK on success
+		if ackErr := msg.Ack(); ackErr != nil {
+			c.logger.Error("failed to ACK message",
+				"subject", subject,
+				"error", ackErr)
+		}
+
+		if c.metrics != nil {
+			c.metrics.IncMessagesTotal("processed")
+		}
+	}
 }
 
 // processMessage processes a NATS message and makes HTTP requests
@@ -337,6 +368,7 @@ func (c *OutboundClient) processMessage(ctx context.Context, msg jetstream.Msg) 
 
 			if c.metrics != nil {
 				c.metrics.IncActionsTotal("success")
+				c.metrics.IncRuleMatches()
 			}
 		} else if action.NATS != nil {
 			// NATS actions not typical in outbound, but log if present
@@ -487,4 +519,35 @@ func (c *OutboundClient) makeHTTPRequest(ctx context.Context, action *rule.HTTPA
 		"duration", duration)
 
 	return fmt.Errorf("HTTP request returned status %d", resp.StatusCode)
+}
+
+// Stop gracefully shuts down all outbound subscriptions
+func (c *OutboundClient) Stop() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.logger.Info("stopping outbound client", "subscriptions", len(c.subscriptions))
+
+	// Step 1: Stop all iterators gracefully (drains pending messages)
+	for _, sub := range c.subscriptions {
+		if sub.iterator != nil {
+			c.logger.Debug("stopping Messages() iterator", "subject", sub.Subject)
+			sub.iterator.Stop()
+			c.logger.Debug("Messages() iterator stopped", "subject", sub.Subject)
+		}
+	}
+
+	// Step 2: Cancel contexts to unblock workers immediately
+	for _, sub := range c.subscriptions {
+		if sub.cancel != nil {
+			sub.cancel()
+		}
+	}
+
+	// Step 3: Wait for all workers to finish
+	c.logger.Debug("waiting for all outbound workers to finish")
+	c.wg.Wait()
+
+	c.logger.Info("outbound client stopped successfully")
+	return nil
 }
