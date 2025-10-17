@@ -21,13 +21,13 @@ import (
 )
 
 // SubscriptionManager manages JetStream pull subscriptions for rule subjects
-// with parallel message processing and configurable action publishing (JetStream or Core).
+// using the JetStream Messages() iterator pattern for optimal performance.
 //
-// ARCHITECTURE: This manager uses a "Shared Fetch Channel" pattern for each subscription.
-// For each rule subject, it starts:
-//   - ONE dedicated "fetcher" goroutine that efficiently pulls large batches of messages from NATS.
-//   - A pool of "processingWorker" goroutines that consume from an in-memory channel fed by the fetcher.
-// This decouples network I/O from CPU-bound processing, maximizing single-node performance and throughput.
+// ARCHITECTURE: This manager uses the "Messages() Iterator" pattern recommended by NATS.
+// For each rule subject, it creates:
+//   - ONE Messages() iterator with internal pre-buffering and optimization
+//   - A pool of "worker" goroutines that call iter.Next() in a blocking loop
+// This leverages JetStream's built-in optimizations while maintaining a work queue pattern.
 type SubscriptionManager struct {
 	natsConn      *nats.Conn
 	jetStream     jetstream.JetStream
@@ -41,13 +41,14 @@ type SubscriptionManager struct {
 	mu            sync.RWMutex
 }
 
-// Subscription represents a single JetStream pull consumer.
+// Subscription represents a single JetStream pull consumer with Messages() iterator.
 type Subscription struct {
 	Subject      string
 	ConsumerName string
 	StreamName   string
 	Consumer     jetstream.Consumer
 	Workers      int // Number of concurrent workers
+	iterator     jetstream.MessagesContext // Messages() iterator
 	cancel       context.CancelFunc
 	logger       *logger.Logger
 	consumerCfg  *config.ConsumerConfig
@@ -111,7 +112,7 @@ func (sm *SubscriptionManager) AddSubscription(streamName, consumerName, subject
 	return nil
 }
 
-// Start begins consuming messages from all subscriptions.
+// Start begins consuming messages from all subscriptions using Messages() iterator.
 func (sm *SubscriptionManager) Start(ctx context.Context) error {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -120,150 +121,200 @@ func (sm *SubscriptionManager) Start(ctx context.Context) error {
 		return fmt.Errorf("no subscriptions configured")
 	}
 
-	sm.logger.Info("starting subscription manager",
+	sm.logger.Info("starting subscription manager with Messages() iterator pattern",
 		"subscriptions", len(sm.subscriptions),
 		"fetchBatchSize", sm.consumerCfg.FetchBatchSize,
 		"fetchTimeout", sm.consumerCfg.FetchTimeout)
 
 	for _, sub := range sm.subscriptions {
-		subCtx, cancel := context.WithCancel(ctx)
-		sub.cancel = cancel
-
-		msgChan := make(chan jetstream.Msg, sm.consumerCfg.FetchBatchSize*2)
-
-		sm.wg.Add(1)
-		go sm.fetcher(subCtx, sub, msgChan)
-
-		for i := 0; i < sub.Workers; i++ {
-			sm.wg.Add(1)
-			go sm.processingWorker(subCtx, msgChan, i, sub.Subject)
+		if err := sm.startSubscription(ctx, sub); err != nil {
+			return fmt.Errorf("failed to start subscription for '%s': %w", sub.Subject, err)
 		}
-
-		sm.logger.Info("subscription started",
-			"subject", sub.Subject,
-			"stream", sub.StreamName,
-			"consumer", sub.ConsumerName,
-			"workers", sub.Workers)
 	}
+
+	sm.logger.Info("all subscriptions started successfully")
+	return nil
+}
+
+// startSubscription initializes a Messages() iterator and worker pool for a single subscription.
+func (sm *SubscriptionManager) startSubscription(ctx context.Context, sub *Subscription) error {
+	subCtx, cancel := context.WithCancel(ctx)
+	sub.cancel = cancel
+
+	// Calculate heartbeat duration: half of fetch timeout, minimum 1 second
+	// This ensures we detect stalled connections before the fetch timeout expires
+	heartbeatDuration := sm.consumerCfg.FetchTimeout / 2
+	if heartbeatDuration < 1*time.Second {
+		heartbeatDuration = 1 * time.Second
+	}
+
+	sm.logger.Debug("creating Messages() iterator",
+		"subject", sub.Subject,
+		"pullMaxMessages", sm.consumerCfg.FetchBatchSize,
+		"pullExpiry", sm.consumerCfg.FetchTimeout,
+		"heartbeat", heartbeatDuration)
+
+	// Create Messages() iterator with JetStream optimizations
+	// This establishes a persistent pull subscription with internal pre-buffering
+	iter, err := sub.Consumer.Messages(
+		jetstream.PullMaxMessages(sm.consumerCfg.FetchBatchSize),
+		jetstream.PullExpiry(sm.consumerCfg.FetchTimeout),
+		jetstream.PullHeartbeat(heartbeatDuration),
+	)
+	if err != nil {
+		cancel()
+		return fmt.Errorf("failed to create Messages() iterator: %w", err)
+	}
+
+	// Store iterator for cleanup during shutdown
+	sub.iterator = iter
+
+	sm.logger.Info("Messages() iterator created successfully",
+		"subject", sub.Subject,
+		"stream", sub.StreamName,
+		"consumer", sub.ConsumerName,
+		"pullMaxMessages", sm.consumerCfg.FetchBatchSize,
+		"pullExpiry", sm.consumerCfg.FetchTimeout,
+		"heartbeat", heartbeatDuration)
+
+	// Start worker pool - each worker calls iter.Next() in a blocking loop
+	// This creates a work queue pattern where multiple workers compete for messages
+	for i := 0; i < sub.Workers; i++ {
+		sm.wg.Add(1)
+		go sm.messageWorker(subCtx, sub, i)
+	}
+
+	sm.logger.Info("subscription started with worker pool",
+		"subject", sub.Subject,
+		"workers", sub.Workers)
 
 	return nil
 }
 
-// fetcher pulls messages from JetStream and feeds them to the processing workers.
-func (sm *SubscriptionManager) fetcher(ctx context.Context, sub *Subscription, msgChan chan<- jetstream.Msg) {
+// messageWorker continuously pulls messages from the iterator and processes them.
+// This replaces both the fetcher and processingWorker pattern with a simpler approach
+// that leverages JetStream's internal optimizations.
+func (sm *SubscriptionManager) messageWorker(ctx context.Context, sub *Subscription, workerID int) {
 	defer sm.wg.Done()
-	defer close(msgChan)
 
-	sub.logger.Debug("fetcher started",
+	sm.logger.Debug("message worker started",
 		"subject", sub.Subject,
-		"batchSize", sub.consumerCfg.FetchBatchSize)
+		"workerID", workerID)
 
 	for {
+		// Check for context cancellation before blocking on Next()
 		select {
 		case <-ctx.Done():
-			sub.logger.Debug("fetcher shutting down", "subject", sub.Subject)
+			sm.logger.Debug("message worker context cancelled, shutting down",
+				"subject", sub.Subject,
+				"workerID", workerID)
 			return
 		default:
 		}
 
-		msgs, err := sub.Consumer.FetchNoWait(sub.consumerCfg.FetchBatchSize)
+		// Block until message available (key difference from channel-based approach)
+		// JetStream handles all buffering, pre-fetching, and optimization internally
+		msg, err := sub.iterator.Next()
+
 		if err != nil {
-			if errors.Is(err, jetstream.ErrNoMessages) {
-				time.Sleep(100 * time.Millisecond)
-				continue
+			// Check for normal shutdown conditions first
+			if ctx.Err() != nil {
+				sm.logger.Debug("message worker detected context cancellation",
+					"subject", sub.Subject,
+					"workerID", workerID)
+				return
 			}
-			sub.logger.Error("fetch failed", "subject", sub.Subject, "error", err)
-			time.Sleep(time.Second)
+
+			// Check for iterator closed/stopped (normal shutdown)
+			if errors.Is(err, jetstream.ErrMsgIteratorClosed) {
+				sm.logger.Info("message iterator closed",
+					"subject", sub.Subject,
+					"workerID", workerID)
+				return
+			}
+
+			// Log other errors but continue - JetStream will reconnect automatically
+			sm.logger.Error("failed to get next message from iterator",
+				"subject", sub.Subject,
+				"workerID", workerID,
+				"error", err,
+				"errorType", fmt.Sprintf("%T", err))
+
+			// Brief sleep on persistent errors to avoid tight loop
+			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 
-		for msg := range msgs.Messages() {
-			select {
-			case msgChan <- msg:
-			case <-ctx.Done():
-				sub.logger.Debug("fetcher shutting down during message queuing", "subject", sub.Subject)
-				return
-			}
-		}
+		// Process message with full error handling and panic recovery
+		sm.processMessageWithRecovery(ctx, msg, sub.Subject, workerID)
 	}
 }
 
-// processingWorker consumes messages from the shared channel and executes the rule processor.
-// It includes robust panic recovery and intelligent error handling to prevent worker crashes
-// and redelivery loops for malformed "poison messages".
-func (sm *SubscriptionManager) processingWorker(ctx context.Context, msgChan <-chan jetstream.Msg, workerID int, subject string) {
-	defer sm.wg.Done()
+// processMessageWithRecovery wraps message processing with panic recovery and error handling.
+// This ensures a single malformed message cannot crash the entire worker.
+func (sm *SubscriptionManager) processMessageWithRecovery(ctx context.Context, msg jetstream.Msg, subject string, workerID int) {
+	// Defer panic recovery to catch any panics during message processing
+	defer func() {
+		if r := recover(); r != nil {
+			sm.logger.Error("panic recovered in message worker",
+				"panic", r,
+				"subject", subject,
+				"workerID", workerID,
+				"stack", string(debug.Stack()))
 
-	sm.logger.Debug("processing worker started", "subject", subject, "workerID", workerID)
-
-	for msg := range msgChan {
-		// Capture the message in a new variable for the deferred function to close over.
-		// This is a Go best practice to avoid capturing the loop variable `msg` which changes on each iteration.
-		currentMsg := msg
-
-		// Use an anonymous function to scope the defer, ensuring it runs for each message.
-		func() {
-			// --- START OF PANIC RECOVERY FIX ---
-			// This defer block catches any panics that occur during message processing.
-			// This prevents a single malformed message from crashing the entire worker goroutine.
-			defer func() {
-				if r := recover(); r != nil {
-					sm.logger.Error("panic recovered in processing worker",
-						"panic", r,
-						"subject", currentMsg.Subject(),
-						"stack", string(debug.Stack()),
-					)
-
-					// A message that causes a panic is a "poison message" and should be terminated
-					// to prevent it from being redelivered and causing another panic.
-					if termErr := currentMsg.Term(); termErr != nil {
-						sm.logger.Error("failed to Terminate message after panic", "subject", currentMsg.Subject(), "error", termErr)
-					}
-
-					if sm.metrics != nil {
-						sm.metrics.IncMessagesTotal("error")
-					}
-				}
-			}()
-			// --- END OF PANIC RECOVERY FIX ---
-
-			// Process the message. Any errors or panics will be handled gracefully.
-			if err := sm.processMessage(ctx, currentMsg); err != nil {
-				sm.logger.Error("failed to process message", "subject", currentMsg.Subject(), "error", err)
-
-				// --- START OF TERMINAL ERROR FIX ---
-				// Differentiate between transient and terminal errors. A terminal error (e.g., bad JSON)
-				// will never succeed, so we use msg.Term() to stop JetStream from redelivering it.
-				// A transient error (e.g., temporary network issue) might succeed on retry, so we use msg.Nak().
-				if isTerminalError(err) {
-					sm.logger.Warn("terminating malformed message to prevent redelivery loop", "subject", currentMsg.Subject())
-					if termErr := currentMsg.Term(); termErr != nil {
-						sm.logger.Error("failed to Terminate message", "subject", currentMsg.Subject(), "error", termErr)
-					}
-				} else {
-					// For other, potentially transient errors, Nak the message to allow retries up to `maxDeliver`.
-					if nakErr := currentMsg.Nak(); nakErr != nil {
-						sm.logger.Error("failed to NAK message", "subject", currentMsg.Subject(), "error", nakErr)
-					}
-				}
-				// --- END OF TERMINAL ERROR FIX ---
-
-				if sm.metrics != nil {
-					sm.metrics.IncMessagesTotal("error")
-				}
-			} else {
-				// Message processed successfully, acknowledge it.
-				if ackErr := currentMsg.Ack(); ackErr != nil {
-					sm.logger.Error("failed to ACK message", "subject", currentMsg.Subject(), "error", ackErr)
-				}
-				if sm.metrics != nil {
-					sm.metrics.IncMessagesTotal("processed")
-				}
+			// Terminate poison message to prevent redelivery loop
+			if termErr := msg.Term(); termErr != nil {
+				sm.logger.Error("failed to terminate message after panic",
+					"subject", subject,
+					"error", termErr)
 			}
-		}() // Immediately invoke the anonymous function.
-	}
 
-	sm.logger.Debug("processing worker finished", "subject", subject, "workerID", workerID)
+			if sm.metrics != nil {
+				sm.metrics.IncMessagesTotal("error")
+			}
+		}
+	}()
+
+	// Process the message through the rule engine
+	if err := sm.processMessage(ctx, msg); err != nil {
+		sm.logger.Error("failed to process message",
+			"subject", subject,
+			"workerID", workerID,
+			"error", err)
+
+		// Differentiate between terminal and transient errors
+		if isTerminalError(err) {
+			// Terminal error: malformed message that will never succeed
+			sm.logger.Warn("terminating malformed message to prevent redelivery loop",
+				"subject", subject)
+			if termErr := msg.Term(); termErr != nil {
+				sm.logger.Error("failed to terminate message",
+					"subject", subject,
+					"error", termErr)
+			}
+		} else {
+			// Transient error: might succeed on retry
+			if nakErr := msg.Nak(); nakErr != nil {
+				sm.logger.Error("failed to NAK message",
+					"subject", subject,
+					"error", nakErr)
+			}
+		}
+
+		if sm.metrics != nil {
+			sm.metrics.IncMessagesTotal("error")
+		}
+	} else {
+		// Message processed successfully, acknowledge it
+		if ackErr := msg.Ack(); ackErr != nil {
+			sm.logger.Error("failed to ACK message",
+				"subject", subject,
+				"error", ackErr)
+		}
+		if sm.metrics != nil {
+			sm.metrics.IncMessagesTotal("processed")
+		}
+	}
 }
 
 // processMessage handles a single message through the rule engine.
@@ -288,7 +339,7 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 	// Process through rule engine (uses ProcessNATS internally via backward compatibility layer)
 	actions, err := sm.processor.ProcessWithSubject(msg.Subject(), msg.Data(), headers)
 	if err != nil {
-		// This error will be caught by the caller (processingWorker) and handled appropriately.
+		// This error will be caught by the caller (processMessageWithRecovery) and handled appropriately.
 		return fmt.Errorf("rule processing failed: %w", err)
 	}
 
@@ -462,16 +513,27 @@ func (sm *SubscriptionManager) Stop() error {
 
 	sm.logger.Info("stopping all subscriptions", "count", len(sm.subscriptions))
 
-	// Cancelling the context is the primary signal for all goroutines to stop.
+	// Step 1: Stop all iterators gracefully (drains pending messages)
+	for _, sub := range sm.subscriptions {
+		if sub.iterator != nil {
+			sm.logger.Debug("stopping Messages() iterator", "subject", sub.Subject)
+			sub.iterator.Stop()
+			sm.logger.Debug("Messages() iterator stopped", "subject", sub.Subject)
+		}
+	}
+
+	// Step 2: Cancel contexts to unblock workers immediately
 	for _, sub := range sm.subscriptions {
 		if sub.cancel != nil {
 			sub.cancel()
 		}
 	}
 
-	// Wait for all goroutines (fetchers and workers) to finish.
+	// Step 3: Wait for all workers to finish
+	sm.logger.Debug("waiting for all workers to finish")
 	sm.wg.Wait()
-	sm.logger.Info("all subscriptions stopped")
+
+	sm.logger.Info("all subscriptions stopped successfully")
 	return nil
 }
 
