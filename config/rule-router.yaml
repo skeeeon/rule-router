@@ -34,6 +34,7 @@ nats:
   
   # JetStream Consumer Configuration
   consumers:
+    consumerPrefix: "rule-router" # Unique prefix for this application's consumers
     # Performance Tuning
     subscriberCount: 8        # Concurrent workers per subscription (recommend: 2-4x CPU cores)
     fetchBatchSize: 64        # Messages to fetch per pull request
