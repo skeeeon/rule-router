@@ -207,6 +207,8 @@ func (app *GatewayApp) setupInboundServer() error {
 				IdleTimeout:         app.config.HTTP.Server.IdleTimeout,
 				MaxHeaderBytes:      app.config.HTTP.Server.MaxHeaderBytes,
 				ShutdownGracePeriod: app.config.HTTP.Server.ShutdownGracePeriod,
+				InboundWorkerCount: app.config.HTTP.Server.InboundWorkerCount,
+				InboundQueueSize:    app.config.HTTP.Server.InboundQueueSize,
 			},
 			&gateway.PublishConfig{
 				Mode:           app.config.NATS.Publish.Mode,
@@ -232,6 +234,8 @@ func (app *GatewayApp) setupInboundServer() error {
 			IdleTimeout:         app.config.HTTP.Server.IdleTimeout,
 			MaxHeaderBytes:      app.config.HTTP.Server.MaxHeaderBytes,
 			ShutdownGracePeriod: app.config.HTTP.Server.ShutdownGracePeriod,
+			InboundWorkerCount:  app.config.HTTP.Server.InboundWorkerCount,
+			InboundQueueSize:    app.config.HTTP.Server.InboundQueueSize,
 		},
 		&gateway.PublishConfig{
 			Mode:           app.config.NATS.Publish.Mode,

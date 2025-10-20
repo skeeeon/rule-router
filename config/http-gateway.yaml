@@ -12,6 +12,8 @@ http:
     idleTimeout: 120s
     maxHeaderBytes: 1048576 # 1MB
     shutdownGracePeriod: 30s
+    inboundWorderCount: 10
+    inboundQueueSize: 100
 
   client:
     timeout: 30s

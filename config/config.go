@@ -37,7 +37,10 @@ type HTTPServerConfig struct {
 	IdleTimeout         time.Duration `json:"idleTimeout" yaml:"idleTimeout"`
 	MaxHeaderBytes      int           `json:"maxHeaderBytes" yaml:"maxHeaderBytes"`
 	ShutdownGracePeriod time.Duration `json:"shutdownGracePeriod" yaml:"shutdownGracePeriod"`
+	InboundWorkerCount int `json:"inboundWorkerCount" yaml:"inboundWorkerCount"`
+	InboundQueueSize   int `json:"inboundQueueSize" yaml:"inboundQueueSize"`
 }
+
 
 // HTTPClientConfig configures the outbound HTTP client
 type HTTPClientConfig struct {
@@ -286,6 +289,12 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.HTTP.Client.IdleConnTimeout == 0 {
 		cfg.HTTP.Client.IdleConnTimeout = 90 * time.Second
+	}
+	if cfg.HTTP.Server.InboundWorkerCount == 0 {
+		cfg.HTTP.Server.InboundWorkerCount = 10
+	}
+	if cfg.HTTP.Server.InboundQueueSize == 0 {
+		cfg.HTTP.Server.InboundQueueSize = 100
 	}
 
 	// Logging defaults
