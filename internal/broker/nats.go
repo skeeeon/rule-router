@@ -284,13 +284,6 @@ func (b *NATSBroker) InitializeKVCache() error {
 
 	b.logger.Info("initializing local KV cache", "buckets", b.config.KV.Buckets)
 
-	// Populate cache with existing data
-	if err := b.populateKVCache(); err != nil {
-		b.logger.Error("failed to populate KV cache", "error", err)
-		b.localKVCache.SetEnabled(false)
-		return nil
-	}
-
 	// Subscribe to KV changes using the new Watch API
 	if err := b.subscribeToKVChanges(); err != nil {
 		b.logger.Error("failed to subscribe to KV changes", "error", err)
@@ -302,80 +295,6 @@ func (b *NATSBroker) InitializeKVCache() error {
 		"stats", b.localKVCache.GetStats())
 
 	return nil
-}
-
-// populateKVCache loads all existing KV data into the local cache
-func (b *NATSBroker) populateKVCache() error {
-	b.logger.Info("populating local KV cache", "buckets", b.config.KV.Buckets)
-
-	ctx, cancel := context.WithTimeout(b.ctx, 30*time.Second)
-	defer cancel()
-
-	totalLoaded := 0
-	for _, bucketName := range b.config.KV.Buckets {
-		loaded, err := b.loadBucketIntoCache(ctx, bucketName)
-		if err != nil {
-			b.logger.Warn("failed to load bucket into cache", "bucket", bucketName, "error", err)
-			continue
-		}
-		totalLoaded += loaded
-	}
-
-	b.logger.Info("KV cache population complete",
-		"totalBuckets", len(b.config.KV.Buckets),
-		"totalKeysLoaded", totalLoaded)
-
-	return nil
-}
-
-// loadBucketIntoCache loads all keys from a specific bucket into the cache
-func (b *NATSBroker) loadBucketIntoCache(ctx context.Context, bucketName string) (int, error) {
-	store, exists := b.kvStores[bucketName]
-	if !exists {
-		return 0, fmt.Errorf("bucket not found: %s", bucketName)
-	}
-
-	// Use ListKeys to get all keys in the bucket
-	lister, err := store.ListKeys(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("failed to list keys in bucket %s: %w", bucketName, err)
-	}
-
-	loadedCount := 0
-	for key := range lister.Keys() {
-		entry, err := store.Get(ctx, key)
-		if err != nil {
-			b.logger.Debug("failed to get key during cache population",
-				"bucket", bucketName, "key", key, "error", err)
-			continue
-		}
-
-		var parsedValue interface{}
-		rawValue := entry.Value()
-		if len(rawValue) > 0 {
-			if err := json.Unmarshal(rawValue, &parsedValue); err != nil {
-				parsedValue = string(rawValue)
-				b.logger.Debug("stored non-JSON value as string",
-					"bucket", bucketName, "key", key)
-			}
-		} else {
-			parsedValue = ""
-		}
-
-		b.localKVCache.Set(bucketName, key, parsedValue)
-		loadedCount++
-
-		if loadedCount%100 == 0 {
-			b.logger.Debug("cache loading progress",
-				"bucket", bucketName, "loaded", loadedCount)
-		}
-	}
-
-	b.logger.Info("loaded bucket into cache",
-		"bucket", bucketName,
-		"loadedKeys", loadedCount)
-
-	return loadedCount, nil
 }
 
 // subscribeToKVChanges subscribes to KV change streams using the new Watch API

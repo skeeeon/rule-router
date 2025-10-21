@@ -12,7 +12,7 @@ http:
     idleTimeout: 120s
     maxHeaderBytes: 1048576 # 1MB
     shutdownGracePeriod: 30s
-    inboundWorderCount: 10
+    inboundWorkerCount: 10
     inboundQueueSize: 100
 
   client:
@@ -40,7 +40,7 @@ nats:
 
   # JetStream Consumer Configuration
   consumers:
-    consumerPrefix: "http-gateway" # NEW: Unique prefix for this application's consumers
+    consumerPrefix: "http-gateway" # Unique prefix for this application's consumers
     subscriberCount: 4      # Number of parallel workers per subscription
     fetchBatchSize: 10      # Messages fetched per batch
     fetchTimeout: 5s        # Fetch timeout

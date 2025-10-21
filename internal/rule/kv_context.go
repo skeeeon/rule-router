@@ -191,6 +191,12 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
 		return nil, false
 	}
 
+    	// Populate the cache after a successful lazy-load
+    	if kv.localCache != nil && kv.localCache.IsEnabled() {
+        	kv.localCache.Set(bucket, key, jsonObj)
+       		kv.logger.Info("populated KV cache on first read (lazy-load)", "bucket", bucket, "key", key)
+    	}
+
 	value, err := kv.traverser.TraversePath(jsonObj, jsonPath)
 	if err != nil {
 		kv.logger.Warn("JSON path traversal failed on NATS value", 
@@ -215,7 +221,7 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
 // The colon (:) separates the key from the JSON path
 // This eliminates ambiguity since NATS allows dots in key names
 // 
-// FIXED: Now uses SplitPathRespectingBraces for JSON path to handle variables like {sensor.choice}
+// Uses SplitPathRespectingBraces for JSON path to handle variables like {sensor.choice}
 //
 // Examples:
 //   @kv.customer_data.cust-123:tier
