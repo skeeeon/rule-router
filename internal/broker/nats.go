@@ -447,42 +447,36 @@ func (b *NATSBroker) initializeNATSConnection() error {
 
 // initializeKVStores connects to configured KV buckets
 func (b *NATSBroker) initializeKVStores(ctx context.Context) error {
-	b.logger.Info("initializing KV stores", "buckets", b.config.KV.Buckets)
+	// Change the log message to reflect the new behavior
+	b.logger.Info("validating configured KV stores are available", "buckets", b.config.KV.Buckets)
 
 	for _, bucketName := range b.config.KV.Buckets {
 		b.logger.Debug("connecting to KV bucket", "bucket", bucketName)
 
 		kvCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-
 		kv, err := b.jetStream.KeyValue(kvCtx, bucketName)
-		cancel()
+		cancel() 
 
 		if err != nil {
+			
 			if err == jetstream.ErrBucketNotFound {
-				b.logger.Info("KV bucket not found, creating", "bucket", bucketName)
-
-				createCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-				kv, err = b.jetStream.CreateKeyValue(createCtx, jetstream.KeyValueConfig{
-					Bucket:      bucketName,
-					Description: fmt.Sprintf("Rule-router KV bucket: %s", bucketName),
-				})
-				cancel()
-
-				if err != nil {
-					return fmt.Errorf("failed to create KV bucket '%s': %w", bucketName, err)
-				}
-
-				b.logger.Info("created KV bucket successfully", "bucket", bucketName)
-			} else {
-				return fmt.Errorf("failed to access KV bucket '%s': %w", bucketName, err)
+				// FAIL FAST: The bucket does not exist. Return a user-friendly error.
+				return fmt.Errorf(
+					"configured KV bucket not found: '%s'. Please create it before starting the application using 'nats kv add %s'",
+					bucketName,
+					bucketName,
+				)
 			}
+			// For all other errors (permissions, connection issues), fail as before.
+			return fmt.Errorf("failed to access KV bucket '%s': %w", bucketName, err)
+			
 		}
 
 		b.kvStores[bucketName] = kv
-		b.logger.Debug("connected to KV bucket", "bucket", bucketName)
+		b.logger.Debug("successfully connected to KV bucket", "bucket", bucketName)
 	}
 
-	b.logger.Info("all KV stores initialized successfully", "bucketCount", len(b.kvStores))
+	b.logger.Info("all configured KV stores validated successfully", "bucketCount", len(b.kvStores))
 	return nil
 }
 
