@@ -3,9 +3,11 @@
 package main
 
 import (
-	"flag"
 	"log"
+	"strings"
 
+	flag "github.com/spf13/pflag" // Use pflag aliased as flag
+	"github.com/spf13/viper"
 	"rule-router/config"
 	"rule-router/internal/app"
 	"rule-router/internal/lifecycle"
@@ -38,30 +40,40 @@ func run() error {
 	return lifecycle.RunWithReload(createApp, appLogger)
 }
 
-// parseFlags parses command line arguments and applies overrides
+// parseFlags parses command line arguments and loads config via Viper
 func parseFlags() (*config.Config, string) {
-	configPath := flag.String("config", "config/config.yaml", "path to config file (YAML or JSON)")
+	// Define flags
+	configPath := flag.String("config", "config/rule-router.yaml", "path to config file (YAML or JSON)")
 	rulesPath := flag.String("rules", "rules", "path to rules directory")
 
-	// Metrics overrides
-	metricsAddrOverride := flag.String("metrics-addr", "", "override metrics server address (empty = use config)")
-	metricsPathOverride := flag.String("metrics-path", "", "override metrics endpoint path (empty = use config)")
-	metricsIntervalOverride := flag.Duration("metrics-interval", 0, "override metrics collection interval (0 = use config)")
+	// Define override flags
+	flag.String("nats-urls", "", "Comma-separated NATS server URLs to override config")
+	flag.Bool("metrics-enabled", true, "Override enabling of metrics server")
+	flag.String("metrics-addr", "", "Override metrics server address")
+	flag.String("metrics-path", "", "Override metrics endpoint path")
+	flag.String("log-level", "", "Override log level (debug, info, warn, error)")
 
 	flag.Parse()
 
-	// Load configuration
+	// Bind flags to Viper
+	// This allows flags to have the highest precedence
+	v := viper.GetViper()
+	v.BindPFlag("nats.urls", flag.Lookup("nats-urls"))
+	v.BindPFlag("metrics.enabled", flag.Lookup("metrics-enabled"))
+	v.BindPFlag("metrics.address", flag.Lookup("metrics-addr"))
+	v.BindPFlag("metrics.path", flag.Lookup("metrics-path"))
+	v.BindPFlag("logging.level", flag.Lookup("log-level"))
+
+	// Special handling for comma-separated nats.urls string from flag/env
+	if natsURLs := v.GetString("nats.urls"); natsURLs != "" {
+		v.Set("nats.urls", strings.Split(natsURLs, ","))
+	}
+
+	// Load configuration using the new Viper-powered loader
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		log.Fatalf("failed to load config: %v", err)
 	}
-
-	// Apply command line overrides (metrics only)
-	cfg.ApplyOverrides(
-		*metricsAddrOverride,
-		*metricsPathOverride,
-		*metricsIntervalOverride,
-	)
 
 	return cfg, *rulesPath
 }
