@@ -25,50 +25,30 @@ var _ lifecycle.Application = (*RouterApp)(nil)
 // RouterApp represents the rule-router application with all its components including KV support
 type RouterApp struct {
 	config           *config.Config
-	rulesPath        string
 	logger           *logger.Logger
 	metrics          *metrics.Metrics
 	processor        *rule.Processor
 	broker           *broker.NATSBroker
-	httpServer       *http.Server
+	httpServer       *http.Server // This is the metrics server from the BaseApp
 	metricsCollector *metrics.MetricsCollector
 }
 
-// NewRouterApp creates a new rule-router application instance with all components initialized
-func NewRouterApp(cfg *config.Config, rulesPath string) (*RouterApp, error) {
+// NewRouterApp creates a new rule-router application instance using the pre-built base components.
+func NewRouterApp(base *BaseApp, cfg *config.Config) (*RouterApp, error) {
 	app := &RouterApp{
-		config:    cfg,
-		rulesPath: rulesPath,
-	}
-
-	// Validate router-specific configuration requirements
-	if len(cfg.NATS.URLs) == 0 {
-		return nil, fmt.Errorf("at least one NATS URL is required")
-	}
-
-	// Initialize components in dependency order
-	if err := app.setupLogger(); err != nil {
-		return nil, fmt.Errorf("failed to setup logger: %w", err)
-	}
-
-	if err := app.setupMetrics(); err != nil {
-		return nil, fmt.Errorf("failed to setup metrics: %w", err)
-	}
-
-	// Setup NATS broker first (needed for KV stores)
-	if err := app.setupNATSBroker(); err != nil {
-		return nil, fmt.Errorf("failed to setup NATS broker: %w", err)
-	}
-
-	// Setup rules after broker (so KV stores are available)
-	if err := app.setupRules(); err != nil {
-		return nil, fmt.Errorf("failed to setup rules: %w", err)
+		config:           cfg,
+		logger:           base.Logger,
+		metrics:          base.Metrics,
+		processor:        base.Processor,
+		broker:           base.Broker,
+		httpServer:       base.MetricsServer,
+		metricsCollector: base.Collector,
 	}
 
 	// Initialize subscription manager with processor
 	app.broker.InitializeSubscriptionManager(app.processor)
 
-	// Setup subscriptions for all rule subjects
+	// Setup subscriptions for all rule subjects (router-specific logic)
 	if err := app.setupSubscriptions(); err != nil {
 		return nil, fmt.Errorf("failed to setup subscriptions: %w", err)
 	}
@@ -147,8 +127,6 @@ func (app *RouterApp) Close() error {
 		}
 	}
 
-	// NOTE: Processor doesn't need cleanup - it's stateless with no connections or goroutines
-
 	// Sync logger
 	if app.logger != nil {
 		if err := app.logger.Sync(); err != nil {
@@ -160,5 +138,42 @@ func (app *RouterApp) Close() error {
 		return fmt.Errorf("cleanup errors: %v", errors)
 	}
 
+	return nil
+}
+
+// setupSubscriptions configures JetStream consumers and subscriptions for all NATS-triggered rules.
+// This is router-specific logic, moved from the old router_setup.go.
+func (app *RouterApp) setupSubscriptions() error {
+	subjects := app.processor.GetSubjects()
+	app.logger.Info("setting up subscriptions for rule subjects", "subjectCount", len(subjects))
+
+	if err := app.broker.ValidateSubjects(subjects); err != nil {
+		return fmt.Errorf("stream validation failed: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	for _, subject := range subjects {
+		app.logger.Debug("setting up subscription for subject", "subject", subject)
+
+		if err := app.broker.CreateConsumerForSubject(subject); err != nil {
+			return fmt.Errorf("failed to create consumer for subject '%s': %w", subject, err)
+		}
+
+		if err := app.broker.AddSubscription(subject); err != nil {
+			return fmt.Errorf("failed to add subscription for subject '%s': %w", subject, err)
+		}
+
+		app.logger.Info("subscription configured", "subject", subject)
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout during subscription setup")
+		default:
+		}
+	}
+
+	app.logger.Info("all subscriptions configured successfully", "subscriptionCount", len(subjects))
 	return nil
 }

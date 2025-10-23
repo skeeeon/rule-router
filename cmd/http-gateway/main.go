@@ -24,7 +24,7 @@ func run() error {
 	// Parse configuration once - reused across reloads
 	cfg, rulesPath := parseFlags()
 
-	// Setup logger
+	// Setup logger early for the lifecycle manager
 	appLogger, err := logger.NewLogger(&cfg.Logging)
 	if err != nil {
 		return err
@@ -33,7 +33,19 @@ func run() error {
 
 	// Create app factory function
 	createApp := func() (lifecycle.Application, error) {
-		return app.NewGatewayApp(cfg, rulesPath)
+		// Build the common components using the new builder.
+		baseApp, err := app.NewAppBuilder(cfg, rulesPath).
+			WithLogger().
+			WithMetrics().
+			WithNATSBroker().
+			WithRuleProcessor().
+			Build()
+		if err != nil {
+			return nil, err
+		}
+
+		// Create the specific application with the common base.
+		return app.NewGatewayApp(baseApp, cfg)
 	}
 
 	// Run with reload support (handles SIGHUP automatically)

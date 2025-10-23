@@ -26,7 +26,6 @@ var _ lifecycle.Application = (*GatewayApp)(nil)
 // GatewayApp represents the http-gateway application with all its components
 type GatewayApp struct {
 	config           *config.Config
-	rulesPath        string
 	logger           *logger.Logger
 	metrics          *metrics.Metrics
 	processor        *rule.Processor
@@ -37,35 +36,21 @@ type GatewayApp struct {
 	metricsCollector *metrics.MetricsCollector
 }
 
-// NewGatewayApp creates a new http-gateway application instance
-func NewGatewayApp(cfg *config.Config, rulesPath string) (*GatewayApp, error) {
+// NewGatewayApp creates a new http-gateway application instance using the pre-built base components.
+func NewGatewayApp(base *BaseApp, cfg *config.Config) (*GatewayApp, error) {
 	app := &GatewayApp{
-		config:    cfg,
-		rulesPath: rulesPath,
+		config:           cfg,
+		logger:           base.Logger,
+		metrics:          base.Metrics,
+		processor:        base.Processor,
+		broker:           base.Broker,
+		metricsServer:    base.MetricsServer,
+		metricsCollector: base.Collector,
 	}
 
 	// Validate gateway-specific configuration requirements
 	if cfg.HTTP.Server.Address == "" {
 		return nil, fmt.Errorf("HTTP server address is required for http-gateway")
-	}
-
-	// Initialize components in dependency order
-	if err := app.setupLogger(); err != nil {
-		return nil, fmt.Errorf("failed to setup logger: %w", err)
-	}
-
-	if err := app.setupMetrics(); err != nil {
-		return nil, fmt.Errorf("failed to setup metrics: %w", err)
-	}
-
-	// Setup NATS broker first (needed for KV stores and stream resolution)
-	if err := app.setupNATSBroker(); err != nil {
-		return nil, fmt.Errorf("failed to setup NATS broker: %w", err)
-	}
-
-	// Setup rules after broker (so KV stores are available)
-	if err := app.setupRules(); err != nil {
-		return nil, fmt.Errorf("failed to setup rules: %w", err)
 	}
 
 	// Setup inbound server (HTTP → NATS)
@@ -179,5 +164,93 @@ func (app *GatewayApp) Close() error {
 		return fmt.Errorf("cleanup errors: %v", errors)
 	}
 
+	return nil
+}
+
+// setupInboundServer configures the server for handling HTTP -> NATS traffic.
+// This is gateway-specific logic.
+func (app *GatewayApp) setupInboundServer() error {
+	serverConfig := &gateway.ServerConfig{
+		Address:             app.config.HTTP.Server.Address,
+		ReadTimeout:         app.config.HTTP.Server.ReadTimeout,
+		WriteTimeout:        app.config.HTTP.Server.WriteTimeout,
+		IdleTimeout:         app.config.HTTP.Server.IdleTimeout,
+		MaxHeaderBytes:      app.config.HTTP.Server.MaxHeaderBytes,
+		ShutdownGracePeriod: app.config.HTTP.Server.ShutdownGracePeriod,
+		InboundWorkerCount:  app.config.HTTP.Server.InboundWorkerCount,
+		InboundQueueSize:    app.config.HTTP.Server.InboundQueueSize,
+	}
+	publishConfig := &gateway.PublishConfig{
+		Mode:           app.config.NATS.Publish.Mode,
+		AckTimeout:     app.config.NATS.Publish.AckTimeout,
+		MaxRetries:     app.config.NATS.Publish.MaxRetries,
+		RetryBaseDelay: app.config.NATS.Publish.RetryBaseDelay,
+	}
+
+	app.inboundServer = gateway.NewInboundServer(
+		app.logger,
+		app.metrics,
+		app.processor,
+		app.broker.GetJetStream(),
+		app.broker.GetNATSConn(),
+		serverConfig,
+		publishConfig,
+	)
+
+	app.logger.Info("inbound server configured", "address", serverConfig.Address)
+	return nil
+}
+
+// setupOutboundClient configures the client for handling NATS -> HTTP traffic.
+// This is gateway-specific logic.
+func (app *GatewayApp) setupOutboundClient() error {
+	consumerConfig := &gateway.ConsumerConfig{
+		SubscriberCount: app.config.NATS.Consumers.SubscriberCount,
+		FetchBatchSize:  app.config.NATS.Consumers.FetchBatchSize,
+		FetchTimeout:    app.config.NATS.Consumers.FetchTimeout,
+		MaxAckPending:   app.config.NATS.Consumers.MaxAckPending,
+		AckWaitTimeout:  app.config.NATS.Consumers.AckWaitTimeout,
+		MaxDeliver:      app.config.NATS.Consumers.MaxDeliver,
+	}
+
+	app.outboundClient = gateway.NewOutboundClient(
+		app.logger,
+		app.metrics,
+		app.processor,
+		app.broker.GetJetStream(),
+		consumerConfig,
+		&app.config.HTTP.Client,
+	)
+
+	// Find all rules with NATS trigger + HTTP action to create subscriptions
+	allRules := app.processor.GetAllRules()
+	outboundSubjects := make(map[string]bool)
+
+	for _, r := range allRules {
+		if r.Trigger.NATS != nil && r.Action.HTTP != nil {
+			subject := r.Trigger.NATS.Subject
+			if outboundSubjects[subject] {
+				continue // Already processed
+			}
+			outboundSubjects[subject] = true
+
+			if err := app.broker.CreateConsumerForSubject(subject); err != nil {
+				return fmt.Errorf("failed to create consumer for subject '%s': %w", subject, err)
+			}
+
+			streamName, err := app.broker.GetStreamResolver().FindStreamForSubject(subject)
+			if err != nil {
+				return fmt.Errorf("failed to find stream for subject '%s': %w", subject, err)
+			}
+			consumerName := app.broker.GetConsumerName(subject)
+
+			workers := app.config.NATS.Consumers.SubscriberCount
+			if err := app.outboundClient.AddSubscription(streamName, consumerName, subject, workers); err != nil {
+				return fmt.Errorf("failed to add outbound subscription for '%s': %w", subject, err)
+			}
+		}
+	}
+
+	app.logger.Info("outbound client configured", "subscriptions", len(outboundSubjects))
 	return nil
 }

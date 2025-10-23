@@ -60,7 +60,7 @@ nats:
                               # Failed messages move to dead letter after this
     
     # Delivery Behavior
-    deliverPolicy: all        # Options:
+    deliverPolicy: new        # Options:
                               # - all: Process all messages (including historical)
                               # - new: Only process new messages (Default, ignore backlog)
                               # - last: Start from most recent message
@@ -119,10 +119,8 @@ kv:
   localCache:
     enabled: true             # Enable in-memory KV caching (default: true)
     # When enabled:
-    # - All KV data loaded into memory at startup (~25x faster lookups: 50μs → 2μs)
+    # - All KV data loaded into memory at startup
     # - Real-time updates via KV Watch API
-    # - Significant CPU reduction (10-15 percentage points at high throughput)
-    # - Memory usage: ~1MB per 1000 KV entries
     # 
     # Set to false to disable caching (useful for troubleshooting or memory constraints)
 
