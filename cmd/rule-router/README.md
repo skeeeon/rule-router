@@ -7,6 +7,7 @@ This application is purpose-built for internal, high-throughput message routing,
 ## Features
 
 *   **High Performance** - Microsecond rule evaluation, thousands of messages per second.
+*   **Array Processing** - Native support for batch messages with array operators and forEach iteration.
 *   **NATS JetStream Native** - Built on pull consumers for durable, scalable subscriptions.
 *   **Intelligent Stream Selection** - Automatically selects the optimal stream for consumption, preferring memory storage and specific subject filters.
 *   **Cryptographic Security** - NKey signature verification and replay protection for secure workflows.
@@ -36,8 +37,9 @@ This application is purpose-built for internal, high-throughput message routing,
 │  │ Manager      │──│ + Templates  │──│ (KV Mirror)  │     │
 │  │              │  │ + Conditions │  │ (Real-time)  │     │
 │  │              │  │ + Security   │  │              │     │
+│  │              │  │ + Arrays     │  │              │     │
 │  └──────┬───────┘  └──────┬───────┘  └──────────────┘     │
-│         └─────────────────┴──► Publish NATS Actions       │
+│         └─────────────────┴───► Publish NATS Actions      │
 └───────────────────────────────────────────────────────────┘
 ```
 
@@ -135,6 +137,9 @@ kv:
   localCache:
     enabled: true            # ~25x faster lookups
 
+forEach:
+  maxIterations: 100         # Max array elements per forEach
+
 logging:
   level: info
   encoding: json
@@ -202,12 +207,110 @@ action:
 *   Subject and header templating works with both modes.
 *   Passthrough preserves the exact original message bytes.
 
+### Array Processing
+
+The rule-router supports powerful array operations for batch message processing.
+
+#### Array Operators in Conditions
+
+Check if any/all/none of the array elements match conditions:
+
+```yaml
+conditions:
+  operator: and
+  items:
+    # Check if ANY notification is critical
+    - field: "notifications"
+      operator: any
+      conditions:
+        - field: "severity"
+          operator: eq
+          value: "critical"
+```
+
+**Available Operators:**
+- `any`: At least one element matches
+- `all`: All elements match  
+- `none`: No elements match
+
+#### ForEach Actions
+
+Generate **one action per array element**:
+
+```yaml
+action:
+  forEach: "notifications"   # Path to array field
+  filter:                     # Optional: only process matching elements
+    - field: "severity"
+      operator: eq
+      value: "critical"
+  nats:
+    subject: "alerts.{id}"
+    payload: |
+      {
+        "id": "{id}",                    # From notifications[i]
+        "message": "{message}",          # From notifications[i]
+        "deviceId": "{@msg.deviceId}",   # From root message
+        "processedAt": "{@timestamp()}"
+      }
+```
+
+**Template Context Rules:**
+- `{field}` → Resolves to current array element field
+- `{@msg.field}` → Resolves to root message field (use for batch-level data)
+
+**Complete Example:**
+
+```yaml
+- trigger:
+    nats:
+      subject: "device.batch.>"
+    
+  conditions:
+    operator: and
+    items:
+      # Pre-filter: Check if ANY event is motion-related
+      - field: "events"
+        operator: any
+        conditions:
+          - field: "type"
+            operator: eq
+            value: "motion"
+  
+  action:
+    # Generate one alert per motion event
+    forEach: "events"
+    filter:
+      - field: "type"
+        operator: eq
+        value: "motion"
+    nats:
+      subject: "alerts.motion.{deviceId}"
+      payload: |
+        {
+          "deviceId": "{deviceId}",
+          "location": "{location}",
+          "timestamp": "{timestamp}",
+          "batchId": "{@msg.batchId}",
+          "receivedAt": "{@msg.receivedAt}"
+        }
+```
+
+**Performance:**
+- Default limit: 100 iterations per forEach
+- Configure via `forEach.maxIterations` in config
+- Efficient zero-copy element context creation
+- Comprehensive metrics for monitoring
+
+For complete examples, see [examples/forEach/](../../examples/forEach/).
+
 ### Condition Operators & System Fields
 
 The `rule-router` uses the shared rule engine, which supports a rich set of operators and system variables for building complex logic.
 
 *   **Comparison**: `eq`, `neq`, `gt`, `lt`, `gte`, `lte`, `exists`
 *   **String/Array**: `contains`, `not_contains`, `in`, `not_in`
+*   **Array**: `any`, `all`, `none` (with nested conditions)
 *   **Time-Based**: `recent` (for replay protection)
 *   **System Fields**:
     *   `@time.hour`, `@day.name`, `@date.iso`
@@ -215,6 +318,7 @@ The `rule-router` uses the shared rule engine, which supports a rich set of oper
     *   `@header.Nats-Msg-Id`
     *   `@signature.valid`, `@signature.pubkey`
     *   `@kv.bucket.key:path`
+    *   `@msg.field` (in forEach context)
 *   **Template Functions**: `{@timestamp()}`, `{@uuid7()}`, `{@uuid4()}`
 
 For a complete reference on these features, please see the main project README.
@@ -283,14 +387,87 @@ This project includes a standalone `rule-tester` utility for offline validation 
 
 **Example Usage:**
 ```bash
-# Scaffold tests for a new rule
+# Scaffold tests for a new rule (auto-detects forEach)
 rule-tester --scaffold ./rules/my-new-rule.yaml
 
 # Run all tests
 rule-tester --test --rules ./rules
+
+# Quick check a single message
+rule-tester --rule ./rules/my-rule.yaml \
+            --message ./test-data/message.json
 ```
 
+**ForEach Rule Testing:**
+The tester automatically detects forEach operations and generates:
+- Array input examples
+- Multiple action output validation
+- Filter condition test cases
+- Empty array edge cases
+
 For complete documentation, see the [**`rule-tester` README**](../rule-tester/README.md).
+
+## Monitoring
+
+The rule-router exposes Prometheus metrics on port `:2112` (configurable).
+
+### Key Metrics
+
+**Message Processing:**
+```
+messages_total{status="received|processed|error"}
+rule_matches_total
+actions_total{status="success|error"}
+message_processing_backlog
+```
+
+**Array Operations:**
+```
+# ForEach processing
+forEach_iterations_total{rule_file="batch_notifications"}
+forEach_filtered_total{rule_file="batch_notifications"}
+forEach_actions_generated_total{rule_file="batch_notifications"}
+forEach_duration_seconds{rule_file="batch_notifications"}
+
+# Array operators
+array_operator_evaluations_total{operator="any|all|none",result="true|false"}
+```
+
+**Performance:**
+```
+# Rule evaluation and template processing times
+signature_verification_duration_seconds
+```
+
+**NATS:**
+```
+nats_connection_status
+nats_reconnects_total
+```
+
+**KV Operations:**
+```
+kv_cache_hits_total
+kv_cache_misses_total
+kv_cache_size
+```
+
+### Example Queries
+
+**Average forEach processing time:**
+```promql
+rate(forEach_duration_seconds_sum[5m]) / rate(forEach_duration_seconds_count[5m])
+```
+
+**ForEach filter efficiency:**
+```promql
+rate(forEach_filtered_total[5m]) / rate(forEach_iterations_total[5m])
+```
+
+**Actions per forEach operation:**
+```promql
+rate(forEach_actions_generated_total[5m]) / rate(forEach_iterations_total[5m])
+```
 
 ## Troubleshooting
 
@@ -303,6 +480,16 @@ This means a rule's trigger subject (e.g., `sensors.data`) does not match any su
 nats stream add SENSORS --subjects "sensors.>"
 ```
 
+**ForEach array exceeds limit**
+```
+Error: forEach array exceeds limit: 150 elements > 100 max iterations
+```
+Solution: Increase the limit in configuration:
+```yaml
+forEach:
+  maxIterations: 200
+```
+
 **Signature verification always returns false**
 *   Ensure `security.verification.enabled: true` in your config.
 *   Check that the `Nats-Public-Key` and `Nats-Signature` headers are present on the message.
@@ -311,6 +498,12 @@ nats stream add SENSORS --subjects "sensors.>"
 **Recent operator always returns false**
 *   Ensure a `timestamp` field exists in the payload in Unix seconds format.
 *   Check for clock skew between the publisher and the `rule-router` machine.
+
+**ForEach not generating expected actions**
+*   Check if filter conditions are too restrictive
+*   Verify array field exists and contains objects
+*   Use `@msg` prefix for root message fields
+*   Monitor `forEach_filtered_total` metric to see how many elements were filtered
 
 ## CLI Options
 
@@ -324,3 +517,48 @@ Options:
         Path to rules directory (default "rules")
 ```
 
+## Performance
+
+**Benchmarks** (Intel i7, 16GB RAM):
+- Rule evaluation: ~50-100µs per message
+- Template processing: ~20-50µs per action
+- ForEach (10 elements): ~400µs
+- ForEach (100 elements): ~3.5ms
+- Throughput: 10,000+ messages/second (single instance)
+
+**Optimizations:**
+- Zero-copy message forwarding (passthrough mode)
+- Short-circuit condition evaluation
+- Efficient pattern matching with pre-compiled patterns
+- Local KV cache (~25x faster than direct NATS KV)
+- Optimized forEach element context creation
+
+## Best Practices
+
+### Rule Design
+1. ✅ Use array operators to pre-filter messages before forEach
+2. ✅ Apply forEach filters to limit iterations
+3. ✅ Use `@msg` prefix explicitly in forEach templates
+4. ✅ Configure appropriate `maxIterations` limit
+5. ✅ Monitor forEach metrics for performance
+
+### Performance
+1. ✅ Use passthrough mode when possible (zero-copy)
+2. ✅ Enable KV local cache for frequent lookups
+3. ✅ Use wildcards efficiently (prefer exact matches when possible)
+4. ✅ Monitor `message_processing_backlog` metric
+
+### Security
+1. ✅ Enable signature verification for privileged operations
+2. ✅ Use `recent` operator to prevent replay attacks
+3. ✅ Combine signature verification with KV-based authorization
+4. ✅ Secure rule files with filesystem permissions
+
+## Examples
+
+See the [examples directory](../../examples/) for complete, working examples:
+- **forEach/**: Batch notification processing with array operations
+- Basic routing and filtering
+- KV enrichment
+- Time-based routing
+- Signature verification
