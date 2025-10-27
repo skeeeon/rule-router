@@ -20,6 +20,12 @@ type Config struct {
 	Metrics  MetricsConfig  `json:"metrics" yaml:"metrics" mapstructure:"metrics"`
 	KV       KVConfig       `json:"kv" yaml:"kv" mapstructure:"kv"`
 	Security SecurityConfig `json:"security" yaml:"security" mapstructure:"security"`
+	ForEach  ForEachConfig  `json:"forEach" yaml:"forEach" mapstructure:"forEach"` // NEW
+}
+
+// ForEachConfig contains configuration for array iteration operations
+type ForEachConfig struct {
+	MaxIterations int `json:"maxIterations" yaml:"maxIterations" mapstructure:"maxIterations"`
 }
 
 // HTTPConfig contains HTTP server and client configuration for http-gateway
@@ -329,6 +335,11 @@ func setDefaults(cfg *Config) {
 	if cfg.Security.Verification.SignatureHeader == "" {
 		cfg.Security.Verification.SignatureHeader = "Nats-Signature"
 	}
+
+	// NEW: ForEach defaults
+	if cfg.ForEach.MaxIterations == 0 {
+		cfg.ForEach.MaxIterations = 100 // Safe default: 100 iterations max
+	}
 }
 
 // validateConfig validates the configuration
@@ -419,6 +430,14 @@ func validateConfig(cfg *Config) error {
 		if cfg.HTTP.Client.Timeout < 0 {
 			return fmt.Errorf("HTTP client timeout cannot be negative")
 		}
+	}
+
+	// NEW: ForEach validation
+	if cfg.ForEach.MaxIterations < 0 {
+		return fmt.Errorf("forEach maxIterations cannot be negative (use 0 for unlimited)")
+	}
+	if cfg.ForEach.MaxIterations > 10000 {
+		return fmt.Errorf("forEach maxIterations too high (%d), maximum is 10000", cfg.ForEach.MaxIterations)
 	}
 
 	return nil
