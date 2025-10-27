@@ -239,6 +239,13 @@ func (l *RulesLoader) validateNATSAction(action *NATSAction) error {
 		return fmt.Errorf("cannot specify both 'payload' and 'passthrough: true' - choose one")
 	}
 
+	// NEW: Validate forEach configuration
+	if action.ForEach != "" {
+		if err := l.validateForEachConfig(action.ForEach, action.Filter); err != nil {
+			return fmt.Errorf("invalid forEach configuration: %w", err)
+		}
+	}
+
 	// Warn if action subject contains wildcards (usually unintentional)
 	if containsWildcards(action.Subject) {
 		l.logger.Debug("NATS action subject contains wildcards - ensure this is intentional",
@@ -302,6 +309,13 @@ func (l *RulesLoader) validateHTTPAction(action *HTTPAction) error {
 		return fmt.Errorf("cannot specify both 'payload' and 'passthrough: true' - choose one")
 	}
 
+	// NEW: Validate forEach configuration
+	if action.ForEach != "" {
+		if err := l.validateForEachConfig(action.ForEach, action.Filter); err != nil {
+			return fmt.Errorf("invalid forEach configuration: %w", err)
+		}
+	}
+
 	// Validate KV fields in action payload
 	if err := l.validateKVFieldsInTemplate(action.Payload); err != nil {
 		return fmt.Errorf("invalid KV field in payload: %w", err)
@@ -338,6 +352,23 @@ func (l *RulesLoader) validateHTTPAction(action *HTTPAction) error {
 			if _, err := time.ParseDuration(action.Retry.MaxDelay); err != nil {
 				return fmt.Errorf("invalid retry maxDelay '%s': %w", action.Retry.MaxDelay, err)
 			}
+		}
+	}
+
+	return nil
+}
+
+// NEW: validateForEachConfig validates forEach field configuration
+func (l *RulesLoader) validateForEachConfig(forEachField string, filter *Conditions) error {
+	// Ensure it's a valid JSON path (no wildcards)
+	if strings.Contains(forEachField, "*") || strings.Contains(forEachField, ">") {
+		return fmt.Errorf("forEach field cannot contain wildcards: %s", forEachField)
+	}
+
+	// Validate filter conditions if present
+	if filter != nil {
+		if err := l.validateConditions(filter); err != nil {
+			return fmt.Errorf("invalid forEach filter conditions: %w", err)
 		}
 	}
 
@@ -381,6 +412,19 @@ func (l *RulesLoader) validateConditions(conditions *Conditions) error {
 		}
 		if !l.isValidOperator(condition.Operator) {
 			return fmt.Errorf("invalid condition operator '%s' at index %d", condition.Operator, i)
+		}
+
+		// NEW: Validate array operators require nested conditions
+		if condition.Operator == "any" || condition.Operator == "all" || condition.Operator == "none" {
+			if condition.Conditions == nil {
+				return fmt.Errorf("array operator '%s' requires nested conditions at index %d", condition.Operator, i)
+			}
+			
+			// Recursively validate nested conditions for array operators
+			if err := l.validateConditions(condition.Conditions); err != nil {
+				return fmt.Errorf("invalid nested conditions for array operator '%s' at index %d: %w", 
+					condition.Operator, i, err)
+			}
 		}
 
 		// Validate subject field references if present
@@ -592,6 +636,7 @@ func (l *RulesLoader) isBucketConfigured(bucket string) bool {
 }
 
 // isValidOperator checks if an operator is valid
+// NEW: Now includes array operators (any, all, none)
 func (l *RulesLoader) isValidOperator(op string) bool {
 	validOps := map[string]bool{
 		"eq":           true,
@@ -606,6 +651,10 @@ func (l *RulesLoader) isValidOperator(op string) bool {
 		"not_in":       true,
 		"exists":       true,
 		"recent":       true,
+		// NEW: Array operators
+		"any":          true,
+		"all":          true,
+		"none":         true,
 	}
 	return validOps[op]
 }

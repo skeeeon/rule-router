@@ -3,6 +3,7 @@
 package rule
 
 import (
+	json "github.com/goccy/go-json"
 	"fmt"
 	"math"
 	"strconv"
@@ -145,6 +146,11 @@ func (e *Evaluator) evaluateCondition(cond *Condition, context *EvaluationContex
 		return actualValue != nil
 	}
 
+	// NEW: Handle array operators (any/all/none)
+	if cond.Operator == "any" || cond.Operator == "all" || cond.Operator == "none" {
+		return e.evaluateArrayCondition(actualValue, cond, context)
+	}
+
 	var result bool
 	switch cond.Operator {
 	case "eq":
@@ -162,7 +168,6 @@ func (e *Evaluator) evaluateCondition(cond *Condition, context *EvaluationContex
 	case "not_in":
 		result = !e.compareIn(actualValue, cond.Value)
 	case "recent":
-		// NEW: Time-based replay protection
 		result = e.compareRecent(actualValue, cond.Value, context)
 	default:
 		e.logger.Error("unknown operator", "operator", cond.Operator)
@@ -173,6 +178,158 @@ func (e *Evaluator) evaluateCondition(cond *Condition, context *EvaluationContex
 		"field", cond.Field, "operator", cond.Operator, "expectedValue", cond.Value, "actualValue", actualValue, "result", result)
 
 	return result
+}
+
+// evaluateArrayCondition handles array operators: any, all, none
+// NEW: Implements array element iteration with nested condition evaluation
+func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Condition, context *EvaluationContext) bool {
+	e.logger.Debug("evaluating array condition",
+		"field", cond.Field,
+		"operator", cond.Operator)
+
+	// 1. Ensure the field value is an array
+	array, ok := fieldValue.([]interface{})
+	if !ok {
+		e.logger.Debug("array operator used on non-array field",
+			"field", cond.Field,
+			"operator", cond.Operator,
+			"actualType", fmt.Sprintf("%T", fieldValue))
+		return false
+	}
+
+	// 2. Ensure nested conditions exist
+	if cond.Conditions == nil {
+		e.logger.Error("array operator missing nested conditions",
+			"field", cond.Field,
+			"operator", cond.Operator)
+		return false
+	}
+
+	e.logger.Debug("array condition setup complete",
+		"field", cond.Field,
+		"operator", cond.Operator,
+		"arrayLength", len(array),
+		"nestedConditions", cond.Conditions.Operator)
+
+	// 3. Iterate over array elements and evaluate nested conditions
+	matchCount := 0
+	
+	for i, element := range array {
+		// Convert element to map for evaluation
+		elementMap, ok := element.(map[string]interface{})
+		if !ok {
+			e.logger.Debug("array element is not an object, skipping",
+				"field", cond.Field,
+				"index", i,
+				"elementType", fmt.Sprintf("%T", element))
+			continue
+		}
+
+		// 4. Create evaluation context for this array element
+		elementContext, err := e.createElementContext(elementMap, context)
+		if err != nil {
+			e.logger.Error("failed to create context for array element",
+				"field", cond.Field,
+				"index", i,
+				"error", err)
+			continue
+		}
+
+		// 5. Evaluate nested conditions against this element
+		elementMatches := e.Evaluate(cond.Conditions, elementContext)
+		
+		e.logger.Debug("array element evaluation",
+			"field", cond.Field,
+			"index", i,
+			"matches", elementMatches)
+
+		if elementMatches {
+			matchCount++
+			
+			// Short-circuit optimization for "any" - exit as soon as we find a match
+			if cond.Operator == "any" {
+				e.logger.Debug("array operator 'any' short-circuited",
+					"field", cond.Field,
+					"matchedIndex", i,
+					"totalElements", len(array),
+					"skippedElements", len(array)-i-1)
+				return true
+			}
+			
+			// Short-circuit optimization for "none" - exit as soon as we find a match (failure case)
+			if cond.Operator == "none" {
+				e.logger.Debug("array operator 'none' short-circuited (found match)",
+					"field", cond.Field,
+					"matchedIndex", i,
+					"totalElements", len(array))
+				return false
+			}
+		} else {
+			// Short-circuit optimization for "all" - exit as soon as we find a non-match
+			if cond.Operator == "all" {
+				e.logger.Debug("array operator 'all' short-circuited (found non-match)",
+					"field", cond.Field,
+					"failedIndex", i,
+					"totalElements", len(array),
+					"skippedElements", len(array)-i-1)
+				return false
+			}
+		}
+	}
+
+	// 6. Final evaluation based on operator
+	var result bool
+	switch cond.Operator {
+	case "any":
+		result = matchCount > 0
+	case "all":
+		result = matchCount == len(array)
+	case "none":
+		result = matchCount == 0
+	default:
+		e.logger.Error("invalid array operator", "operator", cond.Operator)
+		return false
+	}
+
+	e.logger.Debug("array condition evaluation complete",
+		"field", cond.Field,
+		"operator", cond.Operator,
+		"arrayLength", len(array),
+		"matchCount", matchCount,
+		"result", result)
+
+	return result
+}
+
+// createElementContext creates a new evaluation context for an array element
+// CRITICAL: Preserves reference to OriginalMsg for @msg prefix support
+func (e *Evaluator) createElementContext(element map[string]interface{}, originalContext *EvaluationContext) (*EvaluationContext, error) {
+	// Marshal element to bytes for context creation
+	elementBytes, err := json.Marshal(element)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal array element: %w", err)
+	}
+
+	// Create new context with element as the current message
+	elementContext, err := NewEvaluationContext(
+		elementBytes,
+		originalContext.Headers,
+		originalContext.Subject,
+		originalContext.HTTP,
+		originalContext.Time,
+		originalContext.KV,
+		originalContext.sigVerification,
+		e.logger,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create element context: %w", err)
+	}
+
+	// CRITICAL: Preserve reference to original message for @msg prefix
+	// This allows nested conditions to access root message fields via @msg.field
+	elementContext.OriginalMsg = originalContext.OriginalMsg
+
+	return elementContext, nil
 }
 
 // compareRecent checks if a timestamp is within a tolerance duration of current time.

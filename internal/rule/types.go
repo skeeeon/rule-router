@@ -44,6 +44,10 @@ type NATSAction struct {
 	Passthrough bool              `json:"passthrough,omitempty" yaml:"passthrough,omitempty"`
 	Headers     map[string]string `json:"headers,omitempty" yaml:"headers,omitempty"`
 	RawPayload  []byte            `json:"-" yaml:"-"` // Populated during processing
+	
+	// NEW: Array iteration fields for forEach functionality
+	ForEach string      `json:"forEach,omitempty" yaml:"forEach,omitempty"`
+	Filter  *Conditions `json:"filter,omitempty" yaml:"filter,omitempty"`
 }
 
 // HTTPAction represents making an HTTP request
@@ -55,6 +59,10 @@ type HTTPAction struct {
 	Headers     map[string]string `json:"headers,omitempty" yaml:"headers,omitempty"`
 	RawPayload  []byte            `json:"-" yaml:"-"` // Populated during processing
 	Retry       *RetryConfig      `json:"retry,omitempty" yaml:"retry,omitempty"`
+	
+	// NEW: Array iteration fields for forEach functionality
+	ForEach string      `json:"forEach,omitempty" yaml:"forEach,omitempty"`
+	Filter  *Conditions `json:"filter,omitempty" yaml:"filter,omitempty"`
 }
 
 // RetryConfig defines retry behavior for HTTP actions
@@ -76,6 +84,9 @@ type Condition struct {
 	Field    string      `json:"field" yaml:"field"`
 	Operator string      `json:"operator" yaml:"operator"`
 	Value    interface{} `json:"value" yaml:"value"`
+	
+	// NEW: For array operators (any/all/none) - nested conditions to evaluate against array elements
+	Conditions *Conditions `json:"conditions,omitempty" yaml:"conditions,omitempty"`
 }
 
 // SubjectContext provides access to NATS subject information for templates and conditions

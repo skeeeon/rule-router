@@ -3,7 +3,9 @@
 package rule
 
 import (
+	json "github.com/goccy/go-json"
 	"fmt"
+	"strings"
 	"sync/atomic"
 
 	"rule-router/internal/logger"
@@ -13,7 +15,7 @@ import (
 type Processor struct {
 	index           *RuleIndex
 	allRules        []*Rule                // Store all rules for http-gateway
-	httpPathIndex   map[string][]*Rule     // NEW: O(1) lookup by HTTP path
+	httpPathIndex   map[string][]*Rule     // O(1) lookup by HTTP path
 	timeProvider    TimeProvider
 	kvContext       *KVContext
 	logger          *logger.Logger
@@ -35,7 +37,7 @@ func NewProcessor(log *logger.Logger, metrics *metrics.Metrics, kvCtx *KVContext
 	p := &Processor{
 		index:           NewRuleIndex(log),
 		allRules:        make([]*Rule, 0),
-		httpPathIndex:   make(map[string][]*Rule), // NEW: Initialize HTTP path index
+		httpPathIndex:   make(map[string][]*Rule),
 		timeProvider:    NewSystemTimeProvider(),
 		kvContext:       kvCtx,
 		logger:          log,
@@ -67,7 +69,7 @@ func (p *Processor) LoadRules(rules []Rule) error {
 	// Clear existing indexes
 	p.index.Clear()
 	p.allRules = make([]*Rule, 0, len(rules))
-	p.httpPathIndex = make(map[string][]*Rule) // NEW: Clear HTTP index
+	p.httpPathIndex = make(map[string][]*Rule)
 	
 	natsCount := 0
 	httpCount := 0
@@ -84,7 +86,7 @@ func (p *Processor) LoadRules(rules []Rule) error {
 			natsCount++
 		}
 		
-		// NEW: Index HTTP-triggered rules by path for O(1) lookup
+		// Index HTTP-triggered rules by path for O(1) lookup
 		if rule.Trigger.HTTP != nil {
 			path := rule.Trigger.HTTP.Path
 			p.httpPathIndex[path] = append(p.httpPathIndex[path], rule)
@@ -104,7 +106,7 @@ func (p *Processor) LoadRules(rules []Rule) error {
 		"total", len(rules),
 		"natsRules", natsCount,
 		"httpRules", httpCount,
-		"httpPaths", len(p.httpPathIndex)) // NEW: Log unique path count
+		"httpPaths", len(p.httpPathIndex))
 	
 	return nil
 }
@@ -124,7 +126,6 @@ func (p *Processor) GetHTTPPaths() []string {
 }
 
 // GetAllRules returns all loaded rules (both NATS and HTTP)
-// Used by http-gateway to enumerate rules for subscription setup
 func (p *Processor) GetAllRules() []*Rule {
 	return p.allRules
 }
@@ -142,8 +143,8 @@ func (p *Processor) ProcessNATS(subject string, payload []byte, headers map[stri
 	context, err := NewEvaluationContext(
 		payload,
 		headers,
-		NewSubjectContext(subject), // NATS context
-		nil,                         // No HTTP context
+		NewSubjectContext(subject),
+		nil,
 		p.timeProvider.GetCurrentContext(),
 		p.kvContext,
 		p.sigVerification,
@@ -165,7 +166,6 @@ func (p *Processor) ProcessNATS(subject string, payload []byte, headers map[stri
 func (p *Processor) ProcessHTTP(path, method string, payload []byte, headers map[string]string) ([]*Action, error) {
 	p.logger.Debug("processing HTTP request", "path", path, "method", method, "payloadSize", len(payload))
 
-	// NEW: O(1) lookup by path using index
 	rules := p.findHTTPRules(path, method)
 	if len(rules) == 0 {
 		return nil, nil
@@ -175,8 +175,8 @@ func (p *Processor) ProcessHTTP(path, method string, payload []byte, headers map
 	context, err := NewEvaluationContext(
 		payload,
 		headers,
-		nil,                                  // No NATS context
-		NewHTTPRequestContext(path, method), // HTTP context
+		nil,
+		NewHTTPRequestContext(path, method),
 		p.timeProvider.GetCurrentContext(),
 		p.kvContext,
 		p.sigVerification,
@@ -195,16 +195,13 @@ func (p *Processor) ProcessHTTP(path, method string, payload []byte, headers map
 }
 
 // findHTTPRules finds all HTTP rules matching the path and method
-// NEW: O(1) lookup using httpPathIndex map
 func (p *Processor) findHTTPRules(path, method string) []*Rule {
-	// O(1) lookup by path
 	rulesForPath, exists := p.httpPathIndex[path]
 	if !exists || len(rulesForPath) == 0 {
 		p.logger.Debug("no HTTP rules for path", "path", path)
 		return nil
 	}
 	
-	// If no method filtering needed, return all rules for this path
 	if method == "" {
 		p.logger.Debug("HTTP rule lookup complete (all methods)",
 			"path", path,
@@ -212,8 +209,6 @@ func (p *Processor) findHTTPRules(path, method string) []*Rule {
 		return rulesForPath
 	}
 	
-	// Filter by method if specified in rule
-	// Note: Rules with empty method match ALL methods
 	var matching []*Rule
 	for _, rule := range rulesForPath {
 		if rule.Trigger.HTTP.Method == "" || rule.Trigger.HTTP.Method == method {
@@ -235,7 +230,6 @@ func (p *Processor) findHTTPRules(path, method string) []*Rule {
 }
 
 // evaluateRules evaluates a set of rules against a context
-// Shared logic for both NATS and HTTP processing
 func (p *Processor) evaluateRules(rules []*Rule, context *EvaluationContext, triggerType string) ([]*Action, error) {
 	var actions []*Action
 
@@ -243,7 +237,8 @@ func (p *Processor) evaluateRules(rules []*Rule, context *EvaluationContext, tri
 		p.logger.Debug("evaluating rule", "triggerType", triggerType)
 
 		if rule.Conditions == nil || p.evaluator.Evaluate(rule.Conditions, context) {
-			action, err := p.processAction(&rule.Action, context)
+			// NEW: processAction now returns a slice of actions (for forEach support)
+			actionResults, err := p.processAction(&rule.Action, context)
 			if err != nil {
 				if p.metrics != nil {
 					p.metrics.IncTemplateOpsTotal("error")
@@ -252,27 +247,31 @@ func (p *Processor) evaluateRules(rules []*Rule, context *EvaluationContext, tri
 				continue
 			}
 			
-			if p.metrics != nil {
-				p.metrics.IncTemplateOpsTotal("success")
-				p.metrics.IncRuleMatches()
-				
-				// Track action type for metrics
-				if action.NATS != nil {
-					if action.NATS.Passthrough {
-						p.metrics.IncActionsByType("passthrough")
-					} else {
-						p.metrics.IncActionsByType("templated")
-					}
-				} else if action.HTTP != nil {
-					if action.HTTP.Passthrough {
-						p.metrics.IncActionsByType("passthrough")
-					} else {
-						p.metrics.IncActionsByType("templated")
+			// Track metrics for each action generated
+			for _, action := range actionResults {
+				if p.metrics != nil {
+					p.metrics.IncTemplateOpsTotal("success")
+					p.metrics.IncRuleMatches()
+					
+					// Track action type
+					if action.NATS != nil {
+						if action.NATS.Passthrough {
+							p.metrics.IncActionsByType("passthrough")
+						} else {
+							p.metrics.IncActionsByType("templated")
+						}
+					} else if action.HTTP != nil {
+						if action.HTTP.Passthrough {
+							p.metrics.IncActionsByType("passthrough")
+						} else {
+							p.metrics.IncActionsByType("templated")
+						}
 					}
 				}
 			}
 			
-			actions = append(actions, action)
+			// NEW: Flatten multiple actions from forEach into results
+			actions = append(actions, actionResults...)
 		}
 	}
 
@@ -284,30 +283,38 @@ func (p *Processor) evaluateRules(rules []*Rule, context *EvaluationContext, tri
 }
 
 // processAction processes an action (NATS or HTTP)
-func (p *Processor) processAction(action *Action, context *EvaluationContext) (*Action, error) {
-	processedAction := &Action{}
+// NEW: Returns a slice of actions to support forEach
+func (p *Processor) processAction(action *Action, context *EvaluationContext) ([]*Action, error) {
+	var results []*Action
 
 	if action.NATS != nil {
-		natsAction, err := p.processNATSAction(action.NATS, context)
+		natsActions, err := p.processNATSAction(action.NATS, context)
 		if err != nil {
 			return nil, err
 		}
-		processedAction.NATS = natsAction
+		results = append(results, natsActions...)
 	} else if action.HTTP != nil {
-		httpAction, err := p.processHTTPAction(action.HTTP, context)
+		httpActions, err := p.processHTTPAction(action.HTTP, context)
 		if err != nil {
 			return nil, err
 		}
-		processedAction.HTTP = httpAction
+		results = append(results, httpActions...)
 	} else {
 		return nil, fmt.Errorf("action has no NATS or HTTP configuration")
 	}
 
-	return processedAction, nil
+	return results, nil
 }
 
 // processNATSAction processes a NATS action with template substitution
-func (p *Processor) processNATSAction(action *NATSAction, context *EvaluationContext) (*NATSAction, error) {
+// NEW: Returns multiple actions when forEach is used
+func (p *Processor) processNATSAction(action *NATSAction, context *EvaluationContext) ([]*Action, error) {
+	// NEW: Check if action has forEach
+	if action.ForEach != "" {
+		return p.processNATSActionWithForEach(action, context)
+	}
+
+	// Original single-action logic
 	result := &NATSAction{
 		Passthrough: action.Passthrough,
 	}
@@ -336,14 +343,147 @@ func (p *Processor) processNATSAction(action *NATSAction, context *EvaluationCon
 		return nil, fmt.Errorf("failed to template headers: %w", err)
 	}
 
-	return result, nil
+	return []*Action{{NATS: result}}, nil
+}
+
+// processNATSActionWithForEach processes a NATS action with forEach iteration
+// NEW: Generates multiple actions by iterating over an array
+func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *EvaluationContext) ([]*Action, error) {
+	p.logger.Debug("processing NATS action with forEach",
+		"forEachField", action.ForEach)
+
+	// 1. Extract array from message using JSONPath traversal
+	arrayPath := strings.Split(action.ForEach, ".")
+	arrayValue, err := context.traverser.TraversePath(context.Msg, arrayPath)
+	if err != nil {
+		return nil, fmt.Errorf("forEach field not found: %s: %w", action.ForEach, err)
+	}
+
+	// 2. Ensure the value is an array
+	arrayItems, ok := arrayValue.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("forEach field is not an array: %s (type: %T)", action.ForEach, arrayValue)
+	}
+
+	p.logger.Debug("forEach array extracted",
+		"field", action.ForEach,
+		"arrayLength", len(arrayItems))
+
+	var actions []*Action
+
+	// 3. Iterate over array elements
+	for i, item := range arrayItems {
+		// Convert element to map
+		itemMap, ok := item.(map[string]interface{})
+		if !ok {
+			p.logger.Warn("forEach array element is not an object, skipping",
+				"field", action.ForEach,
+				"index", i,
+				"elementType", fmt.Sprintf("%T", item))
+			continue
+		}
+
+		// 4. Apply filter if present
+		if action.Filter != nil {
+			elementContext, err := p.createElementContext(itemMap, context)
+			if err != nil {
+				p.logger.Error("failed to create element context for filter",
+					"field", action.ForEach,
+					"index", i,
+					"error", err)
+				continue
+			}
+
+			// Evaluate filter conditions
+			if !p.evaluator.Evaluate(action.Filter, elementContext) {
+				p.logger.Debug("forEach element filtered out",
+					"field", action.ForEach,
+					"index", i)
+				continue
+			}
+		}
+
+		// 5. Create element context for templating
+		elementContext, err := p.createElementContext(itemMap, context)
+		if err != nil {
+			p.logger.Error("failed to create element context for templating",
+				"field", action.ForEach,
+				"index", i,
+				"error", err)
+			continue
+		}
+
+		// 6. Template the action with element context
+		result := &NATSAction{
+			Passthrough: action.Passthrough,
+		}
+
+		// Template subject
+		subject, err := p.templater.Execute(action.Subject, elementContext)
+		if err != nil {
+			p.logger.Error("failed to template subject for forEach element",
+				"field", action.ForEach,
+				"index", i,
+				"error", err)
+			continue
+		}
+		result.Subject = subject
+
+		// Handle payload
+		if action.Passthrough {
+			// Passthrough mode: use element as payload
+			result.RawPayload = mustMarshal(itemMap)
+		} else {
+			// Template mode: render template with element context
+			payload, err := p.templater.Execute(action.Payload, elementContext)
+			if err != nil {
+				p.logger.Error("failed to template payload for forEach element",
+					"field", action.ForEach,
+					"index", i,
+					"error", err)
+				continue
+			}
+			result.Payload = payload
+		}
+
+		// Template headers
+		result.Headers, err = p.templateHeaders(action.Headers, elementContext)
+		if err != nil {
+			p.logger.Error("failed to template headers for forEach element",
+				"field", action.ForEach,
+				"index", i,
+				"error", err)
+			continue
+		}
+
+		actions = append(actions, &Action{NATS: result})
+		
+		p.logger.Debug("forEach element processed successfully",
+			"field", action.ForEach,
+			"index", i,
+			"subject", result.Subject)
+	}
+
+	p.logger.Info("forEach processing complete",
+		"field", action.ForEach,
+		"totalElements", len(arrayItems),
+		"actionsGenerated", len(actions))
+
+	return actions, nil
 }
 
 // processHTTPAction processes an HTTP action with template substitution
-func (p *Processor) processHTTPAction(action *HTTPAction, context *EvaluationContext) (*HTTPAction, error) {
+// NEW: Returns multiple actions when forEach is used
+func (p *Processor) processHTTPAction(action *HTTPAction, context *EvaluationContext) ([]*Action, error) {
+	// NEW: Check if action has forEach
+	if action.ForEach != "" {
+		return p.processHTTPActionWithForEach(action, context)
+	}
+
+	// Original single-action logic
 	result := &HTTPAction{
 		Passthrough: action.Passthrough,
-		Retry:       action.Retry, // Copy retry config as-is
+		Retry:       action.Retry,
 	}
 
 	// Template URL
@@ -377,7 +517,176 @@ func (p *Processor) processHTTPAction(action *HTTPAction, context *EvaluationCon
 		return nil, fmt.Errorf("failed to template headers: %w", err)
 	}
 
-	return result, nil
+	return []*Action{{HTTP: result}}, nil
+}
+
+// processHTTPActionWithForEach processes an HTTP action with forEach iteration
+// NEW: Generates multiple actions by iterating over an array
+func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *EvaluationContext) ([]*Action, error) {
+	p.logger.Debug("processing HTTP action with forEach",
+		"forEachField", action.ForEach)
+
+	// 1. Extract array from message
+	arrayPath := strings.Split(action.ForEach, ".")
+	arrayValue, err := context.traverser.TraversePath(context.Msg, arrayPath)
+	if err != nil {
+		return nil, fmt.Errorf("forEach field not found: %s: %w", action.ForEach, err)
+	}
+
+	// 2. Ensure the value is an array
+	arrayItems, ok := arrayValue.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("forEach field is not an array: %s (type: %T)", action.ForEach, arrayValue)
+	}
+
+	p.logger.Debug("forEach array extracted",
+		"field", action.ForEach,
+		"arrayLength", len(arrayItems))
+
+	var actions []*Action
+
+	// 3. Iterate over array elements
+	for i, item := range arrayItems {
+		// Convert element to map
+		itemMap, ok := item.(map[string]interface{})
+		if !ok {
+			p.logger.Warn("forEach array element is not an object, skipping",
+				"field", action.ForEach,
+				"index", i,
+				"elementType", fmt.Sprintf("%T", item))
+			continue
+		}
+
+		// 4. Apply filter if present
+		if action.Filter != nil {
+			elementContext, err := p.createElementContext(itemMap, context)
+			if err != nil {
+				p.logger.Error("failed to create element context for filter",
+					"field", action.ForEach,
+					"index", i,
+					"error", err)
+				continue
+			}
+
+			// Evaluate filter conditions
+			if !p.evaluator.Evaluate(action.Filter, elementContext) {
+				p.logger.Debug("forEach element filtered out",
+					"field", action.ForEach,
+					"index", i)
+				continue
+			}
+		}
+
+		// 5. Create element context for templating
+		elementContext, err := p.createElementContext(itemMap, context)
+		if err != nil {
+			p.logger.Error("failed to create element context for templating",
+				"field", action.ForEach,
+				"index", i,
+				"error", err)
+			continue
+		}
+
+		// 6. Template the action with element context
+		result := &HTTPAction{
+			Passthrough: action.Passthrough,
+			Retry:       action.Retry,
+		}
+
+		// Template URL
+		url, err := p.templater.Execute(action.URL, elementContext)
+		if err != nil {
+			p.logger.Error("failed to template URL for forEach element",
+				"field", action.ForEach,
+				"index", i,
+				"error", err)
+			continue
+		}
+		result.URL = url
+
+		// Template method
+		method, err := p.templater.Execute(action.Method, elementContext)
+		if err != nil {
+			p.logger.Error("failed to template method for forEach element",
+				"field", action.ForEach,
+				"index", i,
+				"error", err)
+			continue
+		}
+		result.Method = method
+
+		// Handle payload
+		if action.Passthrough {
+			// Passthrough mode: use element as payload
+			result.RawPayload = mustMarshal(itemMap)
+		} else {
+			// Template mode: render template with element context
+			payload, err := p.templater.Execute(action.Payload, elementContext)
+			if err != nil {
+				p.logger.Error("failed to template payload for forEach element",
+					"field", action.ForEach,
+					"index", i,
+					"error", err)
+				continue
+			}
+			result.Payload = payload
+		}
+
+		// Template headers
+		result.Headers, err = p.templateHeaders(action.Headers, context)
+		if err != nil {
+			p.logger.Error("failed to template headers for forEach element",
+				"field", action.ForEach,
+				"index", i,
+				"error", err)
+			continue
+		}
+
+		actions = append(actions, &Action{HTTP: result})
+		
+		p.logger.Debug("forEach element processed successfully",
+			"field", action.ForEach,
+			"index", i,
+			"url", result.URL)
+	}
+
+	p.logger.Info("forEach processing complete",
+		"field", action.ForEach,
+		"totalElements", len(arrayItems),
+		"actionsGenerated", len(actions))
+
+	return actions, nil
+}
+
+// createElementContext creates a new evaluation context for an array element during forEach
+// CRITICAL: Preserves reference to OriginalMsg for @msg prefix support
+func (p *Processor) createElementContext(element map[string]interface{}, originalContext *EvaluationContext) (*EvaluationContext, error) {
+	// Marshal element to bytes for context creation
+	elementBytes, err := json.Marshal(element)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal array element: %w", err)
+	}
+
+	// Create new context with element as the current message
+	elementContext, err := NewEvaluationContext(
+		elementBytes,
+		originalContext.Headers,
+		originalContext.Subject,
+		originalContext.HTTP,
+		originalContext.Time,
+		originalContext.KV,
+		originalContext.sigVerification,
+		p.logger,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create element context: %w", err)
+	}
+
+	// CRITICAL: Preserve reference to original message for @msg prefix
+	// This allows templates to access root message fields via @msg.field
+	elementContext.OriginalMsg = originalContext.OriginalMsg
+
+	return elementContext, nil
 }
 
 // templateHeaders templates all header values
@@ -396,6 +705,17 @@ func (p *Processor) templateHeaders(headers map[string]string, context *Evaluati
 	}
 
 	return result, nil
+}
+
+// mustMarshal marshals a value to JSON, panicking on error
+// Used in contexts where marshaling should never fail (already valid JSON objects)
+func mustMarshal(v interface{}) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		// This should never happen with valid map[string]interface{} values
+		panic(fmt.Sprintf("mustMarshal failed: %v", err))
+	}
+	return b
 }
 
 // ProcessWithSubject is kept for backward compatibility (delegates to ProcessNATS)

@@ -13,12 +13,16 @@ import (
 )
 
 // EvaluationContext provides all data needed for condition evaluation and template processing
-// Supports both NATS and HTTP contexts
+// Supports both NATS and HTTP contexts, and now includes support for forEach array iteration
 type EvaluationContext struct {
 	// Message data
-	Msg        map[string]interface{}
+	Msg        map[string]interface{} // CURRENT context (root message OR array element during forEach)
 	RawPayload []byte
 	Headers    map[string]string
+
+	// NEW: Original message reference for @msg prefix
+	// ALWAYS points to root message, even when Msg points to array element
+	OriginalMsg map[string]interface{}
 
 	// Context (NATS or HTTP, one will be nil)
 	Subject *SubjectContext
@@ -59,7 +63,7 @@ func NewEvaluationContext(
 		msgData = make(map[string]interface{})
 	}
 
-	return &EvaluationContext{
+	ctx := &EvaluationContext{
 		Msg:             msgData,
 		RawPayload:      payload,
 		Headers:         headers,
@@ -70,18 +74,27 @@ func NewEvaluationContext(
 		traverser:       NewJSONPathTraverser(),
 		sigVerification: sigVerification,
 		logger:          logger,
-	}, nil
+	}
+	
+	// NEW: Initialize OriginalMsg to point to the same message data
+	// This will remain constant even if Msg is changed during forEach iteration
+	ctx.OriginalMsg = msgData
+	
+	return ctx, nil
 }
 
 // ResolveValue resolves a field value from the context
 // Supports message fields, system fields (@subject, @path, @header, @time, @kv, @signature)
+// NEW: Also supports @msg prefix for explicit root message access during forEach
 func (c *EvaluationContext) ResolveValue(path string) (interface{}, bool) {
 	// System fields start with @
 	if strings.HasPrefix(path, "@") {
 		return c.resolveSystemField(path)
 	}
 
-	// Message field - traverse JSON
+	// Message field - traverse JSON using current context (Msg)
+	// During forEach, this will be the array element
+	// Outside forEach, this is the same as OriginalMsg
 	value, err := c.traverser.TraversePathString(c.Msg, path)
 	if err != nil {
 		return nil, false
@@ -90,7 +103,19 @@ func (c *EvaluationContext) ResolveValue(path string) (interface{}, bool) {
 }
 
 // resolveSystemField handles all @ prefixed system fields
+// NEW: Includes @msg.* prefix for explicit root message access
 func (c *EvaluationContext) resolveSystemField(path string) (interface{}, bool) {
+	// NEW: @msg prefix - explicitly access root message
+	// This is critical during forEach to access fields outside the current array element
+	if strings.HasPrefix(path, "@msg.") {
+		fieldPath := path[5:] // Remove "@msg."
+		value, err := c.traverser.TraversePathString(c.OriginalMsg, fieldPath)
+		if err != nil {
+			return nil, false
+		}
+		return value, true
+	}
+
 	// Subject fields (NATS context)
 	if strings.HasPrefix(path, "@subject") {
 		if c.Subject != nil {
