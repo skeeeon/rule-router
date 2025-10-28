@@ -2,7 +2,7 @@
 #
 # A comprehensive script to generate boilerplate rule YAML files.
 # Supports: NATS/HTTP triggers & actions, simple & complex (nested) conditions,
-# passthrough actions, and custom headers.
+# passthrough actions, custom headers, and forEach array processing.
 #
 
 set -e
@@ -29,17 +29,19 @@ function show_help() {
   echo "The script will guide you through:"
   echo "  - Naming the rule file."
   echo "  - Choosing a Trigger (NATS or HTTP)."
-  echo "  - Defining Conditions (Simple or Complex/Nested)."
-  echo "  - Choosing an Action (NATS or HTTP)."
+  echo "  - Defining Conditions, including:"
+  echo "    - Simple, Complex (nested), and Array operators (any/all/none)."
+  echo "  - Choosing an Action (NATS or HTTP), including:"
+  echo "    - Single actions (Templated or Passthrough)."
+  echo "    - ForEach actions for batch processing with optional filters."
   echo
   echo "Options:"
   echo "  -h, --help    Display this help message and exit."
 }
 
-# This function now ONLY prints to the console. It is never captured in a variable.
 function print_context_help() {
     local indent="$1"
-    echo -e "${indent}${COLOR_BLUE}--- Condition Help ---"
+    echo -e "${indent}${COLOR_BLUE}--- Context Help ---"
     echo -e "${indent}Available Fields:"
     echo -e "${indent}  - Payload Fields: your.field, nested.object.field"
     echo -e "${indent}  - NATS Context:   @subject, @subject.0, @subject.count"
@@ -49,12 +51,13 @@ function print_context_help() {
     echo -e "${indent}  - Signature:      @signature.valid, @signature.pubkey"
     echo -e "${indent}Available Operators:"
     echo -e "${indent}  eq neq gt lt gte lte contains not_contains in not_in exists recent"
+    echo -e "${indent}  any all none (for arrays in conditions)"
     echo -e "${indent}--------------------${COLOR_RESET}"
 }
 
 function validate_operator() {
     local op_to_check="$1"
-    local operators=("eq" "neq" "gt" "lt" "gte" "lte" "contains" "not_contains" "in" "not_in" "exists" "recent")
+    local operators=("eq" "neq" "gt" "lt" "gte" "lte" "contains" "not_contains" "in" "not_in" "exists" "recent" "any" "all" "none")
     for op in "${operators[@]}"; do
         if [[ "$op" == "$op_to_check" ]]; then return 0; fi
     done
@@ -97,26 +100,35 @@ function get_trigger() {
   done
 }
 
-function get_simple_conditions() {
-    local indent="    "
-    local block=""
-    read -p "${COLOR_YELLOW}${indent}Choose a logical operator for the group [and]: ${COLOR_RESET}" -r LOGICAL_OPERATOR
-    LOGICAL_OPERATOR=${LOGICAL_OPERATOR:-and}
-    block=$(printf "  conditions:\n%soperator: \"%s\"\n%sitems:" "$indent" "$LOGICAL_OPERATOR" "$indent")
-
+## REFACTORED: Central function to get condition items, now with array operator support
+function get_condition_items() {
+    local indent="$1"
+    local items_block=""
     while true; do
         read -p "${COLOR_YELLOW}${indent}  - Field (or press Enter to finish): ${COLOR_RESET}" -r C_FIELD
         [ -z "$C_FIELD" ] && break
+        
         local C_OPERATOR=""; while [ -z "$C_OPERATOR" ]; do
             read -p "${COLOR_YELLOW}${indent}  - Operator: ${COLOR_RESET}" -r C_OPERATOR_INPUT
             if validate_operator "$C_OPERATOR_INPUT"; then C_OPERATOR="$C_OPERATOR_INPUT"; else echo "    Invalid operator."; fi
         done
-        read -p "${COLOR_YELLOW}${indent}  - Value: ${COLOR_RESET}" -r C_VALUE
-        CONDITION_FIELDS_ARRAY+=("$C_FIELD")
-        local quoted_value="$C_VALUE"; if ! [[ "$C_VALUE" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then quoted_value="\"$C_VALUE\""; fi
-        block+=$(printf "\n%s  - field: \"%s\"\n%s    operator: \"%s\"\n%s    value: %s" "$indent" "$C_FIELD" "$indent" "$C_OPERATOR" "$indent" "$quoted_value")
+        
+        if [ -z "$items_block" ]; then items_block=$(printf "\n%sitems:" "$indent"); fi
+
+        ## NEW: Interactive builder for array operators
+        if [[ "$C_OPERATOR" == "any" || "$C_OPERATOR" == "all" || "$C_OPERATOR" == "none" ]]; then
+            items_block+=$(printf "\n%s  - field: \"%s\"\n%s    operator: \"%s\"" "$indent" "$C_FIELD" "$indent" "$C_OPERATOR")
+            echo -e "${COLOR_BLUE}${indent}    Now defining nested conditions for the '${C_OPERATOR}' operator...${COLOR_RESET}"
+            local nested_conditions=$(get_conditions_recursive "${indent}    ")
+            items_block+=$(printf "\n%s" "$nested_conditions")
+        else
+            read -p "${COLOR_YELLOW}${indent}  - Value: ${COLOR_RESET}" -r C_VALUE
+            CONDITION_FIELDS_ARRAY+=("$C_FIELD")
+            local quoted_value="$C_VALUE"; if ! [[ "$C_VALUE" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then quoted_value="\"$C_VALUE\""; fi
+            items_block+=$(printf "\n%s  - field: \"%s\"\n%s    operator: \"%s\"\n%s    value: %s" "$indent" "$C_FIELD" "$indent" "$C_OPERATOR" "$indent" "$quoted_value")
+        fi
     done
-    echo -e "$block"
+    echo -e "$items_block"
 }
 
 function get_conditions_recursive() {
@@ -124,26 +136,13 @@ function get_conditions_recursive() {
     local block=""
     read -p "${COLOR_YELLOW}${indent}Choose a logical operator for this group [and]: ${COLOR_RESET}" -r LOGICAL_OPERATOR
     LOGICAL_OPERATOR=${LOGICAL_OPERATOR:-and}
-    block+=$(printf "%soperator: \"%s\"" "$indent" "$LOGICAL_OPERATOR")
+    block+=$(printf "%sconditions:\n%s  operator: \"%s\"" "$indent" "$indent" "$LOGICAL_OPERATOR")
 
-    local items_block="";
-    while true; do
-        read -p "${COLOR_YELLOW}${indent}  - Field (or press Enter to finish): ${COLOR_RESET}" -r C_FIELD
-        [ -z "$C_FIELD" ] && break
-        local C_OPERATOR=""; while [ -z "$C_OPERATOR" ]; do
-            read -p "${COLOR_YELLOW}${indent}  - Operator: ${COLOR_RESET}" -r C_OPERATOR_INPUT
-            if validate_operator "$C_OPERATOR_INPUT"; then C_OPERATOR="$C_OPERATOR_INPUT"; else echo "    Invalid operator."; fi
-        done
-        read -p "${COLOR_YELLOW}${indent}  - Value: ${COLOR_RESET}" -r C_VALUE
-        CONDITION_FIELDS_ARRAY+=("$C_FIELD")
-        local quoted_value="$C_VALUE"; if ! [[ "$C_VALUE" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then quoted_value="\"$C_VALUE\""; fi
-        if [ -z "$items_block" ]; then items_block=$(printf "\n%sitems:" "$indent"); fi
-        items_block+=$(printf "\n%s  - field: \"%s\"\n%s    operator: \"%s\"\n%s    value: %s" "$indent" "$C_FIELD" "$indent" "$C_OPERATOR" "$indent" "$quoted_value")
-    done
+    local items_block=$(get_condition_items "${indent}  ")
     [ -n "$items_block" ] && block+="$items_block"
 
     local groups_block=""; while true; do
-        read -p "${COLOR_BLUE}${indent}Add a nested condition group here? (y/N): ${COLOR_RESET}" -r ADD_GROUP
+        read -p "${COLOR_BLUE}${indent}Add another nested condition group here? (y/N): ${COLOR_RESET}" -r ADD_GROUP
         if [[ ! "$ADD_GROUP" =~ ^[Yy]$ ]]; then break; fi
         if [ -z "$groups_block" ]; then groups_block=$(printf "\n%sgroups:" "$indent"); fi
         groups_block+=$(printf "\n%s  -" "$indent")
@@ -155,19 +154,26 @@ function get_conditions_recursive() {
 }
 
 function get_conditions() {
-  echo; echo "${COLOR_BLUE}2. Select a Condition Type:${COLOR_RESET}"
+  echo; echo "${COLOR_BLUE}2. Define Conditions (when the rule should run):${COLOR_RESET}"
+  print_context_help "    "
   PS3="Your choice: "
+  ## NEW: Restored "Complex" option
   select CONDITION_TYPE in "No conditions" "Simple (a single list of checks)" "Complex (with nested groups)"; do
     case $CONDITION_TYPE in
       "No conditions") CONDITIONS_BLOCK="# No conditions defined for this rule."; break ;;
       "Simple (a single list of checks)")
-        print_context_help "    " # **FIX**: Print help to console BEFORE capturing output
-        CONDITIONS_BLOCK=$(get_simple_conditions)
+        read -p "${COLOR_YELLOW}    Choose a logical operator for the group [and]: ${COLOR_RESET}" -r LOGICAL_OPERATOR
+        LOGICAL_OPERATOR=${LOGICAL_OPERATOR:-and}
+        local items_block=$(get_condition_items "    ")
+        if [ -n "$items_block" ]; then
+            CONDITIONS_BLOCK=$(printf "  conditions:\n    operator: \"%s\"%s" "$LOGICAL_OPERATOR" "$items_block")
+        else
+            CONDITIONS_BLOCK="# No conditions defined for this rule."
+        fi
         break ;;
       "Complex (with nested groups)")
-        print_context_help "    " # **FIX**: Print help to console BEFORE capturing output
-        local conditions_content=$(get_conditions_recursive "    ")
-        CONDITIONS_BLOCK=$(printf "  conditions:\n%s" "$conditions_content")
+        local conditions_content=$(get_conditions_recursive "  ")
+        CONDITIONS_BLOCK=$(printf "%s" "$conditions_content")
         break ;;
       *) echo "Invalid option." ;;
     esac
@@ -186,40 +192,84 @@ function get_headers() {
     fi; echo -e "$header_block"
 }
 
+function get_filter_conditions() {
+    local indent="$1"
+    local filter_block=""
+    read -p "${COLOR_YELLOW}${indent}Do you want to add a filter to process only some elements? (y/N): ${COLOR_RESET}" -r ADD_FILTER
+    if [[ "$ADD_FILTER" =~ ^[Yy]$ ]]; then
+        read -p "${COLOR_YELLOW}${indent}  Choose a logical operator for the filter [and]: ${COLOR_RESET}" -r LOGICAL_OPERATOR
+        LOGICAL_OPERATOR=${LOGICAL_OPERATOR:-and}
+        filter_block=$(printf "\n    filter:\n%s  operator: \"%s\"" "$indent" "$LOGICAL_OPERATOR")
+        
+        local items_block=$(get_condition_items "${indent}  ")
+        if [ -n "$items_block" ]; then
+            filter_block+="$items_block"
+        fi
+    fi
+    echo -e "$filter_block"
+}
+
 function get_action() {
   echo; echo "${COLOR_BLUE}3. Select the Action Type (what the rule does):${COLOR_RESET}"
   PS3="Your choice: "
   select ACTION_TYPE in "NATS (Publish Message)" "HTTP (Send Webhook)"; do
     case $ACTION_TYPE in
       "NATS (Publish Message)")
-        read -p "${COLOR_YELLOW}   Enter NATS Action Subject (e.g., 'alerts.high_temp'): ${COLOR_RESET}" -r ACTION_SUBJECT
-        echo "${COLOR_BLUE}   Select Payload Type:${COLOR_RESET}"; select PAYLOAD_TYPE in "Templated (create a new JSON payload)" "Passthrough (forward original message)"; do
-            case $PAYLOAD_TYPE in
-                "Templated (create a new JSON payload)")
-                    local details_block=""; for field in "${CONDITION_FIELDS_ARRAY[@]}"; do details_block+=$(printf "\n            \"%s\": \"{%s}\"," "$field" "$field"); done; details_block=${details_block%,}
-                    local headers=$(get_headers)
-                    ACTION_BLOCK=$(printf "  action:\n    nats:\n      subject: \"%s\"%s\n      payload: |\n        {\n          \"message\": \"Rule matched and processed.\",\n          \"details\": {%s\n          },\n          \"processed_at\": \"{@timestamp()}\"\n        }" "$ACTION_SUBJECT" "$headers" "$details_block")
-                    break ;;
-                "Passthrough (forward original message)")
-                    local headers=$(get_headers)
-                    ACTION_BLOCK=$(printf "  action:\n    nats:\n      subject: \"%s\"%s\n      passthrough: true" "$ACTION_SUBJECT" "$headers")
+        echo "${COLOR_BLUE}   Select Action Cardinality:${COLOR_RESET}"; select CARDINALITY in "Single Action" "ForEach (Batch) Action"; do
+            case $CARDINALITY in
+                "Single Action")
+                    read -p "${COLOR_YELLOW}   Enter NATS Action Subject (e.g., 'alerts.high_temp'): ${COLOR_RESET}" -r ACTION_SUBJECT
+                    echo "${COLOR_BLUE}   Select Payload Type:${COLOR_RESET}"; select PAYLOAD_TYPE in "Templated (create a new JSON payload)" "Passthrough (forward original message)"; do
+                        case $PAYLOAD_TYPE in
+                            "Templated (create a new JSON payload)")
+                                local details_block=""; for field in "${CONDITION_FIELDS_ARRAY[@]}"; do details_block+=$(printf "\n            \"%s\": \"{%s}\"," "$field" "$field"); done; details_block=${details_block%,}
+                                local headers=$(get_headers)
+                                ACTION_BLOCK=$(printf "  action:\n    nats:\n      subject: \"%s\"%s\n      payload: |\n        {\n          \"message\": \"Rule matched and processed.\",\n          \"details\": {%s\n          },\n          \"processed_at\": \"{@timestamp()}\"\n        }" "$ACTION_SUBJECT" "$headers" "$details_block")
+                                break ;;
+                            "Passthrough (forward original message)")
+                                local headers=$(get_headers)
+                                ACTION_BLOCK=$(printf "  action:\n    nats:\n      subject: \"%s\"%s\n      passthrough: true" "$ACTION_SUBJECT" "$headers")
+                                break ;;
+                            *) echo "Invalid option." ;;
+                        esac
+                    done; break ;;
+                "ForEach (Batch) Action")
+                    read -p "${COLOR_YELLOW}   Enter NATS Action Subject (can use element fields, e.g., 'alerts.{id}'): ${COLOR_RESET}" -r ACTION_SUBJECT
+                    read -p "${COLOR_YELLOW}   Enter the path to the array field in the message (e.g., 'notifications'): ${COLOR_RESET}" -r FOREACH_FIELD
+                    local filter_block=$(get_filter_conditions "    ")
+                    local root_fields_block=""; for field in "${CONDITION_FIELDS_ARRAY[@]}"; do root_fields_block+=$(printf "\n          \"root_%s\": \"{@msg.%s}\"," "$(echo "$field" | sed 's/[^a-zA-Z0-9_]/_/g')" "$field"); done; root_fields_block=${root_fields_block%,}
+                    ACTION_BLOCK=$(printf "  action:\n    forEach: \"%s\"%s\n    nats:\n      subject: \"%s\"\n      payload: |\n        {\n          # Fields from the array element\n          \"element_id\": \"{id}\",\n          \"element_status\": \"{status}\",\n\n          # Fields from the root message (using @msg prefix)\n          \"batch_id\": \"{@msg.batchId}\",%s\n\n          # System functions are always available\n          \"processed_at\": \"{@timestamp()}\"\n        }" "$FOREACH_FIELD" "$filter_block" "$ACTION_SUBJECT" "$root_fields_block")
                     break ;;
                 *) echo "Invalid option." ;;
             esac
         done; break ;;
       "HTTP (Send Webhook)")
-        read -p "${COLOR_YELLOW}   Enter HTTP Action URL (e.g., 'https://api.example.com/alerts'): ${COLOR_RESET}" -r ACTION_URL
-        read -p "${COLOR_YELLOW}   Enter HTTP Method [POST]: ${COLOR_RESET}" -r ACTION_METHOD; ACTION_METHOD=${ACTION_METHOD:-POST}
-        echo "${COLOR_BLUE}   Select Payload Type:${COLOR_RESET}"; select PAYLOAD_TYPE in "Templated (create a new JSON payload)" "Passthrough (forward original message)"; do
-            case $PAYLOAD_TYPE in
-                "Templated (create a new JSON payload)")
-                    local details_block=""; for field in "${CONDITION_FIELDS_ARRAY[@]}"; do details_block+=$(printf "\n            \"%s\": \"{%s}\"," "$field" "$field"); done; details_block=${details_block%,}
-                    local headers=$(get_headers)
-                    ACTION_BLOCK=$(printf "  action:\n    http:\n      url: \"%s\"\n      method: \"%s\"%s\n      payload: |\n        {\n          \"alert\": \"Rule matched and processed.\",\n          \"details\": {%s\n          },\n          \"timestamp\": \"{@timestamp()}\"\n        }\n      retry:\n        maxAttempts: 3      # Default: 3\n        initialDelay: \"1s\"  # Default: 1s\n        maxDelay: \"30s\"     # Default: 30s" "$ACTION_URL" "$(echo "$ACTION_METHOD" | tr '[:lower:]' '[:upper:]')" "$headers" "$details_block")
-                    break ;;
-                "Passthrough (forward original message)")
-                    local headers=$(get_headers)
-                    ACTION_BLOCK=$(printf "  action:\n    http:\n      url: \"%s\"\n      method: \"%s\"%s\n      passthrough: true\n      retry:\n        maxAttempts: 3      # Default: 3\n        initialDelay: \"1s\"  # Default: 1s\n        maxDelay: \"30s\"     # Default: 30s" "$ACTION_URL" "$(echo "$ACTION_METHOD" | tr '[:lower:]' '[:upper:]')" "$headers")
+        echo "${COLOR_BLUE}   Select Action Cardinality:${COLOR_RESET}"; select CARDINALITY in "Single Action" "ForEach (Batch) Action"; do
+            case $CARDINALITY in
+                "Single Action")
+                    read -p "${COLOR_YELLOW}   Enter HTTP Action URL (e.g., 'https://api.example.com/alerts'): ${COLOR_RESET}" -r ACTION_URL
+                    read -p "${COLOR_YELLOW}   Enter HTTP Method [POST]: ${COLOR_RESET}" -r ACTION_METHOD; ACTION_METHOD=${ACTION_METHOD:-POST}
+                    echo "${COLOR_BLUE}   Select Payload Type:${COLOR_RESET}"; select PAYLOAD_TYPE in "Templated (create a new JSON payload)" "Passthrough (forward original message)"; do
+                        case $PAYLOAD_TYPE in
+                            "Templated (create a new JSON payload)")
+                                local details_block=""; for field in "${CONDITION_FIELDS_ARRAY[@]}"; do details_block+=$(printf "\n            \"%s\": \"{%s}\"," "$field" "$field"); done; details_block=${details_block%,}
+                                local headers=$(get_headers)
+                                ACTION_BLOCK=$(printf "  action:\n    http:\n      url: \"%s\"\n      method: \"%s\"%s\n      payload: |\n        {\n          \"alert\": \"Rule matched and processed.\",\n          \"details\": {%s\n          },\n          \"timestamp\": \"{@timestamp()}\"\n        }\n      retry:\n        maxAttempts: 3\n        initialDelay: \"1s\"" "$ACTION_URL" "$(echo "$ACTION_METHOD" | tr '[:lower:]' '[:upper:]')" "$headers" "$details_block")
+                                break ;;
+                            "Passthrough (forward original message)")
+                                local headers=$(get_headers)
+                                ACTION_BLOCK=$(printf "  action:\n    http:\n      url: \"%s\"\n      method: \"%s\"%s\n      passthrough: true\n      retry:\n        maxAttempts: 3\n        initialDelay: \"1s\"" "$ACTION_URL" "$(echo "$ACTION_METHOD" | tr '[:lower:]' '[:upper:]')" "$headers")
+                                break ;;
+                            *) echo "Invalid option." ;;
+                        esac
+                    done; break ;;
+                "ForEach (Batch) Action")
+                    read -p "${COLOR_YELLOW}   Enter HTTP Action URL (can use element fields, e.g., 'https://api.example.com/items/{id}'): ${COLOR_RESET}" -r ACTION_URL
+                    read -p "${COLOR_YELLOW}   Enter HTTP Method [POST]: ${COLOR_RESET}" -r ACTION_METHOD; ACTION_METHOD=${ACTION_METHOD:-POST}
+                    read -p "${COLOR_YELLOW}   Enter the path to the array field in the message (e.g., 'items'): ${COLOR_RESET}" -r FOREACH_FIELD
+                    local filter_block=$(get_filter_conditions "    ")
+                    local root_fields_block=""; for field in "${CONDITION_FIELDS_ARRAY[@]}"; do root_fields_block+=$(printf "\n          \"root_%s\": \"{@msg.%s}\"," "$(echo "$field" | sed 's/[^a-zA-Z0-9_]/_/g')" "$field"); done; root_fields_block=${root_fields_block%,}
+                    ACTION_BLOCK=$(printf "  action:\n    forEach: \"%s\"%s\n    http:\n      url: \"%s\"\n      method: \"%s\"\n      payload: |\n        {\n          # Fields from the array element\n          \"id\": \"{id}\",\n          \"status\": \"{status}\",\n\n          # Fields from the root message (using @msg prefix)\n          \"batch_id\": \"{@msg.batchId}\",%s\n\n          # System functions are always available\n          \"processed_at\": \"{@timestamp()}\"\n        }\n      retry:\n        maxAttempts: 3\n        initialDelay: \"1s\"" "$FOREACH_FIELD" "$filter_block" "$ACTION_URL" "$(echo "$ACTION_METHOD" | tr '[:lower:]' '[:upper:]')" "$root_fields_block")
                     break ;;
                 *) echo "Invalid option." ;;
             esac
