@@ -187,6 +187,7 @@ func (e *Evaluator) evaluateCondition(cond *Condition, context *EvaluationContex
 }
 
 // evaluateArrayCondition handles array operators: any, all, none
+// STRICT MODE: Non-object elements are treated as failures for "all" operator
 func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Condition, context *EvaluationContext) bool {
 	e.logger.Debug("evaluating array condition",
 		"field", cond.Field,
@@ -199,7 +200,6 @@ func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Conditi
 			"operator", cond.Operator,
 			"actualType", fmt.Sprintf("%T", fieldValue))
 		
-		// NEW: Track metrics
 		if e.metrics != nil {
 			e.metrics.IncArrayOperatorEvaluations(cond.Operator, false)
 		}
@@ -211,7 +211,6 @@ func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Conditi
 			"field", cond.Field,
 			"operator", cond.Operator)
 		
-		// NEW: Track metrics
 		if e.metrics != nil {
 			e.metrics.IncArrayOperatorEvaluations(cond.Operator, false)
 		}
@@ -229,10 +228,37 @@ func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Conditi
 	for i, element := range array {
 		elementMap, ok := element.(map[string]interface{})
 		if !ok {
-			e.logger.Debug("array element is not an object, skipping",
+			// STRICT VALIDATION: Non-objects are treated differently per operator
+			e.logger.Debug("array element is not an object",
 				"field", cond.Field,
 				"index", i,
-				"elementType", fmt.Sprintf("%T", element))
+				"elementType", fmt.Sprintf("%T", element),
+				"operator", cond.Operator)
+			
+			// For "all" operator: non-objects are FAILURES - fail immediately
+			if cond.Operator == "all" {
+				e.logger.Debug("array operator 'all' short-circuited (non-object element)",
+					"field", cond.Field,
+					"failedIndex", i,
+					"elementType", fmt.Sprintf("%T", element),
+					"totalElements", len(array),
+					"skippedElements", len(array)-i-1,
+					"reason", "all elements must be objects that match conditions")
+				
+				if e.metrics != nil {
+					e.metrics.IncArrayOperatorEvaluations(cond.Operator, false)
+				}
+				return false
+			}
+			
+			// For "any" and "none": skip non-objects and continue searching
+			// This is lenient - we only care about objects that exist
+			e.logger.Debug("array element skipped (not evaluable)",
+				"field", cond.Field,
+				"index", i,
+				"elementType", fmt.Sprintf("%T", element),
+				"operator", cond.Operator,
+				"reason", "only objects can be evaluated against conditions")
 			continue
 		}
 
@@ -272,7 +298,6 @@ func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Conditi
 					"totalElements", len(array),
 					"skippedElements", len(array)-i-1)
 				
-				// NEW: Track metrics
 				if e.metrics != nil {
 					e.metrics.IncArrayOperatorEvaluations(cond.Operator, true)
 				}
@@ -286,7 +311,6 @@ func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Conditi
 					"matchedIndex", i,
 					"totalElements", len(array))
 				
-				// NEW: Track metrics
 				if e.metrics != nil {
 					e.metrics.IncArrayOperatorEvaluations(cond.Operator, false)
 				}
@@ -301,7 +325,6 @@ func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Conditi
 					"totalElements", len(array),
 					"skippedElements", len(array)-i-1)
 				
-				// NEW: Track metrics
 				if e.metrics != nil {
 					e.metrics.IncArrayOperatorEvaluations(cond.Operator, false)
 				}
@@ -310,12 +333,16 @@ func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Conditi
 		}
 	}
 
+	// Final evaluation after checking all elements
 	var result bool
 	switch cond.Operator {
 	case "any":
 		result = matchCount > 0
 	case "all":
-		result = matchCount == len(array)
+		// STRICT: All elements must be objects that matched
+		// If we got here, all object elements matched
+		// But we need to verify we actually checked some elements
+		result = matchCount > 0 && matchCount == len(array)
 	case "none":
 		result = matchCount == 0
 	default:
@@ -330,7 +357,6 @@ func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Conditi
 		"matchCount", matchCount,
 		"result", result)
 
-	// NEW: Track metrics
 	if e.metrics != nil {
 		e.metrics.IncArrayOperatorEvaluations(cond.Operator, result)
 	}

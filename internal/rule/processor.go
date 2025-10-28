@@ -355,7 +355,7 @@ func (p *Processor) processNATSAction(action *NATSAction, context *EvaluationCon
 }
 
 // processNATSActionWithForEach processes a NATS action with forEach iteration
-// Generates multiple actions by iterating over an array
+// OPTIMIZED: Reuses element context for both filter and templating
 func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *EvaluationContext) ([]*Action, error) {
 	start := time.Now()
 	
@@ -378,9 +378,9 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 		return nil, fmt.Errorf("forEach field is not an array: %s (type: %T)", action.ForEach, arrayValue)
 	}
 
-	// NEW: Enforce iteration limit
+	// Enforce iteration limit
 	if p.maxForEachIters > 0 && len(arrayItems) > p.maxForEachIters {
-		return nil, fmt.Errorf("forEach array exceeds limit: %d elements > %d max iterations (configure forEach.maxIterations to increase)",
+		return nil, fmt.Errorf("forEach array exceeds limit: %d elements > %d max iterations (configure maxForEachIterations to increase)",
 			len(arrayItems), p.maxForEachIters)
 	}
 
@@ -389,7 +389,7 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 		"arrayLength", len(arrayItems),
 		"maxIterations", p.maxForEachIters)
 
-	// NEW: Track detailed results
+	// Track detailed results
 	result := &ForEachResult{
 		TotalElements: len(arrayItems),
 		Errors:        make([]ElementError, 0),
@@ -413,37 +413,10 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 			continue
 		}
 
-		// Apply filter if present
-		if action.Filter != nil {
-			// OPTIMIZED: Use direct context creation
-			elementContext, err := p.createElementContextOptimized(itemMap, context)
-			if err != nil {
-				p.logger.Error("failed to create element context for filter",
-					"field", action.ForEach,
-					"index", i,
-					"error", err)
-				result.FailedElements++
-				result.Errors = append(result.Errors, ElementError{
-					Index:     i,
-					ErrorType: "context_creation_failed",
-					Error:     err,
-				})
-				continue
-			}
-
-			if !p.evaluator.Evaluate(action.Filter, elementContext) {
-				p.logger.Debug("forEach element filtered out",
-					"field", action.ForEach,
-					"index", i)
-				result.FilteredElements++
-				continue
-			}
-		}
-
-		// OPTIMIZED: Use direct context creation for templating
+		// OPTIMIZATION: Create context once and reuse for both filter and templating
 		elementContext, err := p.createElementContextOptimized(itemMap, context)
 		if err != nil {
-			p.logger.Error("failed to create element context for templating",
+			p.logger.Error("failed to create element context",
 				"field", action.ForEach,
 				"index", i,
 				"error", err)
@@ -456,7 +429,18 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 			continue
 		}
 
-		// Template the action
+		// Apply filter if present (using the same context)
+		if action.Filter != nil {
+			if !p.evaluator.Evaluate(action.Filter, elementContext) {
+				p.logger.Debug("forEach element filtered out",
+					"field", action.ForEach,
+					"index", i)
+				result.FilteredElements++
+				continue
+			}
+		}
+
+		// Template the action (reusing the same context)
 		actionResult := &NATSAction{
 			Passthrough: action.Passthrough,
 		}
@@ -478,7 +462,22 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 		actionResult.Subject = subject
 
 		if action.Passthrough {
-			actionResult.RawPayload = mustMarshal(itemMap)
+			// FIXED: Handle marshal errors gracefully
+			rawPayload, err := safeMarshal(itemMap)
+			if err != nil {
+				p.logger.Error("failed to marshal element for passthrough",
+					"field", action.ForEach,
+					"index", i,
+					"error", err)
+				result.FailedElements++
+				result.Errors = append(result.Errors, ElementError{
+					Index:     i,
+					ErrorType: "marshal_failed",
+					Error:     err,
+				})
+				continue
+			}
+			actionResult.RawPayload = rawPayload
 		} else {
 			payload, err := p.templater.Execute(action.Payload, elementContext)
 			if err != nil {
@@ -523,7 +522,7 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 
 	duration := time.Since(start).Seconds()
 
-	// NEW: Record comprehensive metrics
+	// Record comprehensive metrics
 	if p.metrics != nil {
 		p.metrics.IncForEachIterations("nats", result.TotalElements)
 		p.metrics.IncForEachFiltered("nats", result.FilteredElements)
@@ -591,7 +590,7 @@ func (p *Processor) processHTTPAction(action *HTTPAction, context *EvaluationCon
 }
 
 // processHTTPActionWithForEach processes an HTTP action with forEach iteration
-// Generates multiple actions by iterating over an array
+// OPTIMIZED: Reuses element context for both filter and templating
 func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *EvaluationContext) ([]*Action, error) {
 	start := time.Now()
 	
@@ -614,9 +613,9 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 		return nil, fmt.Errorf("forEach field is not an array: %s (type: %T)", action.ForEach, arrayValue)
 	}
 
-	// NEW: Enforce iteration limit
+	// Enforce iteration limit
 	if p.maxForEachIters > 0 && len(arrayItems) > p.maxForEachIters {
-		return nil, fmt.Errorf("forEach array exceeds limit: %d elements > %d max iterations (configure forEach.maxIterations to increase)",
+		return nil, fmt.Errorf("forEach array exceeds limit: %d elements > %d max iterations (configure maxForEachIterations to increase)",
 			len(arrayItems), p.maxForEachIters)
 	}
 
@@ -625,7 +624,7 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 		"arrayLength", len(arrayItems),
 		"maxIterations", p.maxForEachIters)
 
-	// NEW: Track detailed results
+	// Track detailed results
 	result := &ForEachResult{
 		TotalElements: len(arrayItems),
 		Errors:        make([]ElementError, 0),
@@ -649,37 +648,10 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 			continue
 		}
 
-		// Apply filter if present
-		if action.Filter != nil {
-			// OPTIMIZED: Use direct context creation
-			elementContext, err := p.createElementContextOptimized(itemMap, context)
-			if err != nil {
-				p.logger.Error("failed to create element context for filter",
-					"field", action.ForEach,
-					"index", i,
-					"error", err)
-				result.FailedElements++
-				result.Errors = append(result.Errors, ElementError{
-					Index:     i,
-					ErrorType: "context_creation_failed",
-					Error:     err,
-				})
-				continue
-			}
-
-			if !p.evaluator.Evaluate(action.Filter, elementContext) {
-				p.logger.Debug("forEach element filtered out",
-					"field", action.ForEach,
-					"index", i)
-				result.FilteredElements++
-				continue
-			}
-		}
-
-		// OPTIMIZED: Use direct context creation for templating
+		// OPTIMIZATION: Create context once and reuse for both filter and templating
 		elementContext, err := p.createElementContextOptimized(itemMap, context)
 		if err != nil {
-			p.logger.Error("failed to create element context for templating",
+			p.logger.Error("failed to create element context",
 				"field", action.ForEach,
 				"index", i,
 				"error", err)
@@ -692,7 +664,18 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 			continue
 		}
 
-		// Template the action
+		// Apply filter if present (using the same context)
+		if action.Filter != nil {
+			if !p.evaluator.Evaluate(action.Filter, elementContext) {
+				p.logger.Debug("forEach element filtered out",
+					"field", action.ForEach,
+					"index", i)
+				result.FilteredElements++
+				continue
+			}
+		}
+
+		// Template the action (reusing the same context)
 		actionResult := &HTTPAction{
 			Passthrough: action.Passthrough,
 			Retry:       action.Retry,
@@ -731,7 +714,22 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 		actionResult.Method = method
 
 		if action.Passthrough {
-			actionResult.RawPayload = mustMarshal(itemMap)
+			// FIXED: Handle marshal errors gracefully
+			rawPayload, err := safeMarshal(itemMap)
+			if err != nil {
+				p.logger.Error("failed to marshal element for passthrough",
+					"field", action.ForEach,
+					"index", i,
+					"error", err)
+				result.FailedElements++
+				result.Errors = append(result.Errors, ElementError{
+					Index:     i,
+					ErrorType: "marshal_failed",
+					Error:     err,
+				})
+				continue
+			}
+			actionResult.RawPayload = rawPayload
 		} else {
 			payload, err := p.templater.Execute(action.Payload, elementContext)
 			if err != nil {
@@ -776,7 +774,7 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 
 	duration := time.Since(start).Seconds()
 
-	// NEW: Record comprehensive metrics
+	// Record comprehensive metrics
 	if p.metrics != nil {
 		p.metrics.IncForEachIterations("http", result.TotalElements)
 		p.metrics.IncForEachFiltered("http", result.FilteredElements)
@@ -843,13 +841,14 @@ func (p *Processor) templateHeaders(headers map[string]string, context *Evaluati
 	return result, nil
 }
 
-// mustMarshal marshals a value to JSON, panicking on error
-func mustMarshal(v interface{}) []byte {
+// safeMarshal marshals a value to JSON with error handling (no panic)
+// FIXED: Replaced mustMarshal to handle errors gracefully
+func safeMarshal(v interface{}) ([]byte, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
-		panic(fmt.Sprintf("mustMarshal failed: %v", err))
+		return nil, fmt.Errorf("failed to marshal value: %w", err)
 	}
-	return b
+	return b, nil
 }
 
 // ProcessWithSubject is kept for backward compatibility
