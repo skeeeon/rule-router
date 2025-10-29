@@ -392,8 +392,8 @@ Generate **one action per array element** using `forEach`. This is the key featu
 **Basic Syntax:**
 ```yaml
 action:
-  forEach: "notifications"   # Path to array in message
   nats:
+    forEach: "notifications"   # Path to array in message
     subject: "alerts.{id}"
     payload: '{"id": "{id}", "message": "{message}"}'
 ```
@@ -401,14 +401,14 @@ action:
 **With Filter** (recommended):
 ```yaml
 action:
-  forEach: "notifications"
-  filter:                     # Only process elements matching these conditions
-    operator: and             # Required
-    items:
-      - field: "severity"
-        operator: eq
-        value: "critical"
   nats:
+    forEach: "notifications"
+    filter:                     # Only process elements matching these conditions
+      operator: and             # Required
+      items:
+        - field: "severity"
+          operator: eq
+          value: "critical"
     subject: "alerts.critical.{id}"
     payload: |
       {
@@ -438,8 +438,8 @@ When using `forEach`, template variables can refer to either:
 **Example:**
 ```yaml
 action:
-  forEach: "alerts"
   nats:
+    forEach: "alerts"
     subject: "alerts.{alertId}"
     payload: |
       {
@@ -494,18 +494,18 @@ action:
               value: "camera"
   
   action:
-    # Generate one alert per camera motion event
-    forEach: "alerts"
-    filter:
-      operator: and
-      items:
-        - field: "deviceType"
-          operator: eq
-          value: "camera"
-        - field: "motionDetected"
-          operator: eq
-          value: true
     nats:
+      # Generate one alert per camera motion event
+      forEach: "alerts"
+      filter:
+        operator: and
+        items:
+          - field: "deviceType"
+            operator: eq
+            value: "camera"
+          - field: "motionDetected"
+            operator: eq
+            value: true
       subject: "alerts.motion.{buildingId}.{cameraId}"
       payload: |
         {
@@ -609,15 +609,15 @@ conditions:
             value: "active"
 
 action:
-  # Process only the active ones
-  forEach: "items"
-  filter:
-    operator: and
-    items:
-      - field: "status"
-        operator: eq
-        value: "active"
   nats:
+   # Process only the active ones
+    forEach: "items"
+    filter:
+      operator: and
+      items:
+        - field: "status"
+          operator: eq
+          value: "active"
     subject: "process.{id}"
     payload: '{"id": "{id}", "status": "{status}"}'
 ```
@@ -679,14 +679,14 @@ SenML (Sensor Markup Language) is a common IoT format that sends arrays at the r
               value: "temperature"
   
   action:
-    forEach: "@items"
-    filter:
-      operator: and
-      items:
-        - field: "v"
-          operator: gt
-          value: 20
     nats:
+      forEach: "@items"
+      filter:
+        operator: and
+        items:
+          - field: "v"
+            operator: gt
+            value: 20
       subject: "sensors.{n}"
       payload: |
         {
@@ -749,8 +749,8 @@ Process lists of device IDs, usernames, or other primitive values.
       subject: "devices.batch"
   
   action:
-    forEach: "deviceIds"
     nats:
+      forEach: "deviceIds"
       subject: "provision.{@value}"
       payload: |
         {
@@ -776,14 +776,14 @@ Handle time-series data or metric batches.
       subject: "metrics.batch"
   
   action:
-    forEach: "@items"
-    filter:
-      operator: and
-      items:
-        - field: "@value"
-          operator: gt
-          value: 150
     nats:
+      forEach: "@items"
+      filter:
+        operator: and
+        items:
+          - field: "@value"
+            operator: gt
+            value: 150
       subject: "metrics.high"
       payload: '{"value": {@value}, "timestamp": "{@timestamp()}"}'
 ```
@@ -814,13 +814,13 @@ The `@value` and `@items` field names are reserved for wrapping:
 A: Access string elements with `{@value}`, not `{fieldName}`:
 ```yaml
 # ❌ Wrong
-forEach: "deviceIds"
 nats:
+  forEach: "deviceIds"
   subject: "process.{id}"  # String has no "id" field
 
 # ✅ Correct
-forEach: "deviceIds"
 nats:
+  forEach: "deviceIds"
   subject: "process.{@value}"  # Access the string value
 ```
 
@@ -832,8 +832,8 @@ A: Yes! Objects are never wrapped, so your `{"@value": "data"}` passes through u
 
 A: Use the `@msg` prefix:
 ```yaml
-forEach: "items"
 nats:
+  forEach: "items"
   payload: |
     {
       "itemId": "{id}",              # From current array element
