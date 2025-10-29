@@ -7,6 +7,7 @@ Bidirectional HTTP ↔ NATS integration gateway with rule-based routing, templat
 - **HTTP → NATS** (Inbound Webhooks): Fire-and-forget pattern, returns 200 immediately
 - **NATS → HTTP** (Outbound Webhooks): ACK-on-success with exponential backoff retry
 - **Array Processing**: Full support for batch webhooks with forEach iteration
+- **Primitive Message Support**: Handle strings, numbers, arrays, and objects
 - **Shared Rule Engine**: Code reuse with rule-router
 - **Template Engine**: Variable substitution, KV lookups, time-based routing
 - **Prometheus Metrics**: Complete observability
@@ -61,9 +62,11 @@ Receive HTTP webhooks and publish to NATS:
       path: "/webhooks/github"
       method: "POST"
   conditions:
-    - field: "@header.X-GitHub-Event"
-      operator: eq
-      value: "pull_request"
+    operator: and
+    items:
+      - field: "@header.X-GitHub-Event"
+        operator: eq
+        value: "pull_request"
   action:
     nats:
       subject: "github.events.pr"
@@ -120,21 +123,27 @@ Process multiple items from a single webhook:
       method: "POST"
   
   conditions:
-    # Check if ANY event is a successful payment
-    - field: "data"
-      operator: any
-      conditions:
-        - field: "type"
-          operator: eq
-          value: "charge.succeeded"
+    operator: and
+    items:
+      # Check if ANY event is a successful payment
+      - field: "data"
+        operator: any
+        conditions:
+          operator: and
+          items:
+            - field: "type"
+              operator: eq
+              value: "charge.succeeded"
   
   action:
     # Generate one NATS message per successful charge
     forEach: "data"
     filter:
-      - field: "type"
-        operator: eq
-        value: "charge.succeeded"
+      operator: and
+      items:
+        - field: "type"
+          operator: eq
+          value: "charge.succeeded"
     nats:
       subject: "payments.success.{object.customer}"
       payload: |
@@ -200,9 +209,11 @@ Generate multiple HTTP requests from a NATS message:
     # Send one HTTP request per recipient
     forEach: "recipients"
     filter:
-      - field: "active"
-        operator: eq
-        value: true
+      operator: and
+      items:
+        - field: "active"
+          operator: eq
+          value: true
     http:
       url: "https://api.notification.com/send/{userId}"
       method: "POST"
@@ -235,6 +246,116 @@ forEach:
 ```bash
 curl -s localhost:2112/metrics | grep forEach
 ```
+
+## Primitive Message Support
+
+The http-gateway supports any valid JSON type for both inbound webhooks and outbound requests, including primitives and arrays. This enables seamless integration with third-party APIs that use simple formats.
+
+**Supported Types:**
+- Objects: `{"field": "value"}` - Pass through unchanged  
+- Arrays: `[...]` - Wrapped as `{"@items": [...]}`
+- Strings: `"text"` - Wrapped as `{"@value": "text"}`
+- Numbers: `42` - Wrapped as `{"@value": 42}`
+- Booleans: `true` - Wrapped as `{"@value": true}`
+- Null: `null` - Wrapped as `{"@value": null}`
+
+### Quick Examples
+
+**Inbound: Simple Webhook**
+```yaml
+- trigger:
+    http:
+      path: "/webhooks/status"
+      method: "POST"
+  
+  conditions:
+    operator: and
+    items:
+      - field: "@value"  # String body
+        operator: contains
+        value: "completed"
+  
+  action:
+    nats:
+      subject: "status.completed"
+      payload: '{"status": "{@value}"}'
+```
+
+**Inbound: Array Webhook**
+```yaml
+- trigger:
+    http:
+      path: "/webhooks/metrics"
+      method: "POST"
+  
+  action:
+    forEach: "@items"  # Array at root
+    filter:
+      operator: and
+      items:
+        - field: "@value"
+          operator: gt
+          value: 100
+    nats:
+      subject: "metrics.high"
+      payload: '{"value": {@value}}'
+```
+
+**Outbound: Primitive Array**
+```yaml
+- trigger:
+    nats:
+      subject: "notify.batch"
+  
+  action:
+    forEach: "userIds"  # String array
+    http:
+      url: "https://api.example.com/notify/{@value}"
+      method: "POST"
+      payload: |
+        {
+          "userId": "{@value}",
+          "message": "{@msg.message}"
+        }
+```
+
+### Use Cases
+
+**Inbound (HTTP → NATS):**
+- Simple status webhooks (strings)
+- Batch metric uploads (number arrays)  
+- IoT sensor data (SenML arrays)
+- Log aggregation (primitive messages)
+
+**Outbound (NATS → HTTP):**
+- Multi-recipient notifications (string arrays)
+- Batch API calls (primitive lists)
+- Webhook fan-out (array processing)
+
+### Template Context
+
+When using forEach with primitives:
+- `{@value}` → Access primitive value
+- `{@msg.field}` → Access root message fields
+
+For complete documentation and examples, see the [main README: Primitive & Array Root Messages](../../README.md#primitive--array-root-messages).
+
+### Troubleshooting
+
+**Inbound:**
+- Webhook sends plain text → Access with `{@value}`
+- Webhook sends array → Access with `@items` field
+- Mixed content types → Auto-detection handles all cases
+
+**Outbound:**
+- String array forEach → Use `{@value}` in URL/payload
+- Number array → Access with `{@value}`, formats as string automatically
+- Empty arrays → No actions generated (expected behavior)
+
+**Both:**
+- Reserved names (`@value`, `@items`) only used during wrapping
+- Objects never wrapped - backward compatible
+- Performance impact < 1%
 
 ## Rule Syntax
 
@@ -274,9 +395,11 @@ conditions:
     - field: "items"
       operator: any
       conditions:
-        - field: "status"
-          operator: eq
-          value: "active"
+        operator: and
+        items:
+          - field: "status"
+            operator: eq
+            value: "active"
 ```
 
 ### ForEach Actions
@@ -287,9 +410,11 @@ Generate multiple actions from array:
 action:
   forEach: "items"
   filter:
-    - field: "status"
-      operator: eq
-      value: "active"
+    operator: and
+    items:
+      - field: "status"
+        operator: eq
+        value: "active"
   http:
     url: "https://api.example.com/process/{id}"
     method: "POST"
@@ -323,15 +448,17 @@ action:
 {@time.hour}                     # Current hour
 {@day.name}                      # Current day name
 {@msg.field}                     # Root message (in forEach)
+{@value}                         # Primitive value
+{@items}                         # Array at root
 ```
 
 ## Architecture
 
 ```
 ┌─────────────┐         ┌─────────────────┐         ┌──────────────┐
-│   Webhook   │ ─────> │  HTTP Gateway   │ ─────> │     NATS     │
+│   Webhook   │ ─────>  │  HTTP Gateway   │ ─────>  │     NATS     │
 │   Senders   │         │                 │         │  JetStream   │
-│  (GitHub,   │ <───── │  Fire-and-Forget│ <───── │              │
+│  (GitHub,   │ <─────  │  Fire-and-Forget│ <─────  │              │
 │   Stripe)   │         │  ACK-on-Success │         │              │
 └─────────────┘         └─────────────────┘         └──────────────┘
 ```
@@ -479,6 +606,19 @@ rule-tester --rule my-rule.yaml --message test.json --verbose
 # Look for "forEach array extracted" log messages
 ```
 
+### Primitive message not working
+
+```bash
+# Check if message is being wrapped
+# Look for "message wrapped" debug logs
+
+# Verify template uses correct field
+# String: {@@value}, Array root: @items, Objects: {field}
+
+# Test with rule-tester
+rule-tester --rule my-rule.yaml --message '"simple string"'
+```
+
 ### Messages not being delivered
 
 ```bash
@@ -500,16 +640,19 @@ See `examples/` directory for complete examples:
 - **GitHub webhooks**: Process PR events
 - **Stripe payments**: Handle payment events
 - **Batch webhooks**: Multiple items per request
+- **Simple webhooks**: String/number messages
 
 ### Outbound (NATS → HTTP)
 - **PagerDuty alerts**: Send alerts on critical events
 - **Slack notifications**: Team notifications
 - **Batch notifications**: Multiple recipients per message
+- **Primitive arrays**: Process string/number lists
 
 ### Array Processing
 - **Batch order processing**: Process multiple orders from one webhook
 - **Multi-recipient notifications**: Send to multiple users
 - **Event aggregation**: Split batch events into individual messages
+- **SenML processing**: IoT sensor arrays
 
 ## Testing
 
@@ -532,6 +675,7 @@ The tester automatically:
 - Generates array input examples
 - Validates multiple action outputs
 - Tests filter conditions
+- Handles primitive messages
 
 See [rule-tester README](../rule-tester/README.md) for details.
 
@@ -561,6 +705,7 @@ golangci-lint run ./internal/gateway/...
 | NATS → HTTP | ❌ | ✅ |
 | Array Operations | ✅ | ✅ |
 | ForEach | ✅ | ✅ |
+| Primitives | ✅ | ✅ |
 | Rule Engine | ✅ Shared | ✅ Shared |
 | KV Support | ✅ Shared | ✅ Shared |
 | Metrics | ✅ | ✅ Enhanced |

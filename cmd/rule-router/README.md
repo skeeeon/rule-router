@@ -8,6 +8,7 @@ This application is purpose-built for internal, high-throughput message routing,
 
 *   **High Performance** - Microsecond rule evaluation, thousands of messages per second.
 *   **Array Processing** - Native support for batch messages with array operators and forEach iteration.
+*   **Primitive Message Support** - Handle strings, numbers, booleans, and arrays at the root.
 *   **NATS JetStream Native** - Built on pull consumers for durable, scalable subscriptions.
 *   **Intelligent Stream Selection** - Automatically selects the optimal stream for consumption, preferring memory storage and specific subject filters.
 *   **Cryptographic Security** - NKey signature verification and replay protection for secure workflows.
@@ -223,9 +224,11 @@ conditions:
     - field: "notifications"
       operator: any
       conditions:
-        - field: "severity"
-          operator: eq
-          value: "critical"
+        operator: and  # Required
+        items:
+          - field: "severity"
+            operator: eq
+            value: "critical"
 ```
 
 **Available Operators:**
@@ -241,9 +244,11 @@ Generate **one action per array element**:
 action:
   forEach: "notifications"   # Path to array field
   filter:                     # Optional: only process matching elements
-    - field: "severity"
-      operator: eq
-      value: "critical"
+    operator: and             # Required
+    items:
+      - field: "severity"
+        operator: eq
+        value: "critical"
   nats:
     subject: "alerts.{id}"
     payload: |
@@ -273,17 +278,21 @@ action:
       - field: "events"
         operator: any
         conditions:
-          - field: "type"
-            operator: eq
-            value: "motion"
+          operator: and
+          items:
+            - field: "type"
+              operator: eq
+              value: "motion"
   
   action:
     # Generate one alert per motion event
     forEach: "events"
     filter:
-      - field: "type"
-        operator: eq
-        value: "motion"
+      operator: and
+      items:
+        - field: "type"
+          operator: eq
+          value: "motion"
     nats:
       subject: "alerts.motion.{deviceId}"
       payload: |
@@ -304,6 +313,76 @@ action:
 
 For complete examples, see [examples/forEach/](../../examples/forEach/).
 
+### Primitive Message Support
+
+The rule-router fully supports any valid JSON type as root messages or array elements, including primitives. This enables seamless integration with IoT protocols and simple message formats.
+
+**Supported Root Types:**
+- Objects: `{"field": "value"}` - Pass through unchanged
+- Arrays: `[...]` - Wrapped as `{"@items": [...]}`
+- Strings: `"text"` - Wrapped as `{"@value": "text"}`
+- Numbers: `42` - Wrapped as `{"@value": 42}`
+- Booleans: `true` - Wrapped as `{"@value": true}`
+- Null: `null` - Wrapped as `{"@value": null}`
+
+#### Quick Examples
+
+**SenML IoT Data:**
+```yaml
+- trigger:
+    nats:
+      subject: "sensors.senml"
+  action:
+    forEach: "@items"  # Array at root
+    nats:
+      subject: "sensors.{n}"
+      payload: '{"metric": "{n}", "value": {v}}'
+```
+
+**Simple Log Messages:**
+```yaml
+- trigger:
+    nats:
+      subject: "logs.raw"
+  conditions:
+    operator: and
+    items:
+      - field: "@value"  # String at root
+        operator: contains
+        value: "ERROR"
+  action:
+    nats:
+      subject: "alerts.error"
+      payload: '{"message": "{@value}"}'
+```
+
+**Primitive Arrays:**
+```yaml
+- trigger:
+    nats:
+      subject: "devices.batch"
+  action:
+    forEach: "deviceIds"  # String array
+    nats:
+      subject: "process.{@value}"  # Access string value
+      payload: '{"deviceId": "{@value}"}'
+```
+
+#### Template Context
+
+When using forEach with primitive arrays:
+- `{@value}` → Access primitive array element
+- `{@msg.field}` → Access root message fields
+
+For complete documentation and examples, see the [main README: Primitive & Array Root Messages](../../README.md#primitive--array-root-messages).
+
+#### Troubleshooting
+
+- **String arrays**: Use `{@value}` not `{fieldName}`
+- **Array at root**: Access via `@items` field
+- **Reserved names**: `@value` and `@items` only used during wrapping
+- **Performance**: < 1% impact from wrapping logic
+
 ### Condition Operators & System Fields
 
 The `rule-router` uses the shared rule engine, which supports a rich set of operators and system variables for building complex logic.
@@ -319,6 +398,8 @@ The `rule-router` uses the shared rule engine, which supports a rich set of oper
     *   `@signature.valid`, `@signature.pubkey`
     *   `@kv.bucket.key:path`
     *   `@msg.field` (in forEach context)
+    *   `@value` (for primitive messages)
+    *   `@items` (for array root messages)
 *   **Template Functions**: `{@timestamp()}`, `{@uuid7()}`, `{@uuid4()}`
 
 For a complete reference on these features, please see the main project README.
@@ -501,9 +582,14 @@ forEach:
 
 **ForEach not generating expected actions**
 *   Check if filter conditions are too restrictive
-*   Verify array field exists and contains objects
+*   Verify array field exists and contains objects or primitives
 *   Use `@msg` prefix for root message fields
+*   Use `@value` for primitive array elements
 *   Monitor `forEach_filtered_total` metric to see how many elements were filtered
+
+**String array forEach not working**
+*   Use `{@value}` to access string elements, not `{fieldName}`
+*   Primitive arrays are automatically wrapped for processing
 
 ## CLI Options
 
@@ -541,6 +627,7 @@ Options:
 3. ✅ Use `@msg` prefix explicitly in forEach templates
 4. ✅ Configure appropriate `maxIterations` limit
 5. ✅ Monitor forEach metrics for performance
+6. ✅ Use `@value` for primitive array elements
 
 ### Performance
 1. ✅ Use passthrough mode when possible (zero-copy)
@@ -558,6 +645,7 @@ Options:
 
 See the [examples directory](../../examples/) for complete, working examples:
 - **forEach/**: Batch notification processing with array operations
+- **primitives/**: SenML arrays, string messages, primitive arrays
 - Basic routing and filtering
 - KV enrichment
 - Time-based routing

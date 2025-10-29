@@ -15,6 +15,7 @@ The platform is designed for performance, security, and flexibility in event-dri
 
 *   **High Performance**: Microsecond rule evaluation, asynchronous processing, and thousands of messages per second.
 *   **Array Processing**: Native support for batch message processing with array operators and forEach iteration.
+*   **Primitive Message Support**: Handle strings, numbers, arrays, and objects at the root - perfect for IoT protocols and simple formats.
 *   **Bidirectional HTTP Gateway**:
     *   **Inbound**: "Fire-and-forget" webhook ingestion returns `200 OK` immediately for maximum compatibility.
     *   **Outbound**: "ACK-on-Success" API calls with configurable retries and exponential backoff ensure reliable delivery.
@@ -145,9 +146,11 @@ conditions:
     - field: "notifications"
       operator: any
       conditions:
-        - field: "severity"
-          operator: eq
-          value: "critical"
+        operator: and  # Required for nested conditions
+        items:
+          - field: "severity"
+            operator: eq
+            value: "critical"
 ```
 
 **How it works:**
@@ -174,9 +177,11 @@ action:
 action:
   forEach: "notifications"
   filter:                     # Only process elements matching these conditions
-    - field: "severity"
-      operator: eq
-      value: "critical"
+    operator: and             # Required
+    items:
+      - field: "severity"
+        operator: eq
+        value: "critical"
   nats:
     subject: "alerts.critical.{id}"
     payload: |
@@ -256,20 +261,24 @@ action:
       - field: "alerts"
         operator: any
         conditions:
-          - field: "deviceType"
-            operator: eq
-            value: "camera"
+          operator: and
+          items:
+            - field: "deviceType"
+              operator: eq
+              value: "camera"
   
   action:
     # Generate one alert per camera motion event
     forEach: "alerts"
     filter:
-      - field: "deviceType"
-        operator: eq
-        value: "camera"
-      - field: "motionDetected"
-        operator: eq
-        value: true
+      operator: and
+      items:
+        - field: "deviceType"
+          operator: eq
+          value: "camera"
+        - field: "motionDetected"
+          operator: eq
+          value: true
     nats:
       subject: "alerts.motion.{buildingId}.{cameraId}"
       payload: |
@@ -355,54 +364,267 @@ forEach:
 ❌ **DON'T:**
 - Process unbounded arrays without limits
 - Duplicate logic between array operators and forEach filters
-- Assume all array elements are objects (non-objects are skipped gracefully)
+- Assume all array elements are objects (primitives are supported via `@value`)
 - Forget that `{field}` resolves to array element in forEach context
 
 **Example - Combining Array Operator + ForEach:**
 ```yaml
 conditions:
-  # Fast pre-check: Is message worth processing?
-  - field: "items"
-    operator: any
-    conditions:
-      - field: "status"
-        operator: eq
-        value: "active"
+  operator: and
+  items:
+    # Fast pre-check: Is message worth processing?
+    - field: "items"
+      operator: any
+      conditions:
+        operator: and
+        items:
+          - field: "status"
+            operator: eq
+            value: "active"
 
 action:
   # Process only the active ones
   forEach: "items"
   filter:
-    - field: "status"
-      operator: eq
-      value: "active"
+    operator: and
+    items:
+      - field: "status"
+        operator: eq
+        value: "active"
   nats:
     subject: "process.{id}"
     payload: '{"id": "{id}", "status": "{status}"}'
 ```
 
-### Metrics
+---
 
-Monitor forEach operations with Prometheus metrics:
+## Primitive & Array Root Messages
 
+The rule engine supports **any valid JSON** as the root message or array elements, including primitives (strings, numbers, booleans) and arrays. This enables seamless integration with IoT protocols (like SenML), simple log messages, and batch operations with primitive arrays.
+
+### How It Works
+
+Messages are automatically wrapped to provide consistent field access:
+
+| Message Type | Wrapped As | Access Pattern |
+|--------------|------------|----------------|
+| Object | `{"field": ...}` (unchanged) | `{field}` |
+| Array | `{"@items": [...]}` | `@items` |
+| String | `{"@value": "text"}` | `{@value}` |
+| Number | `{"@value": 42}` | `{@value}` |
+| Boolean | `{"@value": true}` | `{@value}` |
+| Null | `{"@value": null}` | `{@value}` |
+
+**Key Points:**
+- Objects are **never wrapped** - they pass through unchanged for backward compatibility
+- Wrapping is transparent - you don't need to think about it
+- Use the `@` prefix convention you're already familiar with
+- Works with both root messages and array elements
+
+### Example 1: SenML Array at Root
+
+SenML (Sensor Markup Language) is a common IoT format that sends arrays at the root.
+
+**Message:**
+```json
+[
+  {"n": "temperature", "v": 23.5, "u": "Cel"},
+  {"n": "humidity", "v": 65.2, "u": "%RH"}
+]
 ```
-# Total elements processed across all forEach operations
-forEach_iterations_total{rule_file="batch_notifications"} 150
 
-# Elements that didn't match filter conditions
-forEach_filtered_total{rule_file="batch_notifications"} 45
-
-# Actions successfully generated
-forEach_actions_generated_total{rule_file="batch_notifications"} 105
-
-# Processing duration
-forEach_duration_seconds{rule_file="batch_notifications"} 0.0234
-
-# Array operator evaluations
-array_operator_evaluations_total{operator="any",result="true"} 87
+**Rule:**
+```yaml
+- trigger:
+    nats:
+      subject: "sensors.senml"
+  
+  conditions:
+    operator: and
+    items:
+      # Check if ANY measurement is temperature
+      - field: "@items"
+        operator: any
+        conditions:
+          operator: and
+          items:
+            - field: "n"
+              operator: eq
+              value: "temperature"
+  
+  action:
+    forEach: "@items"
+    filter:
+      operator: and
+      items:
+        - field: "v"
+          operator: gt
+          value: 20
+    nats:
+      subject: "sensors.{n}"
+      payload: |
+        {
+          "metric": "{n}",
+          "value": {v},
+          "unit": "{u}",
+          "timestamp": "{@timestamp()}"
+        }
 ```
 
-For complete examples and testing guidance, see [examples/forEach/](./examples/forEach/).
+### Example 2: String Message at Root
+
+Perfect for simple log aggregation or status messages.
+
+**Message:**
+```json
+"ERROR: Database connection timeout"
+```
+
+**Rule:**
+```yaml
+- trigger:
+    nats:
+      subject: "logs.raw"
+  
+  conditions:
+    operator: and
+    items:
+      - field: "@value"
+        operator: contains
+        value: "ERROR"
+  
+  action:
+    nats:
+      subject: "alerts.error"
+      payload: |
+        {
+          "message": "{@value}",
+          "level": "error",
+          "timestamp": "{@timestamp()}"
+        }
+```
+
+### Example 3: String Array Elements
+
+Process lists of device IDs, usernames, or other primitive values.
+
+**Message:**
+```json
+{
+  "action": "provision",
+  "deviceIds": ["device-001", "device-002", "device-003"]
+}
+```
+
+**Rule:**
+```yaml
+- trigger:
+    nats:
+      subject: "devices.batch"
+  
+  action:
+    forEach: "deviceIds"
+    nats:
+      subject: "provision.{@value}"
+      payload: |
+        {
+          "deviceId": "{@value}",
+          "action": "{@msg.action}",
+          "timestamp": "{@timestamp()}"
+        }
+```
+
+### Example 4: Number Array at Root
+
+Handle time-series data or metric batches.
+
+**Message:**
+```json
+[100, 150, 200, 250]
+```
+
+**Rule:**
+```yaml
+- trigger:
+    nats:
+      subject: "metrics.batch"
+  
+  action:
+    forEach: "@items"
+    filter:
+      operator: and
+      items:
+        - field: "@value"
+          operator: gt
+          value: 150
+    nats:
+      subject: "metrics.high"
+      payload: '{"value": {@value}, "timestamp": "{@timestamp()}"}'
+```
+
+**Output:** 2 messages published (200, 250)
+
+### Reserved Field Names
+
+The `@value` and `@items` field names are reserved for wrapping:
+- `@value`: Used for primitive values
+- `@items`: Used for arrays at root
+
+**Important:** These fields are **only added during wrapping**. Regular objects are never wrapped, so there's no conflict with user data:
+
+```json
+// This object is NEVER wrapped - passes through unchanged
+{
+  "@value": "user_data",
+  "@items": [1, 2, 3],
+  "normalField": "works fine"
+}
+```
+
+### Troubleshooting
+
+**Q: My string array forEach isn't working**
+
+A: Access string elements with `{@value}`, not `{fieldName}`:
+```yaml
+# ❌ Wrong
+forEach: "deviceIds"
+nats:
+  subject: "process.{id}"  # String has no "id" field
+
+# ✅ Correct
+forEach: "deviceIds"
+nats:
+  subject: "process.{@value}"  # Access the string value
+```
+
+**Q: Can I use `@value` as a field name in my JSON?**
+
+A: Yes! Objects are never wrapped, so your `{"@value": "data"}` passes through unchanged. The wrapping only happens for primitives at the root or in arrays.
+
+**Q: How do I access root message fields in forEach?**
+
+A: Use the `@msg` prefix:
+```yaml
+forEach: "items"
+nats:
+  payload: |
+    {
+      "itemId": "{id}",              # From current array element
+      "batchId": "{@msg.batchId}"    # From root message
+    }
+```
+
+**Q: What about nested arrays?**
+
+A: Only the root-level array is wrapped. Inner arrays remain unchanged:
+```json
+[[1, 2], [3, 4]]  →  {"@items": [[1, 2], [3, 4]]}
+```
+
+**Q: Does this affect performance?**
+
+A: Minimal impact (< 1%). Wrapping is a simple type switch with no deep copying or serialization.
 
 ---
 

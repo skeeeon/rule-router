@@ -12,6 +12,39 @@ import (
 	"rule-router/internal/logger"
 )
 
+// wrapIfNeeded wraps primitives and arrays to ensure root message is always an object.
+// Objects are passed through unchanged for backward compatibility.
+//
+// Wrapping rules:
+//   - Objects: {"field": ...} → pass through unchanged
+//   - Arrays: [...] → {"@items": [...]}
+//   - Primitives: "text", 42, true, null → {"@value": <primitive>}
+//
+// This enables rules to work with:
+//   - SenML arrays at root
+//   - Simple string/number messages
+//   - Primitive array elements
+func wrapIfNeeded(raw interface{}) map[string]interface{} {
+	switch v := raw.(type) {
+	case map[string]interface{}:
+		// Already an object - pass through unchanged
+		return v
+
+	case []interface{}:
+		// Array at root - wrap in @items
+		return map[string]interface{}{"@items": v}
+
+	case nil:
+		// null value - wrap in @value
+		return map[string]interface{}{"@value": nil}
+
+	default:
+		// Primitives: string, float64, bool
+		// Wrap in @value for consistent access
+		return map[string]interface{}{"@value": v}
+	}
+}
+
 // EvaluationContext provides all data needed for condition evaluation and template processing
 // Supports both NATS and HTTP contexts, and now includes support for forEach array iteration
 type EvaluationContext struct {
@@ -54,14 +87,16 @@ func NewEvaluationContext(
 	sigVerification *SignatureVerification,
 	logger *logger.Logger,
 ) (*EvaluationContext, error) {
-	var msgData map[string]interface{}
+	// Parse payload as generic interface to handle all JSON types
+	var raw interface{}
 	if len(payload) > 0 {
-		if err := json.Unmarshal(payload, &msgData); err != nil {
+		if err := json.Unmarshal(payload, &raw); err != nil {
 			return nil, err
 		}
-	} else {
-		msgData = make(map[string]interface{})
 	}
+
+	// Wrap if needed to ensure msgData is always an object
+	msgData := wrapIfNeeded(raw)
 
 	ctx := &EvaluationContext{
 		Msg:             msgData,
@@ -76,8 +111,7 @@ func NewEvaluationContext(
 		logger:          logger,
 	}
 	
-	// NEW: Initialize OriginalMsg to point to the same message data
-	// This will remain constant even if Msg is changed during forEach iteration
+	// IMPORTANT: OriginalMsg should point to wrapped version too
 	ctx.OriginalMsg = msgData
 	
 	return ctx, nil

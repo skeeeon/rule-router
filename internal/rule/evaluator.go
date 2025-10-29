@@ -187,7 +187,7 @@ func (e *Evaluator) evaluateCondition(cond *Condition, context *EvaluationContex
 }
 
 // evaluateArrayCondition handles array operators: any, all, none
-// STRICT MODE: Non-object elements are treated as failures for "all" operator
+// Now supports primitive array elements via ensureObject wrapping
 func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Condition, context *EvaluationContext) bool {
 	e.logger.Debug("evaluating array condition",
 		"field", cond.Field,
@@ -226,40 +226,17 @@ func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Conditi
 	matchCount := 0
 	
 	for i, element := range array {
-		elementMap, ok := element.(map[string]interface{})
-		if !ok {
-			// STRICT VALIDATION: Non-objects are treated differently per operator
-			e.logger.Debug("array element is not an object",
+		// Wrap primitives, pass objects through
+		elementMap := ensureObject(element)
+		
+		// Log if we wrapped a primitive (helpful for debugging)
+		if _, ok := element.(map[string]interface{}); !ok {
+			e.logger.Debug("array element wrapped as primitive",
 				"field", cond.Field,
 				"index", i,
-				"elementType", fmt.Sprintf("%T", element),
-				"operator", cond.Operator)
-			
-			// For "all" operator: non-objects are FAILURES - fail immediately
-			if cond.Operator == "all" {
-				e.logger.Debug("array operator 'all' short-circuited (non-object element)",
-					"field", cond.Field,
-					"failedIndex", i,
-					"elementType", fmt.Sprintf("%T", element),
-					"totalElements", len(array),
-					"skippedElements", len(array)-i-1,
-					"reason", "all elements must be objects that match conditions")
-				
-				if e.metrics != nil {
-					e.metrics.IncArrayOperatorEvaluations(cond.Operator, false)
-				}
-				return false
-			}
-			
-			// For "any" and "none": skip non-objects and continue searching
-			// This is lenient - we only care about objects that exist
-			e.logger.Debug("array element skipped (not evaluable)",
-				"field", cond.Field,
-				"index", i,
-				"elementType", fmt.Sprintf("%T", element),
+				"originalType", fmt.Sprintf("%T", element),
 				"operator", cond.Operator,
-				"reason", "only objects can be evaluated against conditions")
-			continue
+				"accessVia", "@value")
 		}
 
 		// OPTIMIZED: Create element context directly without marshal/unmarshal
@@ -339,9 +316,6 @@ func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Conditi
 	case "any":
 		result = matchCount > 0
 	case "all":
-		// STRICT: All elements must be objects that matched
-		// If we got here, all object elements matched
-		// But we need to verify we actually checked some elements
 		result = matchCount > 0 && matchCount == len(array)
 	case "none":
 		result = matchCount == 0

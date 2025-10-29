@@ -1,6 +1,6 @@
 # Rule Tester (`rule-tester`)
 
-The `rule-tester` is a command-line utility for writing, testing, and validating your rules in a fast, offline environment. It allows you to verify the logic of your rules—including conditions, templates, array operations, and dependencies like KV and time—without needing a running NATS server or live HTTP endpoints.
+The `rule-tester` is a command-line utility for writing, testing, and validating your rules in a fast, offline environment. It allows you to verify the logic of your rules—including conditions, templates, array operations, primitive message support, and dependencies like KV and time—without needing a running NATS server or live HTTP endpoints.
 
 This tool is essential for maintaining a high-quality, reliable ruleset and integrating rule validation into a modern CI/CD workflow for both the `rule-router` and `http-gateway` applications.
 
@@ -10,6 +10,7 @@ This tool is essential for maintaining a high-quality, reliable ruleset and inte
 
 *   **Unified Testing**: Test rules for both NATS and HTTP triggers/actions with a single tool.
 *   **Array Operations Support**: Full support for testing forEach and array operators.
+*   **Primitive Message Support**: Test rules with strings, numbers, arrays, and objects at the root.
 *   **Trigger-Aware Scaffolding**: Automatically generates test configurations tailored to your rule's specific trigger type (NATS or HTTP).
 *   **ForEach Detection**: Intelligently detects forEach operations and generates appropriate array-based test examples.
 *   **Linting**: Quickly validate the YAML syntax and structure of all rule files.
@@ -121,9 +122,22 @@ Edit the generated JSON files with your sample message data. The filename itself
 }
 ```
 
+**Primitive Message Examples:**
+```json
+"ERROR: Connection timeout"
+```
+
+```json
+[100, 150, 200, 250]
+```
+
+```json
+["device-001", "device-002", "device-003"]
+```
+
 ### 3. Running the Tests
 
-Run the batch tester from the root of your project. It will automatically discover and run all tests for both NATS and HTTP rules, including forEach operations.
+Run the batch tester from the root of your project. It will automatically discover and run all tests for both NATS and HTTP rules, including forEach operations and primitive messages.
 
 **Command:**
 ```bash
@@ -143,9 +157,13 @@ rule-tester --test --rules ./rules
   ✓ not_match_1.json (4ms)
   ✓ not_match_2_empty_array.json (2ms)
 
+=== RULE: rules/primitive-rule.yaml ===
+  ✓ match_string.json (3ms)
+  ✓ match_array.json (8ms)
+
 --- SUMMARY ---
-Total Tests: 5, Passed: 5, Failed: 0
-Duration: 26ms
+Total Tests: 7, Passed: 7, Failed: 0
+Duration: 37ms
 ```
 
 -----
@@ -203,19 +221,25 @@ For rules with forEach:
       subject: "device.events"
   
   conditions:
-    - field: "events"
-      operator: any
-      conditions:
-        - field: "type"
-          operator: eq
-          value: "motion"
+    operator: and
+    items:
+      - field: "events"
+        operator: any
+        conditions:
+          operator: and
+          items:
+            - field: "type"
+              operator: eq
+              value: "motion"
   
   action:
     forEach: "events"
     filter:
-      - field: "type"
-        operator: eq
-        value: "motion"
+      operator: and
+      items:
+        - field: "type"
+          operator: eq
+          value: "motion"
     nats:
       subject: "alerts.motion.{eventId}"
       payload: |
@@ -268,12 +292,16 @@ For rules with forEach:
 **Rule with `any` operator:**
 ```yaml
 conditions:
-  - field: "items"
-    operator: any
-    conditions:
-      - field: "status"
-        operator: eq
-        value: "active"
+  operator: and
+  items:
+    - field: "items"
+      operator: any
+      conditions:
+        operator: and
+        items:
+          - field: "status"
+            operator: eq
+            value: "active"
 ```
 
 **Test Case** (`match_1.json`):
@@ -300,6 +328,77 @@ conditions:
 ```
 
 **Result**: Rule does not match (no active items)
+
+### Testing Primitive Messages
+
+**Rule with string at root:**
+```yaml
+- trigger:
+    nats:
+      subject: "logs.raw"
+  conditions:
+    operator: and
+    items:
+      - field: "@value"
+        operator: contains
+        value: "ERROR"
+  action:
+    nats:
+      subject: "alerts.error"
+      payload: '{"message": "{@value}"}'
+```
+
+**Test Input** (`match_1.json`):
+```json
+"ERROR: Connection timeout"
+```
+
+**Expected Output** (`match_1_output.json`):
+```json
+{
+  "subject": "alerts.error",
+  "payload": {
+    "message": "ERROR: Connection timeout"
+  }
+}
+```
+
+**Rule with array at root:**
+```yaml
+- trigger:
+    nats:
+      subject: "metrics.batch"
+  action:
+    forEach: "@items"
+    filter:
+      operator: and
+      items:
+        - field: "@value"
+          operator: gt
+          value: 150
+    nats:
+      subject: "metrics.high"
+      payload: '{"value": {@value}}'
+```
+
+**Test Input** (`match_1.json`):
+```json
+[100, 150, 200, 250]
+```
+
+**Expected Output** (`match_1_output.json`):
+```json
+[
+  {
+    "subject": "metrics.high",
+    "payload": {"value": 200}
+  },
+  {
+    "subject": "metrics.high",
+    "payload": {"value": 250}
+  }
+]
+```
 
 ### Common Test Scenarios
 
@@ -331,10 +430,18 @@ conditions:
 // Expected: Rule doesn't match (any operator returns false)
 ```
 
-#### Scenario 4: Filter Validation
+#### Scenario 4: Primitive Array
 ```json
-// Input: 5 items, 2 match filter
-// Expected: Exactly 2 actions with correct templating
+// Input: String array
+{"deviceIds": ["dev-1", "dev-2", "dev-3"]}
+// Expected: 3 actions (access via @value)
+```
+
+#### Scenario 5: Array at Root
+```json
+// Input: Number array at root
+[10, 20, 30]
+// Expected: Access via @items field
 ```
 
 -----
@@ -441,9 +548,11 @@ The `_test_config.json` file controls the entire simulated environment for a tes
     nats:
       subject: "sensors.temperature"
   conditions:
-    - field: "value"
-      operator: gt
-      value: 30
+    operator: and
+    items:
+      - field: "value"
+        operator: gt
+        value: 30
   action:
     nats:
       subject: "alerts.high-temp"
@@ -470,9 +579,11 @@ The `_test_config.json` file controls the entire simulated environment for a tes
       path: "/webhooks/github"
       method: "POST"
   conditions:
-    - field: "@header.X-GitHub-Event"
-      operator: eq
-      value: "pull_request"
+    operator: and
+    items:
+      - field: "@header.X-GitHub-Event"
+        operator: eq
+        value: "pull_request"
   action:
     nats:
       subject: "github.events.pr"
@@ -567,19 +678,25 @@ The `_test_config.json` file controls the entire simulated environment for a tes
       subject: "device.batch"
   
   conditions:
-    - field: "alerts"
-      operator: any
-      conditions:
-        - field: "critical"
-          operator: eq
-          value: true
+    operator: and
+    items:
+      - field: "alerts"
+        operator: any
+        conditions:
+          operator: and
+          items:
+            - field: "critical"
+              operator: eq
+              value: true
   
   action:
     forEach: "alerts"
     filter:
-      - field: "critical"
-        operator: eq
-        value: true
+      operator: and
+      items:
+        - field: "critical"
+          operator: eq
+          value: true
     nats:
       subject: "alerts.critical.{alertId}"
       payload: |
@@ -632,6 +749,80 @@ The `_test_config.json` file controls the entire simulated environment for a tes
 }
 ```
 
+### Example 5: Primitive String Message
+
+**Rule (`rules/string_log.yaml`):**
+```yaml
+- trigger:
+    nats:
+      subject: "logs.raw"
+  conditions:
+    operator: and
+    items:
+      - field: "@value"
+        operator: contains
+        value: "ERROR"
+  action:
+    nats:
+      subject: "alerts.error"
+      payload: '{"message": "{@value}"}'
+```
+
+**Test Input (`.../match_1.json`):**
+```json
+"ERROR: Connection timeout"
+```
+
+**Expected Output (`.../match_1_output.json`):**
+```json
+{
+  "subject": "alerts.error",
+  "payload": {
+    "message": "ERROR: Connection timeout"
+  }
+}
+```
+
+### Example 6: Primitive Array ForEach
+
+**Rule (`rules/device_batch.yaml`):**
+```yaml
+- trigger:
+    nats:
+      subject: "devices.provision"
+  action:
+    forEach: "deviceIds"
+    nats:
+      subject: "provision.{@value}"
+      payload: '{"deviceId": "{@value}", "action": "{@msg.action}"}'
+```
+
+**Test Input (`.../match_1.json`):**
+```json
+{
+  "action": "register",
+  "deviceIds": ["dev-001", "dev-002", "dev-003"]
+}
+```
+
+**Expected Output (`.../match_1_output.json`):**
+```json
+[
+  {
+    "subject": "provision.dev-001",
+    "payload": {"deviceId": "dev-001", "action": "register"}
+  },
+  {
+    "subject": "provision.dev-002",
+    "payload": {"deviceId": "dev-002", "action": "register"}
+  },
+  {
+    "subject": "provision.dev-003",
+    "payload": {"deviceId": "dev-003", "action": "register"}
+  }
+]
+```
+
 -----
 
 ## Quick Check Mode
@@ -662,6 +853,12 @@ Payload: {"alertId":"A3","message":"Motion detected","deviceId":"device-123"}
 -----------------------
 ```
 
+**Primitive Message:**
+```bash
+rule-tester --rule string_log.yaml \
+            --message <(echo '"ERROR: Test"')
+```
+
 -----
 
 ## Best Practices
@@ -684,6 +881,15 @@ For **forEach rules**, additionally test:
 - ✅ `@msg` prefix resolution
 - ✅ Element field resolution
 
+For **primitive message rules**, additionally test:
+- ✅ String at root
+- ✅ Number at root
+- ✅ Boolean at root
+- ✅ Array at root (via `@items`)
+- ✅ String array elements (via `@value`)
+- ✅ Number array elements (via `@value`)
+- ✅ Empty values
+
 ### Naming Convention
 
 ```
@@ -695,6 +901,8 @@ not_match_<reason>.json       # Should NOT generate actions
 Examples:
 - `match_three_items.json` / `match_three_items_output.json`
 - `match_single_item.json` / `match_single_item_output.json`
+- `match_string_message.json` / `match_string_message_output.json`
+- `match_primitive_array.json` / `match_primitive_array_output.json`
 - `not_match_empty_array.json`
 - `not_match_all_filtered.json`
 
@@ -711,6 +919,7 @@ rule-tester --test --rules ./rules --verbose
 - Which action failed validation
 - Template resolution issues
 - Filter application results
+- Wrapping details for primitives
 
 -----
 
@@ -800,7 +1009,7 @@ rule-tester --test --rules ./rules --output json
 **Solution**:
 1. Check filter conditions (might be filtering more/less)
 2. Verify input array length
-3. Check for non-object elements (skipped)
+3. Check for non-object elements (now supported via `@value`)
 4. Review forEach field path
 
 ### "Template resolution failed"
@@ -810,8 +1019,20 @@ rule-tester --test --rules ./rules --output json
 **Solution**:
 1. Check field exists in test message
 2. For forEach: use `@msg` prefix for root fields
-3. Verify mock KV data is loaded
-4. Check variable syntax (`{field}` not `{{field}}`)
+3. For primitives: use `@value` for values, `@items` for root arrays
+4. Verify mock KV data is loaded
+5. Check variable syntax (`{field}` not `{{field}}`)
+
+### "Primitive message not working"
+
+**Cause**: Wrong field access pattern.
+
+**Solution**:
+1. String at root → use `{@value}`
+2. Array at root → use `@items` field
+3. String array elements → use `{@value}` in forEach
+4. Number array elements → use `{@value}` in forEach
+5. Objects → use normal `{field}` syntax (no wrapping)
 
 -----
 
@@ -821,5 +1042,6 @@ rule-tester --test --rules ./rules --output json
 - [Rule Router README](../rule-router/README.md) - NATS-specific rules
 - [HTTP Gateway README](../http-gateway/README.md) - HTTP-specific rules
 - [ForEach Examples](../../examples/forEach/) - Array processing examples
+- [Primitive Examples](../../examples/primitives/) - Primitive message examples
 
 For questions or issues, check the troubleshooting section in the main README.

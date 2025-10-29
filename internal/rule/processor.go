@@ -354,6 +354,24 @@ func (p *Processor) processNATSAction(action *NATSAction, context *EvaluationCon
 	return []*Action{{NATS: result}}, nil
 }
 
+// ensureObject wraps primitive array elements to ensure they can be processed.
+// Objects are passed through unchanged.
+//
+// This enables forEach to work with:
+//   - Object arrays: [{"id": 1}, {"id": 2}] → unchanged
+//   - String arrays: ["dev-1", "dev-2"] → [{"@value": "dev-1"}, {"@value": "dev-2"}]
+//   - Number arrays: [100, 200, 300] → [{"@value": 100}, {"@value": 200}, {"@value": 300}]
+//   - Mixed arrays: [{"id": 1}, "text", 42] → handles each appropriately
+func ensureObject(item interface{}) map[string]interface{} {
+	if itemMap, ok := item.(map[string]interface{}); ok {
+		// Already an object - return as-is
+		return itemMap
+	}
+	
+	// Primitive - wrap it in @value
+	return map[string]interface{}{"@value": item}
+}
+
 // processNATSActionWithForEach processes a NATS action with forEach iteration
 // OPTIMIZED: Reuses element context for both filter and templating
 func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *EvaluationContext) ([]*Action, error) {
@@ -398,19 +416,16 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 	var actions []*Action
 
 	for i, item := range arrayItems {
-		itemMap, ok := item.(map[string]interface{})
-		if !ok {
-			p.logger.Warn("forEach array element is not an object, skipping",
+		// Wrap primitives, pass objects through
+		itemMap := ensureObject(item)
+		
+		// Log if we wrapped a primitive (helpful for debugging)
+		if _, ok := item.(map[string]interface{}); !ok {
+			p.logger.Debug("forEach element wrapped as primitive",
 				"field", action.ForEach,
 				"index", i,
-				"elementType", fmt.Sprintf("%T", item))
-			result.FailedElements++
-			result.Errors = append(result.Errors, ElementError{
-				Index:     i,
-				ErrorType: "invalid_type",
-				Error:     fmt.Errorf("element is not an object: %T", item),
-			})
-			continue
+				"originalType", fmt.Sprintf("%T", item),
+				"accessVia", "@value")
 		}
 
 		// OPTIMIZATION: Create context once and reuse for both filter and templating
@@ -633,19 +648,16 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 	var actions []*Action
 
 	for i, item := range arrayItems {
-		itemMap, ok := item.(map[string]interface{})
-		if !ok {
-			p.logger.Warn("forEach array element is not an object, skipping",
+		// Wrap primitives, pass objects through
+		itemMap := ensureObject(item)
+		
+		// Log if we wrapped a primitive (helpful for debugging)
+		if _, ok := item.(map[string]interface{}); !ok {
+			p.logger.Debug("forEach element wrapped as primitive",
 				"field", action.ForEach,
 				"index", i,
-				"elementType", fmt.Sprintf("%T", item))
-			result.FailedElements++
-			result.Errors = append(result.Errors, ElementError{
-				Index:     i,
-				ErrorType: "invalid_type",
-				Error:     fmt.Errorf("element is not an object: %T", item),
-			})
-			continue
+				"originalType", fmt.Sprintf("%T", item),
+				"accessVia", "@value")
 		}
 
 		// OPTIMIZATION: Create context once and reuse for both filter and templating
