@@ -23,7 +23,9 @@
 #   }
 # }
 
-- subject: sensors.data
+- trigger:
+    nats:
+      subject: sensors.data
   conditions:
     operator: and
     items:
@@ -41,24 +43,25 @@
         operator: eq
         value: true
   action:
-    subject: alerts.high-temperature
-    payload: |
-      {
-        "alert": "High temperature detected",
-        "device": {
-          "id": {device.id},                   # ✅ Template nested access
-          "type": {device.type},
-          "location": {device.location}
-        },
-        "reading": {
-          "value": {data.reading.value},       # ✅ Deep nested template
-          "unit": {data.reading.unit},
-          "accuracy": {data.reading.accuracy}
-        },
-        "quality": {metadata.quality},         # ✅ Nested template access
-        "timestamp": {data.timestamp},
-        "alertId": "{@uuid7()}"
-      }
+    nats:
+      subject: alerts.high-temperature
+      payload: |
+        {
+          "alert": "High temperature detected",
+          "device": {
+            "id": {device.id},                   # ✅ Template nested access
+            "type": {device.type},
+            "location": {device.location}
+          },
+          "reading": {
+            "value": {data.reading.value},       # ✅ Deep nested template
+            "unit": {data.reading.unit},
+            "accuracy": {data.reading.accuracy}
+          },
+          "quality": {metadata.quality},         # ✅ Nested template access
+          "timestamp": {data.timestamp},
+          "alertId": "{@uuid7()}"
+        }
 
 # Example 2: Complex Business Event Processing
 # Sample message:
@@ -86,7 +89,9 @@
 #   }
 # }
 
-- subject: events.orders
+- trigger:
+    nats:
+      subject: events.orders
   conditions:
     operator: and
     items:
@@ -106,27 +111,28 @@
         operator: eq
         value: "credit_card"
   action:
-    subject: processing.premium-orders
-    payload: |
-      {
-        "message": "Premium customer large order created",
-        "order_id": {order.id},                # ✅ Nested template
-        "customer": {
-          "id": {order.customer.id},           # ✅ Deep nested template
-          "tier": {order.customer.tier},
-          "region": {order.customer.region}
-        },
-        "order_details": {
-          "value": {order.items.total_value},  # ✅ Nested numeric template
-          "item_count": {order.items.count},
-          "payment_method": {order.payment.method}
-        },
-        "processing": {
-          "priority": "high",
-          "assigned_at": "{@timestamp()}",
-          "processor_id": "{@uuid7()}"
+    nats:
+      subject: processing.premium-orders
+      payload: |
+        {
+          "message": "Premium customer large order created",
+          "order_id": {order.id},                # ✅ Nested template
+          "customer": {
+            "id": {order.customer.id},           # ✅ Deep nested template
+            "tier": {order.customer.tier},
+            "region": {order.customer.region}
+          },
+          "order_details": {
+            "value": {order.items.total_value},  # ✅ Nested numeric template
+            "item_count": {order.items.count},
+            "payment_method": {order.payment.method}
+          },
+          "processing": {
+            "priority": "high",
+            "assigned_at": "{@timestamp()}",
+            "processor_id": "{@uuid7()}"
+          }
         }
-      }
 
 # Example 3: API Response Processing with Error Handling
 # Sample message:
@@ -154,7 +160,9 @@
 #   }
 # }
 
-- subject: api.responses
+- trigger:
+    nats:
+      subject: api.responses
   conditions:
     operator: and
     items:
@@ -171,24 +179,25 @@
         operator: eq
         value: "healthy"
   action:
-    subject: monitoring.healthy-systems
-    payload: |
-      {
-        "status": "System healthy with high user count",
-        "endpoint": {request.endpoint},        # ✅ Nested template
-        "method": {request.method},
-        "response_details": {
-          "status_code": {response.status.code}, # ✅ Nested template
-          "status_message": {response.status.message},
-          "server": {response.headers.server},
-          "user_count": {response.body.data.user_count}, # ✅ Deep nested template
-          "system_health": {response.body.data.system_health}
-        },
-        "monitoring": {
-          "checked_at": "{@timestamp()}",
-          "check_id": "{@uuid7()}"
+    nats:
+      subject: monitoring.healthy-systems
+      payload: |
+        {
+          "status": "System healthy with high user count",
+          "endpoint": {request.endpoint},        # ✅ Nested template
+          "method": {request.method},
+          "response_details": {
+            "status_code": {response.status.code}, # ✅ Nested template
+            "status_message": {response.status.message},
+            "server": {response.headers.server},
+            "user_count": {response.body.data.user_count}, # ✅ Deep nested template
+            "system_health": {response.body.data.system_health}
+          },
+          "monitoring": {
+            "checked_at": "{@timestamp()}",
+            "check_id": "{@uuid7()}"
+          }
         }
-      }
 
 # Example 4: Mixed Conditions (Top-level and Nested)
 # Sample message:
@@ -206,7 +215,9 @@
 #   }
 # }
 
-- subject: system.alerts
+- trigger:
+    nats:
+      subject: system.alerts
   conditions:
     operator: and
     items:
@@ -236,25 +247,26 @@
             operator: eq
             value: "performance"
   action:
-    subject: alerts.critical-system
-    payload: |
-      {
-        "alert": "Critical system performance issue",
-        "severity": {alert.severity},         # ✅ Nested template
-        "category": {alert.category},
-        "priority": {priority},               # ✅ Top-level template
-        "source": {source},
-        "metrics": {
-          "cpu": {alert.details.cpu_usage},  # ✅ Deep nested template
-          "memory": {alert.details.memory_usage},
-          "disk": {alert.details.disk_space}
-        },
-        "escalation": {
-          "level": "immediate",
-          "escalated_at": "{@timestamp()}",
-          "incident_id": "{@uuid7()}"
+    nats:
+      subject: alerts.critical-system
+      payload: |
+        {
+          "alert": "Critical system performance issue",
+          "severity": {alert.severity},         # ✅ Nested template
+          "category": {alert.category},
+          "priority": {priority},               # ✅ Top-level template
+          "source": {source},
+          "metrics": {
+            "cpu": {alert.details.cpu_usage},  # ✅ Deep nested template
+            "memory": {alert.details.memory_usage},
+            "disk": {alert.details.disk_space}
+          },
+          "escalation": {
+            "level": "immediate",
+            "escalated_at": "{@timestamp()}",
+            "incident_id": "{@uuid7()}"
+          }
         }
-      }
 
 # Example 5: Array Element Access (Note: Individual array items not supported, 
 # but you can access array properties like length if exposed by JSON unmarshaling)
@@ -275,7 +287,9 @@
 #   }
 # }
 
-- subject: users.activity
+- trigger:
+    nats:
+      subject: users.activity
   conditions:
     operator: and
     items:
@@ -289,23 +303,24 @@
         operator: eq
         value: "dark"
   action:
-    subject: analytics.active-users
-    payload: |
-      {
-        "user_profile": {
-          "name": {user.profile.name},                  # ✅ Deep nested template
-          "preferences": {
-            "notifications": {user.profile.preferences.notifications},
-            "theme": {user.profile.preferences.theme}
+    nats:
+      subject: analytics.active-users
+      payload: |
+        {
+          "user_profile": {
+            "name": {user.profile.name},                  # ✅ Deep nested template
+            "preferences": {
+              "notifications": {user.profile.preferences.notifications},
+              "theme": {user.profile.preferences.theme}
+            }
+          },
+          "activity": {
+            "last_login": {user.activity.last_login},    # ✅ Nested template
+            "session_count": {user.activity.session_count}
+          },
+          "analysis": {
+            "user_type": "active_dark_theme_user",
+            "analyzed_at": "{@timestamp()}",
+            "analysis_id": "{@uuid7()}"
           }
-        },
-        "activity": {
-          "last_login": {user.activity.last_login},    # ✅ Nested template
-          "session_count": {user.activity.session_count}
-        },
-        "analysis": {
-          "user_type": "active_dark_theme_user",
-          "analyzed_at": "{@timestamp()}",
-          "analysis_id": "{@uuid7()}"
         }
-      }

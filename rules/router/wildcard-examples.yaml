@@ -4,7 +4,9 @@
 # Example 1: Single-Level Wildcard for All Sensors
 # Matches: sensors.temperature, sensors.pressure, sensors.humidity
 # Does NOT match: sensors.room1.temperature (multi-level)
-- subject: sensors.*
+- trigger:
+    nats:
+      subject: sensors.*
   conditions:
     operator: and
     items:
@@ -15,21 +17,24 @@
         operator: neq
         value: "test"                 # Skip test sensors
   action:
-    subject: alerts.{@subject.1}        # Dynamic routing: alerts.temperature, alerts.pressure
-    payload: |
-      {
-        "alert": "High {@subject.1} reading detected",
-        "sensor_type": "{@subject.1}",
-        "reading": {value},
-        "location": {location},
-        "full_subject": "{@subject}",
-        "alert_id": "{@uuid7()}",
-        "timestamp": "{@timestamp()}"
-      }
+    nats:
+      subject: alerts.{@subject.1}        # Dynamic routing: alerts.temperature, alerts.pressure
+      payload: |
+        {
+          "alert": "High {@subject.1} reading detected",
+          "sensor_type": "{@subject.1}",
+          "reading": {value},
+          "location": {location},
+          "full_subject": "{@subject}",
+          "alert_id": "{@uuid7()}",
+          "timestamp": "{@timestamp()}"
+        }
 
 # Example 2: Multi-Level Wildcard for Building Infrastructure  
 # Matches: building.floor1.room1.temperature, building.hvac.status, building.security.door1.locked
-- subject: building.>
+- trigger:
+    nats:
+      subject: building.>
   conditions:
     operator: and
     items:
@@ -40,32 +45,35 @@
         operator: gte  
         value: 3
   action:
-    subject: facilities.alerts.{@subject.1}  # Route by system: facilities.alerts.hvac, facilities.alerts.security
-    payload: |
-      {
-        "building_alert": "Alert from building system",
-        "system": "{@subject.1}",     # floor1, hvac, security, etc.
-        "subsystem": "{@subject.2}",  # room1, status, door1, etc.  
-        "component": "{@subject.3}",  # temperature, locked, etc.
-        "alert_details": {
-          "status": {status},
-          "message": {message},
-          "priority": {priority}
-        },
-        "location": {
-          "building": "main",
-          "system_path": "{@subject}",
-          "token_count": "{@subject.count}"
-        },
-        "response": {
-          "escalated_at": "{@timestamp()}",
-          "incident_id": "{@uuid7()}"
+    nats:
+      subject: facilities.alerts.{@subject.1}  # Route by system: facilities.alerts.hvac, facilities.alerts.security
+      payload: |
+        {
+          "building_alert": "Alert from building system",
+          "system": "{@subject.1}",     # floor1, hvac, security, etc.
+          "subsystem": "{@subject.2}",  # room1, status, door1, etc.  
+          "component": "{@subject.3}",  # temperature, locked, etc.
+          "alert_details": {
+            "status": {status},
+            "message": {message},
+            "priority": {priority}
+          },
+          "location": {
+            "building": "main",
+            "system_path": "{@subject}",
+            "token_count": "{@subject.count}"
+          },
+          "response": {
+            "escalated_at": "{@timestamp()}",
+            "incident_id": "{@uuid7()}"
+          }
         }
-      }
 
 # Example 3: Mixed Pattern for IoT Device Management
 # Matches: devices.sensor001.data, devices.camera002.status, devices.lock003.battery
-- subject: devices.*.* 
+- trigger:
+    nats:
+      subject: devices.*.* 
   conditions:
     operator: and
     items:
@@ -76,27 +84,30 @@
         operator: eq
         value: "online"
   action:
-    subject: monitoring.{@subject.1}.{@subject.2}  # monitoring.sensor001.data
-    payload: |
-      {
-        "device_monitoring": "IoT device data processed",
-        "device_id": "{@subject.1}",
-        "data_type": "{@subject.2}",
-        "device_info": {
-          "status": {device_status},
-          "last_seen": {last_seen},
-          "battery_level": {battery_level}
-        },
-        "routing": {
-          "from_subject": "{@subject}",
-          "to_subject": "monitoring.{@subject.1}.{@subject.2}",
-          "processed_at": "{@timestamp()}"
+    nats:
+      subject: monitoring.{@subject.1}.{@subject.2}  # monitoring.sensor001.data
+      payload: |
+        {
+          "device_monitoring": "IoT device data processed",
+          "device_id": "{@subject.1}",
+          "data_type": "{@subject.2}",
+          "device_info": {
+            "status": {device_status},
+            "last_seen": {last_seen},
+            "battery_level": {battery_level}
+          },
+          "routing": {
+            "from_subject": "{@subject}",
+            "to_subject": "monitoring.{@subject.1}.{@subject.2}",
+            "processed_at": "{@timestamp()}"
+          }
         }
-      }
 
 # Example 4: Company Organizational Routing with Multi-Level
 # Matches: company.engineering.backend.deploy, company.sales.reports.monthly, company.hr.onboarding.checklist  
-- subject: company.>
+- trigger:
+    nats:
+      subject: company.>
   conditions:
     operator: and
     items:
@@ -110,38 +121,41 @@
         operator: in
         value: ["engineering", "sales", "hr", "marketing"]
   action:
-    subject: escalation.{@subject.1}.{@subject.2}  # escalation.engineering.backend
-    payload: |
-      {
-        "escalation": "High priority organizational alert",
-        "department": "{@subject.1}",
-        "team": "{@subject.2}", 
-        "process": "{@subject.3}",
-        "details": {
-          "priority": {priority},
-          "description": {description},
-          "requester": {requester}
-        },
-        "routing": {
-          "full_path": "{@subject}",
-          "escalation_path": "escalation.{@subject.1}.{@subject.2}",
-          "token_analysis": {
-            "total_tokens": "{@subject.count}",
-            "department": "{@subject.1}",
-            "team": "{@subject.2}",
-            "process": "{@subject.3}",
-            "action": "{@subject.4}"
+    nats:
+      subject: escalation.{@subject.1}.{@subject.2}  # escalation.engineering.backend
+      payload: |
+        {
+          "escalation": "High priority organizational alert",
+          "department": "{@subject.1}",
+          "team": "{@subject.2}", 
+          "process": "{@subject.3}",
+          "details": {
+            "priority": {priority},
+            "description": {description},
+            "requester": {requester}
+          },
+          "routing": {
+            "full_path": "{@subject}",
+            "escalation_path": "escalation.{@subject.1}.{@subject.2}",
+            "token_analysis": {
+              "total_tokens": "{@subject.count}",
+              "department": "{@subject.1}",
+              "team": "{@subject.2}",
+              "process": "{@subject.3}",
+              "action": "{@subject.4}"
+            }
+          },
+          "timing": {
+            "escalated_at": "{@timestamp()}",
+            "case_id": "{@uuid7()}"
           }
-        },
-        "timing": {
-          "escalated_at": "{@timestamp()}",
-          "case_id": "{@uuid7()}"
         }
-      }
 
 # Example 5: Exact Match Combined with Wildcards (Both Should Fire)
 # This shows how exact and wildcard rules can coexist
-- subject: sensors.temperature           # Exact match for temperature
+- trigger:
+    nats:
+      subject: sensors.temperature           # Exact match for temperature
   conditions:
     operator: and
     items:
@@ -149,19 +163,22 @@
         operator: gt
         value: 25
   action:
-    subject: alerts.temperature.specific
-    payload: |
-      {
-        "alert": "Specific temperature handler triggered",
-        "temperature": {value},
-        "handler_type": "exact_match",
-        "subject": "{@subject}",
-        "alert_id": "{@uuid7()}"
-      }
+    nats:
+      subject: alerts.temperature.specific
+      payload: |
+        {
+          "alert": "Specific temperature handler triggered",
+          "temperature": {value},
+          "handler_type": "exact_match",
+          "subject": "{@subject}",
+          "alert_id": "{@uuid7()}"
+        }
 
 # Example 6: Subject Token Conditional Logic
 # Route based on subject structure  
-- subject: monitoring.>
+- trigger:
+    nats:
+      subject: monitoring.>
   conditions:
     operator: or
     groups:
@@ -182,31 +199,34 @@
             operator: gt
             value: 1000
   action:
-    subject: ops.{@subject.1}.alerts    # ops.health.alerts or ops.performance.alerts
-    payload: |
-      {
-        "ops_alert": "{@subject.1} monitoring triggered",
-        "monitoring_type": "{@subject.1}",
-        "service": "{@subject.2}",
-        "metrics": {
-          "status": {status},
-          "response_time": {response_time},
-          "error_rate": {error_rate}
-        },
-        "analysis": {
-          "subject_tokens": "{@subject.count}",
-          "monitoring_path": "{@subject}",
-          "alert_category": "{@subject.1}"
-        },
-        "response": {
-          "generated_at": "{@timestamp()}",
-          "alert_id": "{@uuid7()}"
+    nats:
+      subject: ops.{@subject.1}.alerts    # ops.health.alerts or ops.performance.alerts
+      payload: |
+        {
+          "ops_alert": "{@subject.1} monitoring triggered",
+          "monitoring_type": "{@subject.1}",
+          "service": "{@subject.2}",
+          "metrics": {
+            "status": {status},
+            "response_time": {response_time},
+            "error_rate": {error_rate}
+          },
+          "analysis": {
+            "subject_tokens": "{@subject.count}",
+            "monitoring_path": "{@subject}",
+            "alert_category": "{@subject.1}"
+          },
+          "response": {
+            "generated_at": "{@timestamp()}",
+            "alert_id": "{@uuid7()}"
+          }
         }
-      }
 
 # Example 7: Wildcard in Action Subject (Advanced Usage)
 # Shows dynamic routing based on message content AND subject
-- subject: events.*
+- trigger:
+    nats:
+      subject: events.*
   conditions:
     operator: and
     items:
@@ -214,22 +234,23 @@
         operator: eq
         value: "critical"
   action:
-    subject: critical.{@subject.1}.{region}  # Use both subject token AND message field
-    payload: |
-      {
-        "critical_event": "Critical event routing",
-        "event_type": "{@subject.1}",
-        "region": {region},
-        "routing_strategy": "subject_and_content_based",
-        "original_subject": "{@subject}",
-        "routed_to": "critical.{@subject.1}.{region}",
-        "event_details": {
-          "severity": {severity},
-          "description": {description},
-          "affected_systems": {affected_systems}
-        },
-        "tracking": {
-          "processed_at": "{@timestamp()}",
-          "trace_id": "{@uuid7()}"
+    nats:
+      subject: critical.{@subject.1}.{region}  # Use both subject token AND message field
+      payload: |
+        {
+          "critical_event": "Critical event routing",
+          "event_type": "{@subject.1}",
+          "region": {region},
+          "routing_strategy": "subject_and_content_based",
+          "original_subject": "{@subject}",
+          "routed_to": "critical.{@subject.1}.{region}",
+          "event_details": {
+            "severity": {severity},
+            "description": {description},
+            "affected_systems": {affected_systems}
+          },
+          "tracking": {
+            "processed_at": "{@timestamp()}",
+            "trace_id": "{@uuid7()}"
+          }
         }
-      }

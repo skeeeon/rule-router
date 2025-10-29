@@ -12,13 +12,50 @@ import (
 	"rule-router/internal/logger"
 )
 
+// wrapIfNeeded wraps primitives and arrays to ensure root message is always an object.
+// Objects are passed through unchanged for backward compatibility.
+//
+// Wrapping rules:
+//   - Objects: {"field": ...} → pass through unchanged
+//   - Arrays: [...] → {"@items": [...]}
+//   - Primitives: "text", 42, true, null → {"@value": <primitive>}
+//
+// This enables rules to work with:
+//   - SenML arrays at root
+//   - Simple string/number messages
+//   - Primitive array elements
+func wrapIfNeeded(raw interface{}) map[string]interface{} {
+	switch v := raw.(type) {
+	case map[string]interface{}:
+		// Already an object - pass through unchanged
+		return v
+
+	case []interface{}:
+		// Array at root - wrap in @items
+		return map[string]interface{}{"@items": v}
+
+	case nil:
+		// null value - wrap in @value
+		return map[string]interface{}{"@value": nil}
+
+	default:
+		// Primitives: string, float64, bool
+		// Wrap in @value for consistent access
+		return map[string]interface{}{"@value": v}
+	}
+}
+
 // EvaluationContext provides all data needed for condition evaluation and template processing
-// Supports both NATS and HTTP contexts
+// Supports both NATS and HTTP contexts, and now includes support for forEach array iteration
 type EvaluationContext struct {
 	// Message data
-	Msg        map[string]interface{}
+	Msg        map[string]interface{} // CURRENT context (root message OR array element during forEach)
 	RawPayload []byte
 	Headers    map[string]string
+
+	// NEW: Original message reference for @msg prefix
+	// ALWAYS points to root message, even when Msg points to array element
+	OriginalMsg map[string]interface{}
 
 	// Context (NATS or HTTP, one will be nil)
 	Subject *SubjectContext
@@ -50,16 +87,18 @@ func NewEvaluationContext(
 	sigVerification *SignatureVerification,
 	logger *logger.Logger,
 ) (*EvaluationContext, error) {
-	var msgData map[string]interface{}
+	// Parse payload as generic interface to handle all JSON types
+	var raw interface{}
 	if len(payload) > 0 {
-		if err := json.Unmarshal(payload, &msgData); err != nil {
+		if err := json.Unmarshal(payload, &raw); err != nil {
 			return nil, err
 		}
-	} else {
-		msgData = make(map[string]interface{})
 	}
 
-	return &EvaluationContext{
+	// Wrap if needed to ensure msgData is always an object
+	msgData := wrapIfNeeded(raw)
+
+	ctx := &EvaluationContext{
 		Msg:             msgData,
 		RawPayload:      payload,
 		Headers:         headers,
@@ -70,18 +109,26 @@ func NewEvaluationContext(
 		traverser:       NewJSONPathTraverser(),
 		sigVerification: sigVerification,
 		logger:          logger,
-	}, nil
+	}
+	
+	// IMPORTANT: OriginalMsg should point to wrapped version too
+	ctx.OriginalMsg = msgData
+	
+	return ctx, nil
 }
 
 // ResolveValue resolves a field value from the context
 // Supports message fields, system fields (@subject, @path, @header, @time, @kv, @signature)
+// NEW: Also supports @msg prefix for explicit root message access during forEach
 func (c *EvaluationContext) ResolveValue(path string) (interface{}, bool) {
 	// System fields start with @
 	if strings.HasPrefix(path, "@") {
 		return c.resolveSystemField(path)
 	}
 
-	// Message field - traverse JSON
+	// Message field - traverse JSON using current context (Msg)
+	// During forEach, this will be the array element
+	// Outside forEach, this is the same as OriginalMsg
 	value, err := c.traverser.TraversePathString(c.Msg, path)
 	if err != nil {
 		return nil, false
@@ -90,7 +137,19 @@ func (c *EvaluationContext) ResolveValue(path string) (interface{}, bool) {
 }
 
 // resolveSystemField handles all @ prefixed system fields
+// NEW: Includes @msg.* prefix for explicit root message access
 func (c *EvaluationContext) resolveSystemField(path string) (interface{}, bool) {
+	// NEW: @msg prefix - explicitly access root message
+	// This is critical during forEach to access fields outside the current array element
+	if strings.HasPrefix(path, "@msg.") {
+		fieldPath := path[5:] // Remove "@msg."
+		value, err := c.traverser.TraversePathString(c.OriginalMsg, fieldPath)
+		if err != nil {
+			return nil, false
+		}
+		return value, true
+	}
+
 	// Subject fields (NATS context)
 	if strings.HasPrefix(path, "@subject") {
 		if c.Subject != nil {

@@ -59,7 +59,7 @@ func (t *Tester) Lint(rulesDir string) error {
 			fmt.Printf("✖ FAIL: %s\n  Error: %v\n", path, err)
 			failed = true
 		} else {
-			fmt.Printf("✔ PASS: %s\n", path)
+			fmt.Printf("✓ PASS: %s\n", path)
 		}
 		return nil
 	})
@@ -75,6 +75,7 @@ func (t *Tester) Lint(rulesDir string) error {
 }
 
 // Scaffold runs the scaffold mode, generating a test directory for a rule.
+// NEW: Now detects forEach and generates appropriate test templates
 func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 	if !strings.HasSuffix(rulePath, ".yaml") && !strings.HasSuffix(rulePath, ".yml") {
 		return fmt.Errorf("--scaffold requires a path to a .yaml rule file")
@@ -104,7 +105,7 @@ func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 	if err != nil || len(rules) == 0 {
 		return fmt.Errorf("could not load rule file to determine trigger type: %w", err)
 	}
-	rule := rules[0]
+	r := rules[0]
 
 	// Create a test config based on the rule's trigger type
 	testConfig := TestConfig{
@@ -112,19 +113,136 @@ func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 		Headers:  make(map[string]string),
 	}
 
-	if rule.Trigger.NATS != nil {
-		testConfig.MockTrigger.NATS = rule.Trigger.NATS
-	} else if rule.Trigger.HTTP != nil {
-		testConfig.MockTrigger.HTTP = rule.Trigger.HTTP
+	if r.Trigger.NATS != nil {
+		testConfig.MockTrigger.NATS = r.Trigger.NATS
+	} else if r.Trigger.HTTP != nil {
+		testConfig.MockTrigger.HTTP = r.Trigger.HTTP
 	}
 
 	configBytes, _ := json.MarshalIndent(testConfig, "", "  ")
 	os.WriteFile(filepath.Join(testDir, "_test_config.json"), configBytes, 0644)
-	os.WriteFile(filepath.Join(testDir, "match_1.json"), []byte("{}\n"), 0644)
-	os.WriteFile(filepath.Join(testDir, "not_match_1.json"), []byte("{}\n"), 0644)
 
-	fmt.Printf("✔ Scaffolded test directory at: %s\n", testDir)
+	// NEW: Detect if rule uses forEach and generate appropriate examples
+	usesForEach, forEachField := detectForEach(&r)
+	
+	if usesForEach {
+		fmt.Printf("✓ Detected forEach operation on field: %s\n", forEachField)
+		fmt.Printf("  Generating array-based test examples...\n")
+		
+		// Generate array input example
+		t.generateForEachExamples(testDir, forEachField, &r)
+	} else {
+		// Standard single-object examples
+		os.WriteFile(filepath.Join(testDir, "match_1.json"), []byte("{\n  \"field\": \"value\"\n}\n"), 0644)
+		os.WriteFile(filepath.Join(testDir, "not_match_1.json"), []byte("{\n  \"field\": \"other\"\n}\n"), 0644)
+	}
+
+	fmt.Printf("✓ Scaffolded test directory at: %s\n", testDir)
+	if usesForEach {
+		fmt.Printf("\n💡 TIP: Your rule uses forEach - example test files include:\n")
+		fmt.Printf("   • Array input messages\n")
+		fmt.Printf("   • Array output validation (multiple actions)\n")
+		fmt.Printf("   • Filter condition examples\n")
+	}
 	return nil
+}
+
+// NEW: detectForEach checks if a rule uses forEach and returns the field path
+func detectForEach(r *rule.Rule) (bool, string) {
+	if r.Action.NATS != nil && r.Action.NATS.ForEach != "" {
+		return true, r.Action.NATS.ForEach
+	}
+	if r.Action.HTTP != nil && r.Action.HTTP.ForEach != "" {
+		return true, r.Action.HTTP.ForEach
+	}
+	return false, ""
+}
+
+// NEW: generateForEachExamples creates example test files for forEach rules
+func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.Rule) {
+	// Create example match case with array
+	matchExample := map[string]interface{}{
+		"timestamp": "2025-01-15T10:30:00Z",
+		forEachField: []interface{}{
+			map[string]interface{}{
+				"id":     "item-1",
+				"status": "active",
+				"value":  100,
+			},
+			map[string]interface{}{
+				"id":     "item-2",
+				"status": "active",
+				"value":  200,
+			},
+			map[string]interface{}{
+				"id":     "item-3",
+				"status": "inactive",
+				"value":  150,
+			},
+		},
+	}
+	
+	matchBytes, _ := json.MarshalIndent(matchExample, "", "  ")
+	os.WriteFile(filepath.Join(testDir, "match_1.json"), matchBytes, 0644)
+
+	// Create example output file (array of expected actions)
+	// This demonstrates multi-action validation
+	var outputExample []ExpectedOutput
+	
+	if r.Action.NATS != nil {
+		// Generate 2 expected NATS actions (assuming filter matches 2 items)
+		outputExample = []ExpectedOutput{
+			{
+				Subject: "example.item-1",
+				Payload: json.RawMessage(`{"id":"item-1","status":"active","value":100}`),
+			},
+			{
+				Subject: "example.item-2",
+				Payload: json.RawMessage(`{"id":"item-2","status":"active","value":200}`),
+			},
+		}
+	} else if r.Action.HTTP != nil {
+		// Generate 2 expected HTTP actions
+		outputExample = []ExpectedOutput{
+			{
+				URL:     "https://api.example.com/items/item-1",
+				Method:  "POST",
+				Payload: json.RawMessage(`{"id":"item-1","status":"active","value":100}`),
+			},
+			{
+				URL:     "https://api.example.com/items/item-2",
+				Method:  "POST",
+				Payload: json.RawMessage(`{"id":"item-2","status":"active","value":200}`),
+			},
+		}
+	}
+	
+	outputBytes, _ := json.MarshalIndent(outputExample, "", "  ")
+	os.WriteFile(filepath.Join(testDir, "match_1_output.json"), outputBytes, 0644)
+
+	// Create example non-match case (empty array or no matching elements)
+	notMatchExample := map[string]interface{}{
+		"timestamp": "2025-01-15T10:30:00Z",
+		forEachField: []interface{}{
+			map[string]interface{}{
+				"id":     "item-99",
+				"status": "inactive",
+				"value":  50,
+			},
+		},
+	}
+	
+	notMatchBytes, _ := json.MarshalIndent(notMatchExample, "", "  ")
+	os.WriteFile(filepath.Join(testDir, "not_match_1.json"), notMatchBytes, 0644)
+
+	// Create additional example with empty array
+	emptyArrayExample := map[string]interface{}{
+		"timestamp":  "2025-01-15T10:30:00Z",
+		forEachField: []interface{}{},
+	}
+	
+	emptyBytes, _ := json.MarshalIndent(emptyArrayExample, "", "  ")
+	os.WriteFile(filepath.Join(testDir, "not_match_2_empty_array.json"), emptyBytes, 0644)
 }
 
 // QuickCheck runs the quick check mode for interactive testing.
@@ -133,7 +251,7 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 	if err != nil || len(rules) == 0 {
 		return fmt.Errorf("could not load or parse rule file %s: %w", rulePath, err)
 	}
-	r := rules[0] // Changed from 'rule' to 'r' to avoid shadowing package name
+	r := rules[0]
 	
 	// Setup test config based on the actual rule trigger
 	testConfig := &TestConfig{Headers: make(map[string]string)}
@@ -174,6 +292,7 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 
 	if len(actions) > 0 {
 		fmt.Println("Rule Matched: True")
+		fmt.Printf("Actions Generated: %d\n", len(actions))
 		fmt.Printf("Processing Time: %v\n", duration)
 		for i, action := range actions {
 			fmt.Printf("\n--- Rendered Action %d ---\n", i+1)
@@ -185,6 +304,9 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 				} else {
 					fmt.Printf("Payload: %s\n", action.NATS.Payload)
 				}
+				if len(action.NATS.Headers) > 0 {
+					fmt.Printf("Headers: %v\n", action.NATS.Headers)
+				}
 			} else if action.HTTP != nil {
 				fmt.Printf("Type: HTTP\n")
 				fmt.Printf("URL: %s\n", action.HTTP.URL)
@@ -193,6 +315,9 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 					fmt.Printf("Payload: %s (passthrough)\n", string(action.HTTP.RawPayload))
 				} else {
 					fmt.Printf("Payload: %s\n", action.HTTP.Payload)
+				}
+				if len(action.HTTP.Headers) > 0 {
+					fmt.Printf("Headers: %v\n", action.HTTP.Headers)
 				}
 			}
 			fmt.Println("-----------------------")
@@ -233,10 +358,16 @@ func (t *Tester) runTestsSequential(groups []TestGroup) TestSummary {
 			summary.Results = append(summary.Results, result)
 			if result.Passed {
 				summary.Passed++
-				fmt.Printf("  ✔ %s (%dms)\n", baseName, result.DurationMs)
+				fmt.Printf("  ✓ %s (%dms)\n", baseName, result.DurationMs)
 			} else {
 				summary.Failed++
 				fmt.Printf("  ✖ %s (%dms)\n", baseName, result.DurationMs)
+				if t.Verbose && result.Error != "" {
+					fmt.Printf("    Error: %s\n", result.Error)
+					if result.Details != "" {
+						fmt.Printf("    Details: %s\n", result.Details)
+					}
+				}
 			}
 		}
 		fmt.Println()
@@ -288,7 +419,7 @@ func (t *Tester) runTestsParallel(groups []TestGroup) TestSummary {
 	return summary
 }
 
-// runSingleTestCase executes a single test case against the rule processor.
+// NEW: runSingleTestCase updated to handle multiple actions (forEach support)
 func (t *Tester) runSingleTestCase(processor *rule.Processor, messagePath string, testConfig *TestConfig) TestResult {
 	start := time.Now()
 	baseName := filepath.Base(messagePath)
@@ -326,12 +457,16 @@ func (t *Tester) runSingleTestCase(processor *rule.Processor, messagePath string
 		return result
 	}
 
-	// If a match was expected, and an output file exists, validate the action.
+	// NEW: If a match was expected, and an output file exists, validate ALL actions
 	if matched {
 		outputFile := strings.TrimSuffix(messagePath, ".json") + "_output.json"
 		if _, err := os.Stat(outputFile); !os.IsNotExist(err) {
-			if err := validateOutput(actions[0], outputFile); err != nil {
+			// Pass all actions for validation (supports both single and multiple)
+			if err := validateOutputMultiple(actions, outputFile); err != nil {
 				result.Error = fmt.Sprintf("output validation failed: %v", err)
+				if t.Verbose {
+					result.Details = fmt.Sprintf("Expected output file: %s\nActions generated: %d", outputFile, len(actions))
+				}
 				return result
 			}
 		}
@@ -341,22 +476,49 @@ func (t *Tester) runSingleTestCase(processor *rule.Processor, messagePath string
 	return result
 }
 
-// validateOutput checks if the generated action matches the expected output file.
-func validateOutput(action *rule.Action, outputFile string) error {
+// NEW: validateOutputMultiple handles both single action and multiple actions (forEach)
+func validateOutputMultiple(actions []*rule.Action, outputFile string) error {
 	expectedBytes, err := os.ReadFile(outputFile)
 	if err != nil {
-		return err
-	}
-	var expected ExpectedOutput
-	if err := json.Unmarshal(expectedBytes, &expected); err != nil {
-		return fmt.Errorf("could not parse expected output: %w", err)
+		return fmt.Errorf("failed to read output file: %w", err)
 	}
 
-	// Dispatch to the correct validation helper based on action type
+	// TRY 1: Parse as array of ExpectedOutput (forEach case)
+	var expectedArray []ExpectedOutput
+	if err := json.Unmarshal(expectedBytes, &expectedArray); err == nil {
+		// Successfully parsed as array - validate each action
+		if len(actions) != len(expectedArray) {
+			return fmt.Errorf("action count mismatch: got %d actions, expected %d", len(actions), len(expectedArray))
+		}
+
+		for i, action := range actions {
+			if err := validateSingleOutput(action, &expectedArray[i]); err != nil {
+				return fmt.Errorf("action %d validation failed: %w", i+1, err)
+			}
+		}
+		return nil
+	}
+
+	// TRY 2: Parse as single ExpectedOutput (backward compatibility)
+	var expectedSingle ExpectedOutput
+	if err := json.Unmarshal(expectedBytes, &expectedSingle); err != nil {
+		return fmt.Errorf("output file is neither valid array nor valid single object: %w", err)
+	}
+
+	// Single expected output - should have exactly 1 action
+	if len(actions) != 1 {
+		return fmt.Errorf("expected 1 action (single output format), got %d actions", len(actions))
+	}
+
+	return validateSingleOutput(actions[0], &expectedSingle)
+}
+
+// NEW: validateSingleOutput validates one action against one expected output
+func validateSingleOutput(action *rule.Action, expected *ExpectedOutput) error {
 	if action.NATS != nil {
-		return validateNATSOutput(action.NATS, &expected)
+		return validateNATSOutput(action.NATS, expected)
 	} else if action.HTTP != nil {
-		return validateHTTPOutput(action.HTTP, &expected)
+		return validateHTTPOutput(action.HTTP, expected)
 	}
 	return fmt.Errorf("action has no NATS or HTTP configuration")
 }
@@ -365,7 +527,17 @@ func validateNATSOutput(action *rule.NATSAction, expected *ExpectedOutput) error
 	if expected.Subject != "" && action.Subject != expected.Subject {
 		return fmt.Errorf("subject mismatch: got '%s', want '%s'", action.Subject, expected.Subject)
 	}
-	return validatePayload(action.Payload, action.Passthrough, action.RawPayload, expected.Payload)
+	if expected.Payload != nil {
+		if err := validatePayload(action.Payload, action.Passthrough, action.RawPayload, expected.Payload); err != nil {
+			return err
+		}
+	}
+	if len(expected.Headers) > 0 {
+		if err := validateHeaders(action.Headers, expected.Headers); err != nil {
+			return fmt.Errorf("headers mismatch: %w", err)
+		}
+	}
+	return nil
 }
 
 func validateHTTPOutput(action *rule.HTTPAction, expected *ExpectedOutput) error {
@@ -375,7 +547,17 @@ func validateHTTPOutput(action *rule.HTTPAction, expected *ExpectedOutput) error
 	if expected.Method != "" && action.Method != expected.Method {
 		return fmt.Errorf("method mismatch: got '%s', want '%s'", action.Method, expected.Method)
 	}
-	return validatePayload(action.Payload, action.Passthrough, action.RawPayload, expected.Payload)
+	if expected.Payload != nil {
+		if err := validatePayload(action.Payload, action.Passthrough, action.RawPayload, expected.Payload); err != nil {
+			return err
+		}
+	}
+	if len(expected.Headers) > 0 {
+		if err := validateHeaders(action.Headers, expected.Headers); err != nil {
+			return fmt.Errorf("headers mismatch: %w", err)
+		}
+	}
+	return nil
 }
 
 func validatePayload(payload string, passthrough bool, rawPayload []byte, expectedPayload json.RawMessage) error {
@@ -394,6 +576,20 @@ func validatePayload(payload string, passthrough bool, rawPayload []byte, expect
 	expectedCanon, _ := json.Marshal(expectedParsed)
 	if string(actualCanon) != string(expectedCanon) {
 		return fmt.Errorf("payload mismatch:\ngot:  %s\nwant: %s", string(actualCanon), string(expectedCanon))
+	}
+	return nil
+}
+
+// NEW: validateHeaders checks if actual headers match expected headers
+func validateHeaders(actualHeaders, expectedHeaders map[string]string) error {
+	for key, expectedValue := range expectedHeaders {
+		actualValue, exists := actualHeaders[key]
+		if !exists {
+			return fmt.Errorf("missing header '%s'", key)
+		}
+		if actualValue != expectedValue {
+			return fmt.Errorf("header '%s': got '%s', want '%s'", key, actualValue, expectedValue)
+		}
 	}
 	return nil
 }

@@ -21,7 +21,9 @@
 
 # Example 1: Basic JSON Path Traversal with Colon Delimiter
 # Message: {"customer_id": "cust123", "order_value": 2500}
-- subject: orders.premium
+- trigger:
+    nats:
+      subject: orders.premium
   conditions:
     operator: and
     items:
@@ -32,30 +34,33 @@
         operator: gt
         value: 1000
   action:
-    subject: fulfillment.premium-customer
-    payload: |
-      {
-        "customer": {
-          "id": {customer_id},
-          "tier": "{@kv.customer_data.{customer_id}:tier}",
-          "name": "{@kv.customer_data.{customer_id}:profile.name}",
-          "email": "{@kv.customer_data.{customer_id}:profile.contact.email}"
-        },
-        "shipping": {
-          "method": "{@kv.customer_data.{customer_id}:shipping.preferences.method}",
-          "carrier": "{@kv.customer_data.{customer_id}:shipping.preferences.carrier}"
-        },
-        "billing": {
-          "plan": "{@kv.customer_data.{customer_id}:billing.plan}",
-          "available_credits": "{@kv.customer_data.{customer_id}:billing.credits}"
-        },
-        "order_value": {order_value},
-        "processed_at": "{@timestamp()}"
-      }
+    nats:
+      subject: fulfillment.premium-customer
+      payload: |
+        {
+          "customer": {
+            "id": {customer_id},
+            "tier": "{@kv.customer_data.{customer_id}:tier}",
+            "name": "{@kv.customer_data.{customer_id}:profile.name}",
+            "email": "{@kv.customer_data.{customer_id}:profile.contact.email}"
+          },
+          "shipping": {
+            "method": "{@kv.customer_data.{customer_id}:shipping.preferences.method}",
+            "carrier": "{@kv.customer_data.{customer_id}:shipping.preferences.carrier}"
+          },
+          "billing": {
+            "plan": "{@kv.customer_data.{customer_id}:billing.plan}",
+            "available_credits": "{@kv.customer_data.{customer_id}:billing.credits}"
+          },
+          "order_value": {order_value},
+          "processed_at": "{@timestamp()}"
+        }
 
 # Example 2: Array Access in JSON Path
 # Access array elements using colon delimiter: key:path.0.field
-- subject: shipping.address-lookup
+- trigger:
+    nats:
+      subject: shipping.address-lookup
   conditions:
     operator: and
     items:
@@ -65,22 +70,23 @@
         operator: eq
         value: "primary"
   action:
-    subject: shipping.primary-address
-    payload: |
-      {
-        "customer_id": {customer_id},
-        "primary_address": {
-          "city": "{@kv.customer_data.{customer_id}:shipping.addresses.0.city}",
-          "zip": "{@kv.customer_data.{customer_id}:shipping.addresses.0.zip}",
-          "type": "{@kv.customer_data.{customer_id}:shipping.addresses.0.type}"
-        },
-        "secondary_address": {
-          "city": "{@kv.customer_data.{customer_id}:shipping.addresses.1.city}",
-          "zip": "{@kv.customer_data.{customer_id}:shipping.addresses.1.zip}",
-          "type": "{@kv.customer_data.{customer_id}:shipping.addresses.1.type}"
-        },
-        "looked_up_at": "{@timestamp()}"
-      }
+    nats:
+      subject: shipping.primary-address
+      payload: |
+        {
+          "customer_id": {customer_id},
+          "primary_address": {
+            "city": "{@kv.customer_data.{customer_id}:shipping.addresses.0.city}",
+            "zip": "{@kv.customer_data.{customer_id}:shipping.addresses.0.zip}",
+            "type": "{@kv.customer_data.{customer_id}:shipping.addresses.0.type}"
+          },
+          "secondary_address": {
+            "city": "{@kv.customer_data.{customer_id}:shipping.addresses.1.city}",
+            "zip": "{@kv.customer_data.{customer_id}:shipping.addresses.1.zip}",
+            "type": "{@kv.customer_data.{customer_id}:shipping.addresses.1.type}"
+          },
+          "looked_up_at": "{@timestamp()}"
+        }
 
 # Example 3: Keys with Dots (WHY WE NEED THE COLON!)
 # Key name: "sensor.temp.001" (contains dots)
@@ -89,7 +95,9 @@
 #   "thresholds": {"min": 10, "max": 35, "critical": 40},
 #   "location": {"building": "A", "floor": 3, "room": "server-room"}
 # }
-- subject: sensors.temperature
+- trigger:
+    nats:
+      subject: sensors.temperature
   conditions:
     operator: and
     items:
@@ -99,28 +107,29 @@
         operator: gt
         value: "@kv.device_config.{sensor_id}:thresholds.max"      # ✅ Key can have dots!
   action:
-    subject: alerts.temperature-exceeded
-    payload: |
-      {
-        "alert": "Temperature threshold exceeded",
-        "sensor": {
-          "id": {sensor_id},
-          "model": "{@kv.device_config.{sensor_id}:hardware.model}",
-          "firmware": "{@kv.device_config.{sensor_id}:hardware.firmware}",
-          "location": {
-            "building": "{@kv.device_config.{sensor_id}:location.building}",
-            "floor": "{@kv.device_config.{sensor_id}:location.floor}",
-            "room": "{@kv.device_config.{sensor_id}:location.room}"
-          }
-        },
-        "readings": {
-          "current": {temperature},
-          "threshold_max": "{@kv.device_config.{sensor_id}:thresholds.max}",
-          "threshold_critical": "{@kv.device_config.{sensor_id}:thresholds.critical}"
-        },
-        "alert_id": "{@uuid7()}",
-        "triggered_at": "{@timestamp()}"
-      }
+    nats:
+      subject: alerts.temperature-exceeded
+      payload: |
+        {
+          "alert": "Temperature threshold exceeded",
+          "sensor": {
+            "id": {sensor_id},
+            "model": "{@kv.device_config.{sensor_id}:hardware.model}",
+            "firmware": "{@kv.device_config.{sensor_id}:hardware.firmware}",
+            "location": {
+              "building": "{@kv.device_config.{sensor_id}:location.building}",
+              "floor": "{@kv.device_config.{sensor_id}:location.floor}",
+              "room": "{@kv.device_config.{sensor_id}:location.room}"
+            }
+          },
+          "readings": {
+            "current": {temperature},
+            "threshold_max": "{@kv.device_config.{sensor_id}:thresholds.max}",
+            "threshold_critical": "{@kv.device_config.{sensor_id}:thresholds.critical}"
+          },
+          "alert_id": "{@uuid7()}",
+          "triggered_at": "{@timestamp()}"
+        }
 
 # Example 4: System Configuration with Deep JSON Paths
 # system_config["email_settings"] = {
@@ -130,7 +139,9 @@
 #     "alert": {"subject": "Alert: {title}", "priority": "high"}
 #   }
 # }
-- subject: notifications.send-email
+- trigger:
+    nats:
+      subject: notifications.send-email
   conditions:
     operator: and
     items:
@@ -141,24 +152,25 @@
         operator: eq
         value: true
   action:
-    subject: email.send-secure
-    payload: |
-      {
-        "email_config": {
-          "smtp_host": "{@kv.system_config.email_settings:smtp.host}",
-          "smtp_port": "{@kv.system_config.email_settings:smtp.port}",
-          "tls_enabled": "{@kv.system_config.email_settings:smtp.tls}"
-        },
-        "template": {
-          "subject": "{@kv.system_config.email_settings:templates.alert.subject}",
-          "priority": "{@kv.system_config.email_settings:templates.alert.priority}"
-        },
-        "message_data": {
-          "recipient": {recipient},
-          "alert_title": {alert_title}
-        },
-        "queued_at": "{@timestamp()}"
-      }
+    nats:
+      subject: email.send-secure
+      payload: |
+        {
+          "email_config": {
+            "smtp_host": "{@kv.system_config.email_settings:smtp.host}",
+            "smtp_port": "{@kv.system_config.email_settings:smtp.port}",
+            "tls_enabled": "{@kv.system_config.email_settings:smtp.tls}"
+          },
+          "template": {
+            "subject": "{@kv.system_config.email_settings:templates.alert.subject}",
+            "priority": "{@kv.system_config.email_settings:templates.alert.priority}"
+          },
+          "message_data": {
+            "recipient": {recipient},
+            "alert_title": {alert_title}
+          },
+          "queued_at": "{@timestamp()}"
+        }
 
 # Example 5: User Permissions and Feature Flags
 # user_permissions["user456"] = {
@@ -167,7 +179,9 @@
 #   "limits": {"api_calls_per_hour": 10000, "storage_gb": 100},
 #   "preferences": {"theme": "dark", "notifications": {"email": true, "sms": false}}
 # }
-- subject: api.admin-request
+- trigger:
+    nats:
+      subject: api.admin-request
   conditions:
     operator: and
     items:
@@ -180,33 +194,34 @@
         operator: eq
         value: true
   action:
-    subject: api.admin-authorized
-    payload: |
-      {
-        "authorization": "Admin API access granted",
-        "user": {
-          "id": {user_id},
-          "role": "{@kv.user_permissions.{user_id}:role}",
-          "features": {
-            "dashboard": "{@kv.user_permissions.{user_id}:features.dashboard}",
-            "reports": "{@kv.user_permissions.{user_id}:features.reports}",
-            "admin_panel": "{@kv.user_permissions.{user_id}:features.admin_panel}"
+    nats:
+      subject: api.admin-authorized
+      payload: |
+        {
+          "authorization": "Admin API access granted",
+          "user": {
+            "id": {user_id},
+            "role": "{@kv.user_permissions.{user_id}:role}",
+            "features": {
+              "dashboard": "{@kv.user_permissions.{user_id}:features.dashboard}",
+              "reports": "{@kv.user_permissions.{user_id}:features.reports}",
+              "admin_panel": "{@kv.user_permissions.{user_id}:features.admin_panel}"
+            },
+            "limits": {
+              "api_calls_per_hour": "{@kv.user_permissions.{user_id}:limits.api_calls_per_hour}",
+              "storage_gb": "{@kv.user_permissions.{user_id}:limits.storage_gb}"
+            },
+            "preferences": {
+              "theme": "{@kv.user_permissions.{user_id}:preferences.theme}",
+              "email_notifications": "{@kv.user_permissions.{user_id}:preferences.notifications.email}"
+            }
           },
-          "limits": {
-            "api_calls_per_hour": "{@kv.user_permissions.{user_id}:limits.api_calls_per_hour}",
-            "storage_gb": "{@kv.user_permissions.{user_id}:limits.storage_gb}"
+          "request_data": {
+            "endpoint": {requested_endpoint},
+            "method": {http_method}
           },
-          "preferences": {
-            "theme": "{@kv.user_permissions.{user_id}:preferences.theme}",
-            "email_notifications": "{@kv.user_permissions.{user_id}:preferences.notifications.email}"
-          }
-        },
-        "request_data": {
-          "endpoint": {requested_endpoint},
-          "method": {http_method}
-        },
-        "authorized_at": "{@timestamp()}"
-      }
+          "authorized_at": "{@timestamp()}"
+        }
 
 # Example 6: Feature Toggles and A/B Testing
 # feature_flags["experiment_123"] = {
@@ -217,7 +232,9 @@
 #   },
 #   "targeting": {"user_types": ["premium", "trial"], "regions": ["us", "ca"]}
 # }
-- subject: web.page-view
+- trigger:
+    nats:
+      subject: web.page-view
   conditions:
     operator: and
     items:
@@ -228,31 +245,32 @@
         operator: eq
         value: true
   action:
-    subject: analytics.experiment-view
-    payload: |
-      {
-        "experiment": {
-          "id": {experiment_id},
-          "enabled": "{@kv.feature_flags.{experiment_id}:enabled}",
-          "control_weight": "{@kv.feature_flags.{experiment_id}:variants.control.weight}",
-          "test_weight": "{@kv.feature_flags.{experiment_id}:variants.test.weight}"
-        },
-        "variant_configs": {
-          "control": {
-            "color": "{@kv.feature_flags.{experiment_id}:variants.control.config.color}",
-            "cta_text": "{@kv.feature_flags.{experiment_id}:variants.control.config.cta_text}"
+    nats:
+      subject: analytics.experiment-view
+      payload: |
+        {
+          "experiment": {
+            "id": {experiment_id},
+            "enabled": "{@kv.feature_flags.{experiment_id}:enabled}",
+            "control_weight": "{@kv.feature_flags.{experiment_id}:variants.control.weight}",
+            "test_weight": "{@kv.feature_flags.{experiment_id}:variants.test.weight}"
           },
-          "test": {
-            "color": "{@kv.feature_flags.{experiment_id}:variants.test.config.color}",
-            "cta_text": "{@kv.feature_flags.{experiment_id}:variants.test.config.cta_text}"
-          }
-        },
-        "user": {
-          "type": {user_type},
-          "region": {user_region}
-        },
-        "tracked_at": "{@timestamp()}"
-      }
+          "variant_configs": {
+            "control": {
+              "color": "{@kv.feature_flags.{experiment_id}:variants.control.config.color}",
+              "cta_text": "{@kv.feature_flags.{experiment_id}:variants.control.config.cta_text}"
+            },
+            "test": {
+              "color": "{@kv.feature_flags.{experiment_id}:variants.test.config.color}",
+              "cta_text": "{@kv.feature_flags.{experiment_id}:variants.test.config.cta_text}"
+            }
+          },
+          "user": {
+            "type": {user_type},
+            "region": {user_region}
+          },
+          "tracked_at": "{@timestamp()}"
+        }
 
 # Example 7: Complex Keys with Subject Tokens and Message Variables
 # Subject: equipment.pump.maintenance.pump-007.schedule
@@ -263,7 +281,9 @@
 #     "emergency": {"response_time_hours": 4, "technician_level": "L3"}
 #   }
 # }
-- subject: equipment.*.maintenance.*.schedule
+- trigger:
+    nats:
+      subject: equipment.*.maintenance.*.schedule
   conditions:
     operator: and
     items:
@@ -273,25 +293,26 @@
         operator: eq
         value: "routine"
   action:
-    subject: maintenance.scheduled
-    payload: |
-      {
-        "equipment": {
-          "type": "{@subject.1}",
-          "id": "{@subject.3}",
-          "maintenance_schedule": {
-            "type": {maintenance_type},
-            "frequency_days": "{@kv.equipment_maintenance.{@subject.3}:schedules.{maintenance_type}.frequency_days}",
-            "duration_hours": "{@kv.equipment_maintenance.{@subject.3}:schedules.{maintenance_type}.duration_hours}",
-            "required_technician_level": "{@kv.equipment_maintenance.{@subject.3}:schedules.{maintenance_type}.technician_level}"
+    nats:
+      subject: maintenance.scheduled
+      payload: |
+        {
+          "equipment": {
+            "type": "{@subject.1}",
+            "id": "{@subject.3}",
+            "maintenance_schedule": {
+              "type": {maintenance_type},
+              "frequency_days": "{@kv.equipment_maintenance.{@subject.3}:schedules.{maintenance_type}.frequency_days}",
+              "duration_hours": "{@kv.equipment_maintenance.{@subject.3}:schedules.{maintenance_type}.duration_hours}",
+              "required_technician_level": "{@kv.equipment_maintenance.{@subject.3}:schedules.{maintenance_type}.technician_level}"
+            }
+          },
+          "scheduling": {
+            "scheduled_by": {scheduled_by},
+            "scheduled_at": "{@timestamp()}",
+            "maintenance_id": "{@uuid7()}"
           }
-        },
-        "scheduling": {
-          "scheduled_by": {scheduled_by},
-          "scheduled_at": "{@timestamp()}",
-          "maintenance_id": "{@uuid7()}"
         }
-      }
 
 # Example 8: Keys with Multiple Dots (Complex Hierarchical Keys)
 # Key: "logs.api.auth.service.v2" (dots in key name)
@@ -299,7 +320,9 @@
 #   "errors": {"count": 42, "rate_per_min": 3.5},
 #   "latency": {"p50": 120, "p95": 450, "p99": 890}
 # }
-- subject: monitoring.service-health
+- trigger:
+    nats:
+      subject: monitoring.service-health
   conditions:
     operator: and
     items:
@@ -310,21 +333,22 @@
         operator: gt
         value: 10
   action:
-    subject: alerts.service-errors
-    payload: |
-      {
-        "service": {
-          "name": {service_name},
-          "errors": {
-            "count": "{@kv.logs.{service_name}:errors.count}",
-            "rate_per_min": "{@kv.logs.{service_name}:errors.rate_per_min}"
+    nats:
+      subject: alerts.service-errors
+      payload: |
+        {
+          "service": {
+            "name": {service_name},
+            "errors": {
+              "count": "{@kv.logs.{service_name}:errors.count}",
+              "rate_per_min": "{@kv.logs.{service_name}:errors.rate_per_min}"
+            },
+            "latency": {
+              "p50": "{@kv.logs.{service_name}:latency.p50}",
+              "p95": "{@kv.logs.{service_name}:latency.p95}",
+              "p99": "{@kv.logs.{service_name}:latency.p99}"
+            }
           },
-          "latency": {
-            "p50": "{@kv.logs.{service_name}:latency.p50}",
-            "p95": "{@kv.logs.{service_name}:latency.p95}",
-            "p99": "{@kv.logs.{service_name}:latency.p99}"
-          }
-        },
-        "alert_id": "{@uuid7()}",
-        "triggered_at": "{@timestamp()}"
-      }
+          "alert_id": "{@uuid7()}",
+          "triggered_at": "{@timestamp()}"
+        }

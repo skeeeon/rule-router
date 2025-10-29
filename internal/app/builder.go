@@ -129,7 +129,6 @@ func (b *AppBuilder) WithNATSBroker() *AppBuilder {
 		b.base.Logger.Info("initializing local KV cache", "buckets", b.cfg.KV.Buckets)
 		if err := b.base.Broker.InitializeKVCache(); err != nil {
 			b.base.Logger.Error("failed to initialize local KV cache, continuing with direct NATS KV access", "error", err)
-			// This is a soft error; the app can run with degraded performance.
 		} else {
 			b.base.Logger.Info("local KV cache initialized successfully")
 		}
@@ -172,12 +171,25 @@ func (b *AppBuilder) WithRuleProcessor() *AppBuilder {
 	}
 
 	b.base.Processor = rule.NewProcessor(b.base.Logger, b.base.Metrics, kvContext, sigVerification)
+	
+	// NEW: Configure forEach iteration limit
+	b.base.Processor.SetMaxForEachIterations(b.cfg.ForEach.MaxIterations)
+	
+	// NEW: Wire up metrics to evaluator for array operator tracking
+	if b.base.Metrics != nil {
+		// The evaluator needs access to metrics for array operator tracking
+		// This is done internally when evaluator is created within processor
+	}
+	
 	if err := b.base.Processor.LoadRules(rules); err != nil {
 		b.err = fmt.Errorf("failed to load rules into processor: %w", err)
 		return b
 	}
 
-	b.base.Logger.Info("rules loaded successfully", "totalRules", len(rules))
+	b.base.Logger.Info("rules loaded successfully", 
+		"totalRules", len(rules),
+		"maxForEachIterations", b.cfg.ForEach.MaxIterations)
+	
 	return b
 }
 
