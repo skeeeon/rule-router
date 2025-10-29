@@ -1,6 +1,8 @@
 # Basic rule with nested field access
 # Sample message: {"sensor": {"id": "temp001", "reading": 32.5, "location": "bedroom"}}
-- subject: sensors.data
+- trigger:
+    nats:
+      subject: sensors.data
   conditions:
     operator: and
     items:
@@ -11,13 +13,14 @@
         operator: eq
         value: "bedroom"
   action:
-    subject: alerts.bedroom-temperature
-    payload: |
-      {
-        "alert": "High bedroom temperature!",
-        "sensor_id": {sensor.id},         # ✅ Nested field in template
-        "reading": {sensor.reading},      # ✅ Nested numeric field  
-        "location": {sensor.location},    # ✅ Nested string field
-        "timestamp": "{@timestamp()}",
-        "alertId": "{@uuid7()}"
-      }
+    nats:
+      subject: alerts.bedroom-temperature
+      payload: |
+        {
+          "alert": "High bedroom temperature!",
+          "sensor_id": {sensor.id},         # ✅ Nested field in template
+          "reading": {sensor.reading},      # ✅ Nested numeric field  
+          "location": {sensor.location},    # ✅ Nested string field
+          "timestamp": "{@timestamp()}",
+          "alertId": "{@uuid7()}"
+        }
