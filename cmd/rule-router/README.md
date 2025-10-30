@@ -462,18 +462,18 @@ For details on client-side implementation and security best practices, please re
 
 ## Testing Rules
 
-This project includes a standalone `rule-tester` utility for offline validation of rule logic. It allows you to lint, scaffold, and run test suites against your rules with mocked dependencies.
+This project includes a standalone `rule-cli` utility for offline validation of rule logic. It allows you to lint, scaffold, and run test suites against your rules with mocked dependencies.
 
 **Example Usage:**
 ```bash
 # Scaffold tests for a new rule (auto-detects forEach)
-rule-tester --scaffold ./rules/my-new-rule.yaml
+rule-cli --scaffold ./rules/my-new-rule.yaml
 
 # Run all tests
-rule-tester --test --rules ./rules
+rule-cli --test --rules ./rules
 
 # Quick check a single message
-rule-tester --rule ./rules/my-rule.yaml \
+rule-cli --rule ./rules/my-rule.yaml \
             --message ./test-data/message.json
 ```
 
@@ -484,7 +484,7 @@ The tester automatically detects forEach operations and generates:
 - Filter condition test cases
 - Empty array edge cases
 
-For complete documentation, see the [**`rule-tester` README**](../rule-tester/README.md).
+For complete documentation, see the [**`rule-cli` README**](../rule-cli/README.md).
 
 ## Monitoring
 

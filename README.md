@@ -979,7 +979,7 @@ You will see the message appear on the `alerts.>` subscription, having been proc
 
 *   **`cmd/http-gateway`**: A bidirectional HTTP-to-NATS gateway. Perfect for integrating with third-party webhooks (e.g., GitHub, Stripe) and for triggering external APIs from NATS events. [**» View Gateway README**](./cmd/http-gateway/README.md)
 
-*   **`cmd/rule-tester`**: A powerful command-line utility for linting, scaffolding, and testing your rules offline, enabling CI/CD and ensuring rule correctness. [**» View Tester README**](./cmd/rule-tester/README.md)
+*   **`cmd/rule-cli`**: A powerful command-line utility for linting, scaffolding, and testing your rules offline, enabling CI/CD and ensuring rule correctness. [**» View Tester README**](./cmd/rule-cli/README.md)
 
 ## Monitoring
 

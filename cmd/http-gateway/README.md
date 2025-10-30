@@ -600,7 +600,7 @@ curl http://localhost:2112/metrics | grep actions_total
 curl http://localhost:2112/metrics | grep forEach_iterations
 
 # Verify filter conditions
-rule-tester --rule my-rule.yaml --message test.json --verbose
+rule-cli --rule my-rule.yaml --message test.json --verbose
 
 # Check array structure in logs
 # Look for "forEach array extracted" log messages
@@ -615,8 +615,8 @@ rule-tester --rule my-rule.yaml --message test.json --verbose
 # Verify template uses correct field
 # String: {@@value}, Array root: @items, Objects: {field}
 
-# Test with rule-tester
-rule-tester --rule my-rule.yaml --message '"simple string"'
+# Test with rule-cli
+rule-cli --rule my-rule.yaml --message '"simple string"'
 ```
 
 ### Messages not being delivered
@@ -656,17 +656,17 @@ See `examples/` directory for complete examples:
 
 ## Testing
 
-Use the rule-tester for development:
+Use the rule-cli for development:
 
 ```bash
 # Scaffold tests (detects forEach automatically)
-rule-tester --scaffold rules/batch-webhook.yaml
+rule-cli --scaffold rules/batch-webhook.yaml
 
 # Run tests
-rule-tester --test --rules rules/
+rule-cli --test --rules rules/
 
 # Quick check
-rule-tester --rule rules/my-rule.yaml \
+rule-cli --rule rules/my-rule.yaml \
             --message test-data/batch.json
 ```
 
@@ -677,7 +677,7 @@ The tester automatically:
 - Tests filter conditions
 - Handles primitive messages
 
-See [rule-tester README](../rule-tester/README.md) for details.
+See [rule-cli README](../rule-cli/README.md) for details.
 
 ## Development
 
