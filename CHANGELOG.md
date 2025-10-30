@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.2.0] - 2025-10-30
+- Added primitive support for KV Lookups
+- JSON path is option for KV Lookups
+
 ## [0.1.0] - 2025-10-29
 
 ### Added
