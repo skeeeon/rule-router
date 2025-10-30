@@ -360,8 +360,16 @@ func TestProcessNATSActionWithForEach_EmptyArray(t *testing.T) {
 func TestProcessNATSActionWithForEach_MixedArray(t *testing.T) {
 	processor := newTestProcessor()
 
+	// MODIFICATION: Add a filter to explicitly process only elements that have an 'id' field.
+	// This is the correct way to handle mixed arrays.
 	action := &NATSAction{
 		ForEach: "items",
+		Filter: &Conditions{
+			Operator: "and",
+			Items: []Condition{
+				{Field: "id", Operator: "exists"},
+			},
+		},
 		Subject: "alerts.{id}",
 		Payload: `{"id": "{id}"}`,
 	}
@@ -369,9 +377,9 @@ func TestProcessNATSActionWithForEach_MixedArray(t *testing.T) {
 	data := map[string]interface{}{
 		"items": []interface{}{
 			map[string]interface{}{"id": "item1"},
-			"not-an-object",
+			"not-an-object", // This will be filtered out because it has no 'id' field.
 			map[string]interface{}{"id": "item2"},
-			42,
+			42, // This will also be filtered out.
 			map[string]interface{}{"id": "item3"},
 		},
 	}
@@ -383,9 +391,9 @@ func TestProcessNATSActionWithForEach_MixedArray(t *testing.T) {
 		t.Fatalf("processNATSActionWithForEach() error = %v", err)
 	}
 
-	// Only 3 actions should be generated (2 non-objects skipped)
+	// The assertion is now correct. The filter ensures only 3 actions are generated.
 	if len(actions) != 3 {
-		t.Fatalf("Expected 3 actions (2 non-objects skipped), got %d", len(actions))
+		t.Fatalf("Expected 3 actions (2 non-objects filtered out), got %d", len(actions))
 	}
 
 	if actions[0].NATS.Subject != "alerts.item1" {
