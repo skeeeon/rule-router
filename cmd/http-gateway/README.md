@@ -136,15 +136,15 @@ Process multiple items from a single webhook:
               value: "charge.succeeded"
   
   action:
-    # Generate one NATS message per successful charge
-    forEach: "data"
-    filter:
-      operator: and
-      items:
-        - field: "type"
-          operator: eq
-          value: "charge.succeeded"
     nats:
+      # Generate one NATS message per successful charge
+      forEach: "data"
+      filter:
+        operator: and
+        items:
+          - field: "type"
+            operator: eq
+            value: "charge.succeeded"
       subject: "payments.success.{object.customer}"
       payload: |
         {
@@ -206,15 +206,15 @@ Generate multiple HTTP requests from a NATS message:
       subject: "notifications.batch"
   
   action:
-    # Send one HTTP request per recipient
-    forEach: "recipients"
-    filter:
-      operator: and
-      items:
-        - field: "active"
-          operator: eq
-          value: true
     http:
+      # Send one HTTP request per recipient
+      forEach: "recipients"
+      filter:
+        operator: and
+        items:
+          - field: "active"
+            operator: eq
+            value: true
       url: "https://api.notification.com/send/{userId}"
       method: "POST"
       payload: |
@@ -289,14 +289,14 @@ The http-gateway supports any valid JSON type for both inbound webhooks and outb
       method: "POST"
   
   action:
-    forEach: "@items"  # Array at root
-    filter:
-      operator: and
-      items:
-        - field: "@value"
-          operator: gt
-          value: 100
     nats:
+      forEach: "@items"  # Array at root
+      filter:
+        operator: and
+        items:
+          - field: "@value"
+            operator: gt
+            value: 100
       subject: "metrics.high"
       payload: '{"value": {@value}}'
 ```
@@ -308,8 +308,8 @@ The http-gateway supports any valid JSON type for both inbound webhooks and outb
       subject: "notify.batch"
   
   action:
-    forEach: "userIds"  # String array
     http:
+      forEach: "userIds"  # String array
       url: "https://api.example.com/notify/{@value}"
       method: "POST"
       payload: |
@@ -408,14 +408,14 @@ Generate multiple actions from array:
 
 ```yaml
 action:
-  forEach: "items"
-  filter:
-    operator: and
-    items:
-      - field: "status"
-        operator: eq
-        value: "active"
   http:
+    forEach: "items"
+    filter:
+      operator: and
+      items:
+        - field: "status"
+          operator: eq
+          value: "active"
     url: "https://api.example.com/process/{id}"
     method: "POST"
     payload: |
