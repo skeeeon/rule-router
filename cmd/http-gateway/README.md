@@ -542,24 +542,14 @@ curl http://localhost:2112/metrics
 
 ### Inbound Webhooks
 
-**V1 Limitations:**
-- ⚠️ No authentication (use reverse proxy)
+**Limitations:**
+- ⚠️ No authentication (use reverse proxy, or handle via simple header checks in rule)
 - ⚠️ No rate limiting (use reverse proxy)
 - ⚠️ Fire-and-forget (monitor metrics)
-
-**Production Setup:**
-```nginx
-# nginx reverse proxy with auth
-location /webhooks/ {
-    auth_request /auth;
-    proxy_pass http://localhost:8080;
-}
-```
 
 ### Outbound Webhooks
 
 **Best Practices:**
-- Use environment variables for API tokens
 - Secure rule files with filesystem permissions
 - Monitor retry exhaustion
 - Configure appropriate `maxDeliver`
@@ -631,10 +621,6 @@ nats consumer ls STREAM_NAME
 # Check rules are loaded
 # Look for "rules loaded successfully" in logs
 ```
-
-## Examples
-
-See `examples/` directory for complete examples:
 
 ### Inbound (HTTP → NATS)
 - **GitHub webhooks**: Process PR events
