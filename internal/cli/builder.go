@@ -77,7 +77,7 @@ func (rb *RuleBuilder) getTrigger() (*rule.Trigger, error) {
 	var trigger rule.Trigger
 	if choice == 0 { // NATS
 		subject, _ := rb.prompter.Ask("Enter NATS Trigger Subject (e.g., 'sensors.temp.>'):")
-		trigger.NATS = &rule.NATSTigger{Subject: subject}
+		trigger.NATS = &rule.NATSTrigger{Subject: subject}
 	} else { // HTTP
 		path, _ := rb.prompter.Ask("Enter HTTP Trigger Path (e.g., '/webhooks/github'):")
 		method, _ := rb.prompter.AskWithDefault("Enter HTTP Method (e.g., 'POST', press Enter for all):", "")
