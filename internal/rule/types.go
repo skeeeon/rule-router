@@ -83,7 +83,7 @@ type Conditions struct {
 type Condition struct {
 	Field    string      `json:"field" yaml:"field"`
 	Operator string      `json:"operator" yaml:"operator"`
-	Value    interface{} `json:"value" yaml:"value"`
+	Value    interface{} `json:"value,omitempty" yaml:"value,omitempty"`
 	
 	// NEW: For array operators (any/all/none) - nested conditions to evaluate against array elements
 	Conditions *Conditions `json:"conditions,omitempty" yaml:"conditions,omitempty"`
