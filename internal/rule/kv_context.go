@@ -53,47 +53,55 @@ func NewKVContext(stores map[string]jetstream.KeyValue, logger *logger.Logger, l
 		cacheStatus = "enabled"
 	}
 
-	logger.Info("KV context initialized with colon delimiter syntax", 
-		"bucketCount", len(ctx.stores), 
+	// MODIFIED: Updated log message to reflect new syntax support
+	logger.Info("KV context initialized with optional path syntax",
+		"bucketCount", len(ctx.stores),
 		"buckets", ctx.getBucketNames(),
 		"localCache", cacheStatus,
-		"syntax", "@kv.bucket.key:json.path")
+		"syntax", "@kv.bucket.key[:json.path]")
 	return ctx
 }
 
 // GetField retrieves a value from KV store (cache first, then NATS KV fallback)
-// Supports format: "@kv.bucket_name.key_name:json.path.to.field"
-// The colon (:) delimiter separates key from JSON path
+// Supports format: "@kv.bucket_name.key_name[:json.path.to.field]"
+// The colon (:) delimiter is now optional.
 // Returns the value and whether it was found successfully
 func (kv *KVContext) GetField(field string) (interface{}, bool) {
-	// Parse the KV field specification with colon delimiter
-	bucket, key, jsonPath, err := kv.parseKVFieldWithPath(field)
+	// MODIFIED: Use the renamed and updated parser
+	bucket, key, jsonPath, err := kv.parseKVField(field)
 	if err != nil {
 		kv.logger.Debug("invalid KV field format", "field", field, "error", err)
 		return nil, false
 	}
 
-	kv.logger.Debug("looking up KV field with colon syntax", 
-		"field", field, 
-		"bucket", bucket, 
+	// MODIFIED: Enhanced logging
+	kv.logger.Debug("looking up KV field with optional path syntax",
+		"field", field,
+		"bucket", bucket,
 		"key", key,
-		"jsonPath", jsonPath)
+		"jsonPath", jsonPath,
+		"hasPath", len(jsonPath) > 0)
 
 	// Try local cache first for maximum performance
 	if kv.localCache != nil && kv.localCache.IsEnabled() {
 		if cachedValue, found := kv.localCache.Get(bucket, key); found {
 			kv.logger.Debug("KV cache hit", "bucket", bucket, "key", key)
-			
+
+			// NEW: If no path, return the whole value. Otherwise, traverse.
+			if len(jsonPath) == 0 {
+				return cachedValue, true
+			}
+
 			// Process JSON path using shared traverser
 			finalValue, err := kv.traverser.TraversePath(cachedValue, jsonPath)
 			if err != nil {
-				kv.logger.Debug("JSON path traversal failed on cached value", 
+				kv.logger.Debug("JSON path traversal failed on cached value",
 					"bucket", bucket, "key", key, "jsonPath", jsonPath, "error", err)
 				return nil, false
 			}
 			return finalValue, true
 		}
-		
+
 		kv.logger.Debug("KV cache miss", "bucket", bucket, "key", key)
 	}
 
@@ -197,6 +205,15 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
        		kv.logger.Info("populated KV cache on first read (lazy-load)", "bucket", bucket, "key", key)
     	}
 
+	// NEW: Skip traversal if path is empty, returning the entire value
+	if len(jsonPath) == 0 {
+		kv.logger.Debug("KV lookup returning entire value (no path)",
+			"bucket", bucket,
+			"key", key,
+			"valueType", fmt.Sprintf("%T", jsonObj))
+		return jsonObj, true
+	}
+
 	value, err := kv.traverser.TraversePath(jsonObj, jsonPath)
 	if err != nil {
 		kv.logger.Warn("JSON path traversal failed on NATS value", 
@@ -216,74 +233,72 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
 	return value, true
 }
 
-// parseKVFieldWithPath parses a KV field specification with mandatory colon delimiter
-// Format: "@kv.bucket.key:json.path.to.field"
-// The colon (:) separates the key from the JSON path
-// This eliminates ambiguity since NATS allows dots in key names
-// 
-// Uses SplitPathRespectingBraces for JSON path to handle variables like {sensor.choice}
-//
-// Examples:
-//   @kv.customer_data.cust-123:tier
-//   @kv.device_config.sensor.temp.001:thresholds.max  (key contains dots!)
-//   @kv.device_config.{sensor.id}:{sensor.choice}      (variables with dots!)
-//
-// Returns bucket, key, jsonPath (as slice), and error
-func (kv *KVContext) parseKVFieldWithPath(field string) (bucket, key string, jsonPath []string, err error) {
-	// Field must start with "@kv."
+// MODIFIED: Renamed and updated to handle optional JSON path
+// parseKVField parses a KV field specification with an optional colon delimiter.
+// Format: "@kv.bucket.key[:json.path.to.field]"
+// If no colon is present, the entire value is returned (jsonPath is empty).
+// If a colon is present with no path, the entire value is also returned.
+func (kv *KVContext) parseKVField(field string) (bucket, key string, jsonPath []string, err error) {
 	if !strings.HasPrefix(field, "@kv.") {
 		return "", "", nil, fmt.Errorf("KV field must start with '@kv.', got: %s", field)
 	}
 
-	// Remove "@kv." prefix
 	remainder := field[4:]
-	
-	// Check for colon delimiter (REQUIRED)
+
+	// NEW: Handle optional colon
 	if !strings.Contains(remainder, ":") {
-		return "", "", nil, fmt.Errorf("KV field must use ':' to separate key from JSON path (format: @kv.bucket.key:path), got: %s", field)
+		// No colon: entire remainder is bucket.key, path is empty
+		bucketKeyParts := strings.SplitN(remainder, ".", 2)
+		if len(bucketKeyParts) != 2 {
+			return "", "", nil, fmt.Errorf("KV field without path must have 'bucket.key' format, got: %s", remainder)
+		}
+		bucket = bucketKeyParts[0]
+		key = bucketKeyParts[1]
+
+		if bucket == "" {
+			return "", "", nil, fmt.Errorf("KV bucket name cannot be empty in field: %s", field)
+		}
+		if key == "" {
+			return "", "", nil, fmt.Errorf("KV key name cannot be empty in field: %s", field)
+		}
+
+		return bucket, key, []string{}, nil // Return empty path slice
 	}
-	
-	// Check for multiple colons (invalid)
+
+	// Has colon: parse normally
 	if strings.Count(remainder, ":") > 1 {
-		return "", "", nil, fmt.Errorf("KV field must contain exactly one ':' delimiter, got: %s", field)
+		return "", "", nil, fmt.Errorf("KV field must contain at most one ':' delimiter, got: %s", field)
 	}
-	
-	// Split on first colon
+
 	colonIndex := strings.Index(remainder, ":")
-	
-	// Left side of colon: bucket.key
 	bucketKeyPart := remainder[:colonIndex]
-	
-	// Right side of colon: json.path (REQUIRED - must not be empty)
 	jsonPathPart := remainder[colonIndex+1:]
-	if jsonPathPart == "" {
-		return "", "", nil, fmt.Errorf("JSON path after ':' cannot be empty in field: %s (format: @kv.bucket.key:path)", field)
-	}
-	
-	// Parse bucket.key (must have exactly one dot between them)
+
 	bucketKeyParts := strings.SplitN(bucketKeyPart, ".", 2)
 	if len(bucketKeyParts) != 2 {
 		return "", "", nil, fmt.Errorf("KV field must have 'bucket.key' before ':', got: %s", bucketKeyPart)
 	}
-	
+
 	bucket = bucketKeyParts[0]
 	key = bucketKeyParts[1]
-	
-	// Validate bucket and key are not empty
+
 	if bucket == "" {
 		return "", "", nil, fmt.Errorf("KV bucket name cannot be empty in field: %s", field)
 	}
 	if key == "" {
 		return "", "", nil, fmt.Errorf("KV key name cannot be empty in field: %s", field)
 	}
-	
-	// FIXED: Parse JSON path using brace-aware splitter
-	// This allows variables like {sensor.choice} to be treated as single tokens
+
+	// NEW: Empty path after colon is a valid way to get the whole value
+	if jsonPathPart == "" {
+		return bucket, key, []string{}, nil // Return empty path slice
+	}
+
 	jsonPath, err = SplitPathRespectingBraces(jsonPathPart)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("invalid JSON path syntax in field %s: %w", field, err)
 	}
-	
+
 	kv.logger.Debug("parsed KV field with colon delimiter",
 		"field", field,
 		"bucket", bucket,

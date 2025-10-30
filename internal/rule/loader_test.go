@@ -236,19 +236,7 @@ func TestLoadFromDirectory_ValidationErrors(t *testing.T) {
   action: { nats: { subject: b, payload: "" } }`,
 			errMsg: "invalid subject field format",
 		},
-		{
-			name: "KV field missing colon",
-			ruleContent: `- trigger: { nats: { subject: a } }
-  conditions: { operator: "and", items: [{field: "@kv.device_status.key.path", operator: "exists"}] }
-  action: { nats: { subject: b, payload: "" } }`,
-			errMsg: "must use ':' to separate key from JSON path",
-		},
-		{
-			name: "KV field in template missing colon",
-			ruleContent: `- trigger: { nats: { subject: a } }
-  action: { nats: { subject: "out.{@kv.device_status.key.path}", payload: "" } }`,
-			errMsg: "KV field must use ':' to separate key from JSON path",
-		},
+		// MODIFIED: Removed tests for missing colon, as it's now valid.
 	}
 
 	for _, tt := range tests {
@@ -267,6 +255,99 @@ func TestLoadFromDirectory_ValidationErrors(t *testing.T) {
 		})
 	}
 }
+
+// NEW: Dedicated test suite for KV field validation.
+func TestKVField_Validation(t *testing.T) {
+	tests := []struct {
+		name        string
+		field       string
+		shouldPass  bool
+		errMsg      string
+	}{
+		{
+			name:       "valid with path",
+			field:      "@kv.device_status.key:path.to.field",
+			shouldPass: true,
+		},
+		{
+			name:       "valid without path",
+			field:      "@kv.device_status.key",
+			shouldPass: true,
+		},
+		{
+			name:       "valid with trailing colon",
+			field:      "@kv.device_status.key:",
+			shouldPass: true,
+		},
+		{
+			name:       "valid with dots in key and path",
+			field:      "@kv.device_config.sensor.temp.001:thresholds.max",
+			shouldPass: true,
+		},
+		{
+			name:       "valid with dots in key and no path",
+			field:      "@kv.device_config.sensor.temp.001",
+			shouldPass: true,
+		},
+		{
+			name:       "invalid - multiple colons",
+			field:      "@kv.bucket.key:path:extra",
+			shouldPass: false,
+			errMsg:     "must contain at most one ':' delimiter",
+		},
+		{
+			name:       "invalid - missing key",
+			field:      "@kv.bucket.:path",
+			shouldPass: false,
+			errMsg:     "KV key name cannot be empty",
+		},
+		{
+			name:       "invalid - missing bucket",
+			field:      "@kv..key:path",
+			shouldPass: false,
+			errMsg:     "KV bucket name cannot be empty",
+		},
+		{
+			name:       "invalid - missing bucket and key",
+			field:      "@kv.:path",
+			shouldPass: false,
+			errMsg:     "must have 'bucket.key' before ':'",
+		},
+		{
+			name:       "invalid - only bucket, no key, no path",
+			field:      "@kv.bucket",
+			shouldPass: false,
+			errMsg:     "must have 'bucket.key' format",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			loader := newTestLoader()
+			ruleContent := `- trigger: { nats: { subject: a } }
+  conditions: { operator: "and", items: [{field: "` + tt.field + `", operator: "exists"}] }
+  action: { nats: { subject: b, payload: "" } }`
+			
+			tempDir := t.TempDir()
+			createTempRuleFile(t, tempDir, "test.yaml", ruleContent)
+
+			_, err := loader.LoadFromDirectory(tempDir)
+
+			if tt.shouldPass {
+				if err != nil {
+					t.Errorf("Expected rule to pass validation, but got error: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("Expected validation error containing '%s', but got nil", tt.errMsg)
+				} else if !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("Expected error to contain '%s', but got: %v", tt.errMsg, err)
+				}
+			}
+		})
+	}
+}
+
 
 // ========================================
 // ARRAY OPERATOR VALIDATION TESTS

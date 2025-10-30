@@ -519,9 +519,10 @@ func (l *RulesLoader) extractKVFieldsFromTemplate(template string) []string {
 	return fields
 }
 
-// validateKVFieldWithVariables validates KV fields with colon delimiter syntax
+// MODIFIED: Updated to handle optional JSON path
+// validateKVFieldWithVariables validates KV fields with optional colon delimiter syntax
 func (l *RulesLoader) validateKVFieldWithVariables(field string) error {
-	l.logger.Debug("validating KV field with colon delimiter", "field", field)
+	l.logger.Debug("validating KV field with optional path", "field", field)
 
 	if !strings.HasPrefix(field, "@kv.") {
 		return fmt.Errorf("KV field must start with '@kv.', got: %s", field)
@@ -529,21 +530,31 @@ func (l *RulesLoader) validateKVFieldWithVariables(field string) error {
 
 	remainder := field[4:]
 
+	// NEW: Colon is now optional.
 	if !strings.Contains(remainder, ":") {
-		return fmt.Errorf("KV field must use ':' to separate key from JSON path (format: @kv.bucket.key:path), got: %s", field)
+		// No colon: validate bucket.key format only
+		bucketKeyParts := strings.SplitN(remainder, ".", 2)
+		if len(bucketKeyParts) != 2 {
+			return fmt.Errorf("KV field without path must have 'bucket.key' format, got: %s", field)
+		}
+		bucket, key := bucketKeyParts[0], bucketKeyParts[1]
+		if bucket == "" {
+			return fmt.Errorf("KV bucket name cannot be empty in field: %s", field)
+		}
+		if key == "" {
+			return fmt.Errorf("KV key name cannot be empty in field: %s", field)
+		}
+		return nil // Valid no-path format
 	}
 
+	// Has colon: validate normally
 	if strings.Count(remainder, ":") > 1 {
-		return fmt.Errorf("KV field must contain exactly one ':' delimiter, got: %s", field)
+		return fmt.Errorf("KV field must contain at most one ':' delimiter, got: %s", field)
 	}
 
 	colonIndex := strings.Index(remainder, ":")
 	bucketKeyPart := remainder[:colonIndex]
-	jsonPathPart := remainder[colonIndex+1:]
-
-	if jsonPathPart == "" {
-		return fmt.Errorf("JSON path after ':' cannot be empty (format: @kv.bucket.key:path), got: %s", field)
-	}
+	// jsonPathPart := remainder[colonIndex+1:] // Path can be empty
 
 	bucketKeyParts := strings.SplitN(bucketKeyPart, ".", 2)
 	if len(bucketKeyParts) != 2 {
@@ -562,6 +573,7 @@ func (l *RulesLoader) validateKVFieldWithVariables(field string) error {
 
 	return nil
 }
+
 
 // extractBucketFromKVField extracts the bucket name
 func (l *RulesLoader) extractBucketFromKVField(field string) string {
