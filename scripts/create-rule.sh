@@ -100,7 +100,6 @@ function get_trigger() {
   done
 }
 
-## REFACTORED: Central function to get condition items, now with array operator support
 function get_condition_items() {
     local indent="$1"
     local items_block=""
@@ -115,7 +114,6 @@ function get_condition_items() {
         
         if [ -z "$items_block" ]; then items_block=$(printf "\n%sitems:" "$indent"); fi
 
-        ## NEW: Interactive builder for array operators
         if [[ "$C_OPERATOR" == "any" || "$C_OPERATOR" == "all" || "$C_OPERATOR" == "none" ]]; then
             items_block+=$(printf "\n%s  - field: \"%s\"\n%s    operator: \"%s\"" "$indent" "$C_FIELD" "$indent" "$C_OPERATOR")
             echo -e "${COLOR_BLUE}${indent}    Now defining nested conditions for the '${C_OPERATOR}' operator...${COLOR_RESET}"
@@ -157,7 +155,6 @@ function get_conditions() {
   echo; echo "${COLOR_BLUE}2. Define Conditions (when the rule should run):${COLOR_RESET}"
   print_context_help "    "
   PS3="Your choice: "
-  ## NEW: Restored "Complex" option
   select CONDITION_TYPE in "No conditions" "Simple (a single list of checks)" "Complex (with nested groups)"; do
     case $CONDITION_TYPE in
       "No conditions") CONDITIONS_BLOCK="# No conditions defined for this rule."; break ;;
@@ -199,7 +196,7 @@ function get_filter_conditions() {
     if [[ "$ADD_FILTER" =~ ^[Yy]$ ]]; then
         read -p "${COLOR_YELLOW}${indent}  Choose a logical operator for the filter [and]: ${COLOR_RESET}" -r LOGICAL_OPERATOR
         LOGICAL_OPERATOR=${LOGICAL_OPERATOR:-and}
-        filter_block=$(printf "\n    filter:\n%s  operator: \"%s\"" "$indent" "$LOGICAL_OPERATOR")
+        filter_block=$(printf "\n      filter:\n%s  operator: \"%s\"" "$indent" "$LOGICAL_OPERATOR")
         
         local items_block=$(get_condition_items "${indent}  ")
         if [ -n "$items_block" ]; then
@@ -238,7 +235,9 @@ function get_action() {
                     read -p "${COLOR_YELLOW}   Enter the path to the array field in the message (e.g., 'notifications'): ${COLOR_RESET}" -r FOREACH_FIELD
                     local filter_block=$(get_filter_conditions "    ")
                     local root_fields_block=""; for field in "${CONDITION_FIELDS_ARRAY[@]}"; do root_fields_block+=$(printf "\n          \"root_%s\": \"{@msg.%s}\"," "$(echo "$field" | sed 's/[^a-zA-Z0-9_]/_/g')" "$field"); done; root_fields_block=${root_fields_block%,}
-                    ACTION_BLOCK=$(printf "  action:\n    forEach: \"%s\"%s\n    nats:\n      subject: \"%s\"\n      payload: |\n        {\n          # Fields from the array element\n          \"element_id\": \"{id}\",\n          \"element_status\": \"{status}\",\n\n          # Fields from the root message (using @msg prefix)\n          \"batch_id\": \"{@msg.batchId}\",%s\n\n          # System functions are always available\n          \"processed_at\": \"{@timestamp()}\"\n        }" "$FOREACH_FIELD" "$filter_block" "$ACTION_SUBJECT" "$root_fields_block")
+                    # --- FIX START: Corrected YAML structure for NATS forEach ---
+                    ACTION_BLOCK=$(printf "  action:\n    nats:\n      forEach: \"%s\"%s\n      subject: \"%s\"\n      payload: |\n        {\n          # Fields from the array element\n          \"element_id\": \"{id}\",\n          \"element_status\": \"{status}\",\n\n          # Fields from the root message (using @msg prefix)\n          \"batch_id\": \"{@msg.batchId}\",%s\n\n          # System functions are always available\n          \"processed_at\": \"{@timestamp()}\"\n        }" "$FOREACH_FIELD" "$filter_block" "$ACTION_SUBJECT" "$root_fields_block")
+                    # --- FIX END ---
                     break ;;
                 *) echo "Invalid option." ;;
             esac
@@ -269,7 +268,9 @@ function get_action() {
                     read -p "${COLOR_YELLOW}   Enter the path to the array field in the message (e.g., 'items'): ${COLOR_RESET}" -r FOREACH_FIELD
                     local filter_block=$(get_filter_conditions "    ")
                     local root_fields_block=""; for field in "${CONDITION_FIELDS_ARRAY[@]}"; do root_fields_block+=$(printf "\n          \"root_%s\": \"{@msg.%s}\"," "$(echo "$field" | sed 's/[^a-zA-Z0-9_]/_/g')" "$field"); done; root_fields_block=${root_fields_block%,}
-                    ACTION_BLOCK=$(printf "  action:\n    forEach: \"%s\"%s\n    http:\n      url: \"%s\"\n      method: \"%s\"\n      payload: |\n        {\n          # Fields from the array element\n          \"id\": \"{id}\",\n          \"status\": \"{status}\",\n\n          # Fields from the root message (using @msg prefix)\n          \"batch_id\": \"{@msg.batchId}\",%s\n\n          # System functions are always available\n          \"processed_at\": \"{@timestamp()}\"\n        }\n      retry:\n        maxAttempts: 3\n        initialDelay: \"1s\"" "$FOREACH_FIELD" "$filter_block" "$ACTION_URL" "$(echo "$ACTION_METHOD" | tr '[:lower:]' '[:upper:]')" "$root_fields_block")
+                    # --- FIX START: Corrected YAML structure for HTTP forEach ---
+                    ACTION_BLOCK=$(printf "  action:\n    http:\n      forEach: \"%s\"%s\n      url: \"%s\"\n      method: \"%s\"\n      payload: |\n        {\n          # Fields from the array element\n          \"id\": \"{id}\",\n          \"status\": \"{status}\",\n\n          # Fields from the root message (using @msg prefix)\n          \"batch_id\": \"{@msg.batchId}\",%s\n\n          # System functions are always available\n          \"processed_at\": \"{@timestamp()}\"\n        }\n      retry:\n        maxAttempts: 3\n        initialDelay: \"1s\"" "$FOREACH_FIELD" "$filter_block" "$ACTION_URL" "$(echo "$ACTION_METHOD" | tr '[:lower:]' '[:upper:]')" "$root_fields_block")
+                    # --- FIX END ---
                     break ;;
                 *) echo "Invalid option." ;;
             esac
