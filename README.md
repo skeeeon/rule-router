@@ -182,6 +182,7 @@ The rule engine provides a rich set of system variables (prefixed with `@`) that
 
 | Variable | Description | Example |
 |----------|-------------|---------|
+| `@kv.bucket.key` | Lookup value from KV store | `@kv.users.username` |
 | `@kv.bucket.key:field` | Lookup value from KV store with JSON path | `@kv.users.{userId}:name` |
 | `@kv.bucket.key:nested.field` | Nested field access in KV value | `@kv.config.app:db.host` |
 
@@ -190,9 +191,9 @@ The rule engine provides a rich set of system variables (prefixed with `@`) that
 **Examples:**
 ```yaml
 # Simple field access
-field: "@kv.device_status.sensor-123:active"
+field: "@kv.device_status.sensor-123"
 
-# Variable in key name
+# Variable in key name and JSON path
 field: "@kv.users.{user_id}:permissions"
 
 # Nested JSON path
