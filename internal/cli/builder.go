@@ -67,7 +67,6 @@ func (rb *RuleBuilder) BuildRule() ([]byte, error) {
 	return append([]byte(header), yamlBytes...), nil
 }
 
-// getTrigger now correctly builds and returns only a *rule.Trigger.
 func (rb *RuleBuilder) getTrigger() (*rule.Trigger, error) {
 	fmt.Printf("\n%s1. Trigger (What starts the rule?)%s\n", ColorBlue, ColorReset)
 	choice, err := rb.prompter.Select("Select Trigger Type:", []string{"NATS (Message Bus)", "HTTP (Webhook)"})
@@ -75,11 +74,10 @@ func (rb *RuleBuilder) getTrigger() (*rule.Trigger, error) {
 		return nil, err
 	}
 
-	// --- FIX: Build a rule.Trigger struct directly, not a rule.Rule ---
 	var trigger rule.Trigger
 	if choice == 0 { // NATS
 		subject, _ := rb.prompter.Ask("Enter NATS Trigger Subject (e.g., 'sensors.temp.>'):")
-		trigger.NATS = &rule.NATSTrigger{Subject: subject}
+		trigger.NATS = &rule.NATSTigger{Subject: subject}
 	} else { // HTTP
 		path, _ := rb.prompter.Ask("Enter HTTP Trigger Path (e.g., '/webhooks/github'):")
 		method, _ := rb.prompter.AskWithDefault("Enter HTTP Method (e.g., 'POST', press Enter for all):", "")
@@ -121,23 +119,30 @@ func (rb *RuleBuilder) getConditionsRecursive(indent string) (*rule.Conditions, 
 
 		item := rule.Condition{Field: field, Operator: operator}
 
+		// --- FIX: Changed 'else if' to a mutually exclusive 'else' block ---
 		if operator == "any" || operator == "all" || operator == "none" {
+			// Handle array operators
 			fmt.Println(indent + "    Defining nested conditions for the array operator...")
 			nested, err := rb.getConditionsRecursive(indent + "      ")
 			if err != nil {
 				return nil, err
 			}
 			item.Conditions = nested
-		} else if operator != "exists" {
-			valueStr, _ := rb.prompter.Ask(indent + "  - Value:")
-			if f, err := strconv.ParseFloat(valueStr, 64); err == nil {
-				item.Value = f
-			} else if b, err := strconv.ParseBool(valueStr); err == nil {
-				item.Value = b
-			} else {
-				item.Value = valueStr
+		} else {
+			// Handle all other (non-array) operators
+			if operator != "exists" {
+				valueStr, _ := rb.prompter.Ask(indent + "  - Value:")
+				if f, err := strconv.ParseFloat(valueStr, 64); err == nil {
+					item.Value = f
+				} else if b, err := strconv.ParseBool(valueStr); err == nil {
+					item.Value = b
+				} else {
+					item.Value = valueStr
+				}
 			}
 		}
+		// --- END FIX ---
+
 		conds.Items = append(conds.Items, item)
 	}
 
