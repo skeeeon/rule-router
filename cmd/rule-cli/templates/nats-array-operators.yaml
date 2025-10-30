@@ -1,0 +1,44 @@
+# templates/array-operators.yaml
+#
+# A rule demonstrating array operators (any, all, none) in conditions.
+# This allows you to pre-filter batch messages before they are processed further,
+# often in combination with a 'forEach' action.
+#
+# Example Use Case: Check if a batch of security events contains ANY critical
+# alerts before forwarding it to the high-priority processing system.
+#
+- trigger:
+    nats:
+      subject: "security.events.batch"
+  conditions:
+    operator: and
+    items:
+      # Use the 'any' operator to check if at least one element in the
+      # 'events' array matches the nested conditions.
+      - field: "events"
+        operator: any
+        conditions:
+          operator: and
+          items:
+            - field: "severity"
+              operator: eq
+              value: "critical"
+  action:
+    nats:
+      # Because the condition passed, we know there's at least one interesting
+      # element. Now, use 'forEach' with a filter to process only those elements.
+      forEach: "events"
+      filter:
+        operator: and
+        items:
+          - field: "severity"
+            operator: eq
+            value: "critical"
+      subject: "alerts.critical.{id}"
+      payload: |
+        {
+          "message": "Processed a critical event from a batch",
+          "event_id": "{id}",
+          "batch_id": "{@msg.batch_id}",
+          "processed_at": "{@timestamp()}"
+        }

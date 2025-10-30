@@ -1,0 +1,36 @@
+# templates/nats-basic.yaml
+#
+# A basic rule for routing NATS messages.
+# It triggers on a NATS subject, checks a condition, and publishes a new,
+# templated message to another subject.
+#
+# Example Use Case: Alerting when a sensor reading exceeds a threshold.
+#
+- trigger:
+    nats:
+      # The subject to listen on. Supports wildcards (*, >).
+      subject: "sensors.temperature.>"
+  conditions:
+    operator: and
+    items:
+      # Check if a field in the incoming message meets a condition.
+      # Use dot-notation for nested fields, e.g., "data.reading.value".
+      - field: "temperature"
+        operator: gt
+        value: 30
+  action:
+    nats:
+      # The subject to publish the new message to. Can use variables from the
+      # original message or subject, e.g., "alerts.{@subject.1}.{device_id}"
+      subject: "alerts.high_temp.{@subject.2}"
+      payload: |
+        {
+          "alert": "High temperature detected!",
+          # Use single curly braces {} to substitute values from the message payload.
+          "temperature": {temperature},
+          "device_id": "{device_id}",
+          # Use {@...} to access system variables like subject tokens or timestamps.
+          "location": "{@subject.2}",
+          "timestamp": "{@timestamp()}",
+          "alert_id": "{@uuid7()}"
+        }

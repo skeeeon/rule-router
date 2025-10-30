@@ -1,0 +1,40 @@
+# templates/http-forEach.yaml
+#
+# A rule for the http-gateway to process a batch webhook. It iterates over
+# an array in the incoming HTTP request and publishes one NATS message per element.
+#
+# Example Use Case: Processing a Stripe event webhook that contains multiple
+# charge events in a single request.
+#
+- trigger:
+    http:
+      path: "/webhooks/stripe/batch"
+      method: "POST"
+  action:
+    nats:
+      # The field in the webhook body that contains the array.
+      forEach: "data"
+      # (Optional) Filter to process only specific elements.
+      filter:
+        operator: and
+        items:
+          - field: "type"
+            operator: eq
+            value: "charge.succeeded"
+      # The NATS subject for each new message. Can use element fields.
+      subject: "stripe.charge.succeeded.{object.customer}"
+      payload: |
+        {
+          # Fields from the current array element.
+          "charge_id": "{id}",
+          "customer_id": "{object.customer}",
+          "amount": {object.amount},
+
+          # Fields from the root webhook body MUST use the '{@msg...}' prefix.
+          "webhook_id": "{@msg.id}",
+          "webhook_created_at": "{@msg.created}",
+
+          # System and HTTP context variables are available.
+          "processed_at": "{@timestamp()}",
+          "source_path": "{@path}"
+        }

@@ -1,0 +1,37 @@
+# templates/http-inbound.yaml
+#
+# A rule for the http-gateway to ingest an inbound webhook and publish it
+# as a standardized message to NATS.
+#
+# Example Use Case: Receiving a GitHub push webhook and creating an internal event.
+#
+- trigger:
+    http:
+      # The HTTP path the gateway will listen on.
+      path: "/webhooks/github"
+      # (Optional) The HTTP method to match (e.g., "POST"). Defaults to all.
+      method: "POST"
+  conditions:
+    operator: and
+    items:
+      # Check an HTTP header for a specific value.
+      - field: "@header.X-GitHub-Event"
+        operator: eq
+        value: "push"
+      # Check a field in the JSON body of the webhook.
+      - field: "ref"
+        operator: eq
+        value: "refs/heads/main"
+  action:
+    nats:
+      # The NATS subject to publish the new message to.
+      # You can use HTTP context variables like '{@path.1}' or '{@method}'.
+      subject: "github.push.main"
+      payload: |
+        {
+          "source": "http-gateway",
+          "repo": "{repository.full_name}",
+          "pusher": "{pusher.name}",
+          "commit_count": {size},
+          "received_at": "{@timestamp()}"
+        }

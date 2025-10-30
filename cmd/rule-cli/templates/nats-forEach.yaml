@@ -1,0 +1,39 @@
+# templates/nats-forEach.yaml
+#
+# A rule for processing batch messages using the 'forEach' action.
+# It iterates over an array within a message and generates one new NATS
+# message for each element that matches an optional filter.
+#
+# Example Use Case: Processing a batch of security events and creating an
+# individual alert for each critical event.
+#
+- trigger:
+    nats:
+      subject: "security.events.batch"
+  action:
+    nats:
+      # The field in the message that contains the array to iterate over.
+      forEach: "events"
+      # (Optional) Only process elements that match these conditions.
+      filter:
+        operator: and
+        items:
+          - field: "status"
+            operator: eq
+            value: "critical"
+      # The subject for each new message. Can use variables from the array element.
+      subject: "alerts.critical.{event_id}"
+      payload: |
+        {
+          # Fields from the current array element are accessed directly with {}.
+          "event_id": "{event_id}",
+          "status": "{status}",
+          "details": "{details}",
+
+          # Fields from the original root message MUST use the '{@msg...}' prefix.
+          "batch_id": "{@msg.batch_id}",
+          "source_device": "{@msg.device_id}",
+
+          # System functions are always available.
+          "processed_at": "{@timestamp()}"
+        }

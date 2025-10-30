@@ -1,0 +1,41 @@
+# templates/signature-verification.yaml
+#
+# A rule that demonstrates cryptographic signature verification.
+# It only processes the message if it has a valid NKey signature.
+# This is critical for secure, privileged operations.
+#
+# Example Use Case: A command to unlock a door, which must be authenticated.
+#
+- trigger:
+    nats:
+      subject: "commands.secure.door.unlock"
+  conditions:
+    operator: and
+    items:
+      # 1. Verify the signature is valid.
+      - field: "@signature.valid"
+        operator: eq
+        value: true
+
+      # 2. (Recommended) Prevent replay attacks by checking the timestamp.
+      #    This requires the message payload to have a 'timestamp' field (Unix seconds).
+      - field: "timestamp"
+        operator: recent
+        value: "10s" # Message must be recent (e.g., within 10 seconds).
+
+      # 3. (Optional) Authorize the signer's public key against a KV store.
+      - field: "@kv.access_control.{@signature.pubkey}:status"
+        operator: eq
+        value: "active"
+  action:
+    nats:
+      subject: "door.control.unlock"
+      payload: |
+        {
+          "action": "authorized_unlock",
+          "door_id": "{door_id}",
+          "authorized_by_key": "{@signature.pubkey}",
+          # You can enrich with data about the signer from the KV store.
+          "authorized_by_name": "{@kv.access_control.{@signature.pubkey}:name}",
+          "executed_at": "{@timestamp()}"
+        }

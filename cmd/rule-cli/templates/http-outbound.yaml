@@ -1,0 +1,32 @@
+# templates/http-outbound.yaml
+#
+# A rule for the http-gateway to consume a NATS message and trigger an
+# outbound webhook (API call) to an external service.
+#
+# Example Use Case: Sending a critical alert from NATS to PagerDuty.
+#
+- trigger:
+    nats:
+      subject: "alerts.critical.>"
+  action:
+    http:
+      # The URL of the external API to call. Can use variables.
+      url: "https://api.pagerduty.com/incidents"
+      # The HTTP method for the request.
+      method: "POST"
+      headers:
+        Content-Type: "application/json"
+        # Use environment variables for secrets like API keys.
+        Authorization: "Token ${PAGERDUTY_TOKEN}"
+      payload: |
+        {
+          "summary": "{alert_message}",
+          "source": "{@subject}",
+          "incident_id": "{incident_id}",
+          "timestamp": "{@timestamp()}"
+        }
+      # (Optional) Configure retries for reliable delivery.
+      retry:
+        maxAttempts: 3
+        initialDelay: "1s"
+        maxDelay: "30s"

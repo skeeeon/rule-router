@@ -1,0 +1,35 @@
+# templates/nats-kv-enrichment.yaml
+#
+# A rule that enriches a message with data from a NATS Key-Value (KV) store.
+# It uses the '@kv' syntax to look up values and include them in the new message.
+#
+# Example Use Case: Adding customer metadata (like name or tier) to an order event.
+#
+- trigger:
+    nats:
+      subject: "orders.new"
+  conditions:
+    operator: and
+    items:
+      # You can also use KV lookups in conditions.
+      # This rule only runs if the device is marked as 'active' in the KV store.
+      # Syntax: @kv.bucket.key:json.path
+      - field: "@kv.customers.{customer_id}:active"
+        operator: eq
+        value: true
+  action:
+    nats:
+      subject: "orders.enriched"
+      payload: |
+        {
+          "order_id": "{order_id}",
+          "customer_id": "{customer_id}",
+          "order_value": {order_value},
+          "enriched_data": {
+            # Look up the customer's name from the KV store.
+            "customer_name": "{@kv.customers.{customer_id}:profile.name}",
+            # Look up a nested field from the KV store.
+            "customer_tier": "{@kv.customers.{customer_id}:tier}"
+          },
+          "processed_at": "{@timestamp()}"
+        }
