@@ -242,14 +242,14 @@ Generate **one action per array element**:
 
 ```yaml
 action:
-  forEach: "notifications"   # Path to array field
-  filter:                     # Optional: only process matching elements
-    operator: and             # Required
-    items:
-      - field: "severity"
-        operator: eq
-        value: "critical"
   nats:
+    forEach: "notifications"   # Path to array field
+    filter:                     # Optional: only process matching elements
+      operator: and             # Required
+      items:
+        - field: "severity"
+          operator: eq
+          value: "critical"
     subject: "alerts.{id}"
     payload: |
       {
@@ -285,15 +285,15 @@ action:
               value: "motion"
   
   action:
-    # Generate one alert per motion event
-    forEach: "events"
-    filter:
-      operator: and
-      items:
-        - field: "type"
-          operator: eq
-          value: "motion"
     nats:
+      # Generate one alert per motion event
+      forEach: "events"
+      filter:
+        operator: and
+        items:
+          - field: "type"
+            operator: eq
+            value: "motion"
       subject: "alerts.motion.{deviceId}"
       payload: |
         {
@@ -310,8 +310,6 @@ action:
 - Configure via `forEach.maxIterations` in config
 - Efficient zero-copy element context creation
 - Comprehensive metrics for monitoring
-
-For complete examples, see [examples/forEach/](../../examples/forEach/).
 
 ### Primitive Message Support
 
@@ -333,8 +331,8 @@ The rule-router fully supports any valid JSON type as root messages or array ele
     nats:
       subject: "sensors.senml"
   action:
-    forEach: "@items"  # Array at root
     nats:
+      forEach: "@items"  # Array at root
       subject: "sensors.{n}"
       payload: '{"metric": "{n}", "value": {v}}'
 ```
@@ -362,8 +360,8 @@ The rule-router fully supports any valid JSON type as root messages or array ele
     nats:
       subject: "devices.batch"
   action:
-    forEach: "deviceIds"  # String array
     nats:
+      forEach: "deviceIds"  # String array
       subject: "process.{@value}"  # Access string value
       payload: '{"deviceId": "{@value}"}'
 ```
