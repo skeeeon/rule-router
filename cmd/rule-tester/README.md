@@ -233,14 +233,14 @@ For rules with forEach:
               value: "motion"
   
   action:
-    forEach: "events"
-    filter:
-      operator: and
-      items:
-        - field: "type"
-          operator: eq
-          value: "motion"
     nats:
+      forEach: "events"
+      filter:
+        operator: and
+        items:
+          - field: "type"
+            operator: eq
+            value: "motion"
       subject: "alerts.motion.{eventId}"
       payload: |
         {
@@ -369,14 +369,14 @@ conditions:
     nats:
       subject: "metrics.batch"
   action:
-    forEach: "@items"
-    filter:
-      operator: and
-      items:
-        - field: "@value"
-          operator: gt
-          value: 150
     nats:
+      forEach: "@items"
+      filter:
+        operator: and
+        items:
+          - field: "@value"
+            operator: gt
+            value: 150
       subject: "metrics.high"
       payload: '{"value": {@value}}'
 ```
