@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.2.1] - 2025-10-30
+- Resolved primitive/array wrapping and resolution
+
 ## [0.2.0] - 2025-10-30
 - Added primitive support for KV Lookups
 - JSON path is option for KV Lookups
@@ -16,3 +19,5 @@
 - Rule-cli utility
 
 [0.1.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.1.0
+[0.2.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.2.0
+[0.2.1]: https://github.com/skeeeon/rule-router/releases/tag/v0.2.1
