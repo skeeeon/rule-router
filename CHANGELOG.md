@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.2.2] - 2025-11-03
+- Enhanced Environment Variable Substitution 
+
 ## [0.2.1] - 2025-10-30
 - Resolved primitive/array wrapping and resolution
 
@@ -21,3 +24,4 @@
 [0.1.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.1.0
 [0.2.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.2.0
 [0.2.1]: https://github.com/skeeeon/rule-router/releases/tag/v0.2.1
+[0.2.1]: https://github.com/skeeeon/rule-router/releases/tag/v0.2.2

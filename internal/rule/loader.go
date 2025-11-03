@@ -6,14 +6,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
-	"time"
 	"regexp"
+	"strings"
 	"strconv"
+	"time"
 
 	"gopkg.in/yaml.v3"
 	"rule-router/internal/logger"
 )
+
+// envVarPattern matches environment variable placeholders: ${VAR_NAME}
+// Allows uppercase, lowercase, numbers, and underscores
+var envVarPattern = regexp.MustCompile(`\$\{([A-Za-z0-9_]+)\}`)
 
 // RulesLoader handles loading and validating rule definitions from YAML files
 type RulesLoader struct {
@@ -106,6 +110,14 @@ func (l *RulesLoader) LoadFromFile(filePath string) ([]Rule, error) {
 		"file", filePath,
 		"ruleCount", len(rules))
 
+	// NEW: Expand environment variables before validation
+	for i := range rules {
+		if err := l.expandEnvironmentVariables(&rules[i], filePath, i); err != nil {
+			return nil, fmt.Errorf("rule %d in %s: failed to expand environment variables: %w", i, filePath, err)
+		}
+	}
+
+	// Validate after expansion
 	for i := range rules {
 		if err := l.validateRule(&rules[i], filePath, i); err != nil {
 			return nil, fmt.Errorf("rule %d in %s is invalid: %w", i, filePath, err)
@@ -117,6 +129,170 @@ func (l *RulesLoader) LoadFromFile(filePath string) ([]Rule, error) {
 		"ruleCount", len(rules))
 
 	return rules, nil
+}
+
+// expandEnvironmentVariables expands ${VAR_NAME} placeholders in a rule
+// This happens at load time, before validation, for static configuration
+func (l *RulesLoader) expandEnvironmentVariables(rule *Rule, filePath string, ruleIndex int) error {
+	l.logger.Debug("expanding environment variables in rule",
+		"file", filePath,
+		"ruleIndex", ruleIndex)
+
+	// Expand in conditions
+	if rule.Conditions != nil {
+		l.expandConditionsEnvVars(rule.Conditions, filePath, ruleIndex)
+	}
+
+	// Expand in action
+	l.expandActionEnvVars(&rule.Action, filePath, ruleIndex)
+
+	return nil
+}
+
+// expandConditionsEnvVars recursively expands env vars in condition fields and values
+func (l *RulesLoader) expandConditionsEnvVars(conds *Conditions, filePath string, ruleIndex int) {
+	if conds == nil {
+		return
+	}
+
+	// Expand in condition items
+	for i := range conds.Items {
+		condition := &conds.Items[i]
+
+		// Expand field name (rare but possible: field: "${PREFIX}.status")
+		if originalField := condition.Field; strings.Contains(originalField, "${") {
+			condition.Field = l.expandEnvVarsInString(originalField, "condition.field", filePath, ruleIndex)
+		}
+
+		// Expand value - handle different types
+		condition.Value = l.expandEnvVarsInValue(condition.Value, "condition.value", filePath, ruleIndex)
+
+		// Recurse into nested conditions (for array operators: any/all/none)
+		if condition.Conditions != nil {
+			l.expandConditionsEnvVars(condition.Conditions, filePath, ruleIndex)
+		}
+	}
+
+	// Recurse into nested groups
+	for i := range conds.Groups {
+		l.expandConditionsEnvVars(&conds.Groups[i], filePath, ruleIndex)
+	}
+}
+
+// expandEnvVarsInValue expands env vars in a condition value (handles strings, arrays, other types)
+func (l *RulesLoader) expandEnvVarsInValue(value interface{}, location, filePath string, ruleIndex int) interface{} {
+	switch v := value.(type) {
+	case string:
+		// Most common case: value: "${EXPECTED_STATUS}"
+		return l.expandEnvVarsInString(v, location, filePath, ruleIndex)
+
+	case []interface{}:
+		// Array values: value: ["${VAL1}", "${VAL2}"]
+		result := make([]interface{}, len(v))
+		for j, item := range v {
+			if str, ok := item.(string); ok {
+				result[j] = l.expandEnvVarsInString(str, fmt.Sprintf("%s[%d]", location, j), filePath, ruleIndex)
+			} else {
+				result[j] = item // Keep non-strings as-is
+			}
+		}
+		return result
+
+	default:
+		// int, bool, float64, map - leave as-is
+		return value
+	}
+}
+
+// expandActionEnvVars expands env vars in action fields
+func (l *RulesLoader) expandActionEnvVars(action *Action, filePath string, ruleIndex int) {
+	if action.NATS != nil {
+		natsAction := action.NATS
+
+		// Expand subject
+		natsAction.Subject = l.expandEnvVarsInString(natsAction.Subject, "action.nats.subject", filePath, ruleIndex)
+
+		// Expand payload
+		natsAction.Payload = l.expandEnvVarsInString(natsAction.Payload, "action.nats.payload", filePath, ruleIndex)
+
+		// Expand forEach field
+		natsAction.ForEach = l.expandEnvVarsInString(natsAction.ForEach, "action.nats.forEach", filePath, ruleIndex)
+
+		// Expand headers
+		for key, val := range natsAction.Headers {
+			natsAction.Headers[key] = l.expandEnvVarsInString(val, fmt.Sprintf("action.nats.headers[%s]", key), filePath, ruleIndex)
+		}
+
+		// Expand filter conditions
+		if natsAction.Filter != nil {
+			l.expandConditionsEnvVars(natsAction.Filter, filePath, ruleIndex)
+		}
+	}
+
+	if action.HTTP != nil {
+		httpAction := action.HTTP
+
+		// Expand URL
+		httpAction.URL = l.expandEnvVarsInString(httpAction.URL, "action.http.url", filePath, ruleIndex)
+
+		// Expand method
+		httpAction.Method = l.expandEnvVarsInString(httpAction.Method, "action.http.method", filePath, ruleIndex)
+
+		// Expand payload
+		httpAction.Payload = l.expandEnvVarsInString(httpAction.Payload, "action.http.payload", filePath, ruleIndex)
+
+		// Expand forEach field
+		httpAction.ForEach = l.expandEnvVarsInString(httpAction.ForEach, "action.http.forEach", filePath, ruleIndex)
+
+		// Expand headers
+		for key, val := range httpAction.Headers {
+			httpAction.Headers[key] = l.expandEnvVarsInString(val, fmt.Sprintf("action.http.headers[%s]", key), filePath, ruleIndex)
+		}
+
+		// Expand filter conditions
+		if httpAction.Filter != nil {
+			l.expandConditionsEnvVars(httpAction.Filter, filePath, ruleIndex)
+		}
+	}
+}
+
+// expandEnvVarsInString expands ${VAR_NAME} placeholders in a string
+// Returns the expanded string with environment variables substituted
+// Missing variables are replaced with empty string and logged as warnings
+func (l *RulesLoader) expandEnvVarsInString(input, location, filePath string, ruleIndex int) string {
+	// Fast path: no expansion needed
+	if input == "" || !strings.Contains(input, "${") {
+		return input
+	}
+
+	expanded := envVarPattern.ReplaceAllStringFunc(input, func(match string) string {
+		// Extract variable name from ${VAR_NAME}
+		varName := match[2 : len(match)-1] // Remove ${ and }
+
+		value := os.Getenv(varName)
+
+		if value == "" {
+			l.logger.Warn("environment variable not set, using empty string",
+				"variable", varName,
+				"location", location,
+				"file", filePath,
+				"ruleIndex", ruleIndex,
+				"impact", "This field will have an empty value where the variable was referenced")
+			return ""
+		}
+
+		// Log successful expansion (but never log the actual value for security)
+		l.logger.Debug("expanded environment variable",
+			"variable", varName,
+			"location", location,
+			"file", filePath,
+			"ruleIndex", ruleIndex,
+			"valueLength", len(value))
+
+		return value
+	})
+
+	return expanded
 }
 
 // validateRule validates a complete rule with new trigger/action format
@@ -225,7 +401,7 @@ func (l *RulesLoader) validateNATSAction(action *NATSAction) error {
 		return fmt.Errorf("cannot specify both 'payload' and 'passthrough: true' - choose one")
 	}
 
-	// NEW: Validate forEach configuration
+	// Validate forEach configuration
 	if action.ForEach != "" {
 		if err := l.validateForEachConfig(action.ForEach, action.Filter); err != nil {
 			return fmt.Errorf("invalid forEach configuration: %w", err)
@@ -287,7 +463,7 @@ func (l *RulesLoader) validateHTTPAction(action *HTTPAction) error {
 		return fmt.Errorf("cannot specify both 'payload' and 'passthrough: true' - choose one")
 	}
 
-	// NEW: Validate forEach configuration
+	// Validate forEach configuration
 	if action.ForEach != "" {
 		if err := l.validateForEachConfig(action.ForEach, action.Filter); err != nil {
 			return fmt.Errorf("invalid forEach configuration: %w", err)
@@ -332,19 +508,19 @@ func (l *RulesLoader) validateHTTPAction(action *HTTPAction) error {
 	return nil
 }
 
-// NEW: validateForEachConfig validates forEach field configuration
+// validateForEachConfig validates forEach field configuration
 func (l *RulesLoader) validateForEachConfig(forEachField string, filter *Conditions) error {
 	// Ensure it's a valid JSON path (no wildcards)
 	if strings.Contains(forEachField, "*") || strings.Contains(forEachField, ">") {
 		return fmt.Errorf("forEach field cannot contain wildcards: %s", forEachField)
 	}
 
-	// NEW: Validate path isn't too deeply nested (prevent stack overflow)
+	// Validate path isn't too deeply nested (prevent stack overflow)
 	if strings.Count(forEachField, ".") > 10 {
 		return fmt.Errorf("forEach path too deeply nested (max depth: 10): %s", forEachField)
 	}
 
-	// NEW: Warn about potential performance issues
+	// Warn about potential performance issues
 	if filter == nil {
 		l.logger.Warn("forEach without filter may process large arrays",
 			"field", forEachField,
@@ -396,7 +572,7 @@ func (l *RulesLoader) validateConditions(conditions *Conditions) error {
 			return fmt.Errorf("invalid condition operator '%s' at index %d", condition.Operator, i)
 		}
 
-		// NEW: Validate array operators require nested conditions
+		// Validate array operators require nested conditions
 		if condition.Operator == "any" || condition.Operator == "all" || condition.Operator == "none" {
 			if condition.Conditions == nil {
 				return fmt.Errorf("array operator '%s' requires nested conditions at index %d", condition.Operator, i)
@@ -519,7 +695,6 @@ func (l *RulesLoader) extractKVFieldsFromTemplate(template string) []string {
 	return fields
 }
 
-// MODIFIED: Updated to handle optional JSON path
 // validateKVFieldWithVariables validates KV fields with optional colon delimiter syntax
 func (l *RulesLoader) validateKVFieldWithVariables(field string) error {
 	l.logger.Debug("validating KV field with optional path", "field", field)
@@ -530,7 +705,7 @@ func (l *RulesLoader) validateKVFieldWithVariables(field string) error {
 
 	remainder := field[4:]
 
-	// NEW: Colon is now optional.
+	// Colon is now optional
 	if !strings.Contains(remainder, ":") {
 		// No colon: validate bucket.key format only
 		bucketKeyParts := strings.SplitN(remainder, ".", 2)
@@ -554,7 +729,6 @@ func (l *RulesLoader) validateKVFieldWithVariables(field string) error {
 
 	colonIndex := strings.Index(remainder, ":")
 	bucketKeyPart := remainder[:colonIndex]
-	// jsonPathPart := remainder[colonIndex+1:] // Path can be empty
 
 	bucketKeyParts := strings.SplitN(bucketKeyPart, ".", 2)
 	if len(bucketKeyParts) != 2 {
@@ -573,7 +747,6 @@ func (l *RulesLoader) validateKVFieldWithVariables(field string) error {
 
 	return nil
 }
-
 
 // extractBucketFromKVField extracts the bucket name
 func (l *RulesLoader) extractBucketFromKVField(field string) string {
@@ -604,7 +777,6 @@ func (l *RulesLoader) isBucketConfigured(bucket string) bool {
 }
 
 // isValidOperator checks if an operator is valid
-// NEW: Now includes array operators (any, all, none)
 func (l *RulesLoader) isValidOperator(op string) bool {
 	validOps := map[string]bool{
 		"eq":           true,

@@ -120,6 +120,145 @@ action:
 
 ---
 
+## Environment Variables
+
+The rule engine supports environment variable expansion for static configuration values using `${VAR_NAME}` syntax. This enables secure secret management and environment-specific configuration without hardcoding values in rule files.
+
+### How It Works
+
+Environment variables are expanded **at load time** (when rules are parsed from YAML files), not at runtime. This means:
+
+- ✅ **Performance**: Zero runtime overhead - values are substituted once during startup
+- ✅ **Security**: Secrets are never stored in rule files
+- ✅ **Simplicity**: Standard environment variable management (Docker, K8s, systemd, etc.)
+- ✅ **Validation**: Expanded values are validated along with the rest of the rule
+
+**Important**: Environment variable expansion is completely separate from template variable substitution:
+- `${ENV_VAR}` → Expanded at **load time** (static configuration)
+- `{field}` or `{@system}` → Resolved at **runtime** (per-message templating)
+
+### Syntax
+
+```yaml
+# Use ${VARIABLE_NAME} anywhere in your rules
+action:
+  http:
+    url: "https://api.example.com"
+    headers:
+      Authorization: "Bearer ${API_TOKEN}"
+```
+
+**Supported variable names:**
+- Uppercase, lowercase, numbers, and underscores
+- Examples: `${API_KEY}`, `${database_host}`, `${Service_123}`
+- Regex: `[A-Za-z0-9_]+`
+
+**Not supported:**
+- No default values: `${VAR:-default}` ❌
+- No escaping: `$${NOT_A_VAR}` ❌
+- Keep it simple - just `${VAR_NAME}`
+
+### Where Can I Use Them?
+
+Environment variables can be used in **both conditions and actions**:
+
+#### In Actions
+
+**NATS Actions:**
+```yaml
+action:
+  nats:
+    subject: "alerts.${ENVIRONMENT}.critical"
+    payload: |
+      {
+        "apiKey": "${SERVICE_API_KEY}",
+        "region": "${AWS_REGION}"
+      }
+    headers:
+      X-Service-Token: "${INTERNAL_TOKEN}"
+```
+
+**HTTP Actions:**
+```yaml
+action:
+  http:
+    url: "${API_BASE_URL}/incidents"
+    method: "POST"
+    headers:
+      Authorization: "Token ${PAGERDUTY_TOKEN}"
+      X-Environment: "${DEPLOY_ENV}"
+    payload: '{"service": "${SERVICE_NAME}"}'
+```
+
+**ForEach Actions:**
+```yaml
+action:
+  http:
+    forEach: "recipients"
+    url: "${NOTIFICATION_API_URL}/send/{userId}"
+    headers:
+      Authorization: "Bearer ${NOTIFICATION_TOKEN}"
+```
+
+#### In Conditions
+
+Environment variables can also be used in condition values:
+
+```yaml
+conditions:
+  operator: and
+  items:
+    # Check if status matches expected value from env
+    - field: "status"
+      operator: eq
+      value: "${EXPECTED_STATUS}"
+    
+    # Check if environment matches
+    - field: "environment"
+      operator: in
+      value: ["${PRIMARY_ENV}", "${SECONDARY_ENV}"]
+    
+    # Even in nested array conditions
+    - field: "servers"
+      operator: any
+      conditions:
+        operator: and
+        items:
+          - field: "region"
+            operator: eq
+            value: "${TARGET_REGION}"
+```
+
+**Rare but possible** - even field names:
+```yaml
+conditions:
+  operator: and
+  items:
+    - field: "${DYNAMIC_FIELD_PREFIX}.status"
+      operator: eq
+      value: "active"
+```
+
+### Missing Variables
+
+If an environment variable is not set, the system will:
+
+1. **Log a warning** with details about the missing variable
+2. **Substitute with an empty string** (same behavior as missing template variables)
+3. **Continue loading** the rule (non-fatal)
+
+**Example log output:**
+```
+WARN environment variable not set, using empty string
+  variable=API_TOKEN
+  location=action.http.headers[Authorization]
+  file=rules/webhooks.yaml
+  ruleIndex=0
+  impact=This field will have an empty value where the variable was referenced
+```
+
+**Best Practice**: Always set required environment variables before starting the application, or the rule may not work as intended.
+
 ## System Variables & Functions Reference
 
 The rule engine provides a rich set of system variables (prefixed with `@`) that give you access to context data, time information, NATS/HTTP metadata, and more.
