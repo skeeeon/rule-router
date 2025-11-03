@@ -10,15 +10,11 @@ This application is purpose-built for internal, high-throughput message routing,
 *   **Array Processing** - Native support for batch messages with array operators and forEach iteration.
 *   **Primitive Message Support** - Handle strings, numbers, booleans, and arrays at the root.
 *   **NATS JetStream Native** - Built on pull consumers for durable, scalable subscriptions.
-*   **Intelligent Stream Selection** - Automatically selects the optimal stream for consumption, preferring memory storage and specific subject filters.
 *   **Cryptographic Security** - NKey signature verification and replay protection for secure workflows.
-*   **Key-Value Store Integration** - Dynamic lookups with JSON path traversal and a local cache for ~25x faster lookups.
+*   **Key-Value Store Integration** - Dynamic lookups with a local cache for ~25x faster lookups.
 *   **Time-Based Rules** - Schedule-aware evaluation without external schedulers.
-*   **Pattern Matching** - NATS wildcards (`*` and `>`) with subject token access.
-*   **Template Engine** - Powerful variable substitution with nested field support and built-in functions.
-*   **Action Headers** - Add, override, and template NATS headers in rule actions.
 *   **Zero-Copy Passthrough** - Forward messages unchanged for high-performance filtering.
-*   **Production Ready** - Prometheus metrics, structured logging, graceful shutdown, and full NATS authentication support.
+*   **Production Ready** - Prometheus metrics, structured logging, graceful shutdown.
 
 ## Architecture
 
@@ -36,9 +32,7 @@ This application is purpose-built for internal, high-throughput message routing,
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
 │  │ Subscription │  │ Rule Engine  │  │ Local Cache  │     │
 │  │ Manager      │──│ + Templates  │──│ (KV Mirror)  │     │
-│  │              │  │ + Conditions │  │ (Real-time)  │     │
-│  │              │  │ + Security   │  │              │     │
-│  │              │  │ + Arrays     │  │              │     │
+│  │              │  │ + Conditions │  │              │     │
 │  └──────┬───────┘  └──────┬───────┘  └──────────────┘     │
 │         └─────────────────┴───► Publish NATS Actions      │
 └───────────────────────────────────────────────────────────┘
@@ -54,14 +48,7 @@ This application is purpose-built for internal, high-throughput message routing,
 
 ### Setup
 
-1.  **Start NATS with JetStream**
-    ```bash
-    docker run -d --name nats-js -p 4222:4222 nats:latest -js
-    ```
-
-2.  **Create Streams**
-    `rule-router` requires streams for both consuming messages (triggers) and publishing messages (actions).
-
+1.  **Create Streams**
     ```bash
     # Stream for rule triggers (input)
     nats stream add SENSORS --subjects "sensors.>"
@@ -70,7 +57,7 @@ This application is purpose-built for internal, high-throughput message routing,
     nats stream add ALERTS --subjects "alerts.>"
     ```
 
-3.  **Create a Rule**
+2.  **Create a Rule**
     Create a file at `rules/temperature.yaml`:
 
     ```yaml
@@ -90,399 +77,71 @@ This application is purpose-built for internal, high-throughput message routing,
             {
               "alert": "High temperature detected",
               "temperature": {temperature},
-              "timestamp": "{@timestamp()}",
-              "alert_id": "{@uuid7()}"
+              "timestamp": "{@timestamp()}"
             }
     ```
 
-4.  **Run `rule-router`**
+3.  **Run `rule-router`**
     ```bash
-    # Assumes a config file exists at config/rule-router.yaml
     ./rule-router -config config/rule-router.yaml -rules rules/
     ```
 
-5.  **Test the Rule**
-    Publish a message that should match the rule:
+4.  **Test the Rule**
     ```bash
     nats pub sensors.temperature '{"temperature": 35}'
     ```
 
-    Verify the output by subscribing to the action subject:
-    ```bash
-    nats sub alerts.high-temperature
-    ```
-
 ## Configuration
 
-See `config/rule-router.yaml` for a fully documented example. Key sections include:
+See `config/rule-router.yaml` for a fully documented example.
 
-```yaml
-nats:
-  urls: ["nats://localhost:4222"]
-  
-  consumers:
-    subscriberCount: 8       # Workers per subscription
-    fetchBatchSize: 64       # Messages per fetch
-    ackWaitTimeout: 30s      # Redelivery delay
-    maxDeliver: 3            # Max redelivery attempts
+## Advanced Features
 
-security:
-  verification:
-    enabled: false           # Enable signature verification
-    publicKeyHeader: "Nats-Public-Key"
-    signatureHeader: "Nats-Signature"
+The `rule-router` uses a powerful, shared rule engine. For detailed documentation on advanced features, please see the main documentation:
 
-kv:
-  enabled: true
-  buckets: ["device_status", "customer_data"]
-  localCache:
-    enabled: true            # ~25x faster lookups
+*   **[Array Processing](./../../docs/03-array-processing.md)**: Guide to using `forEach` and array operators (`any`, `all`, `none`) for batch processing.
+*   **[Primitive & Array Root Messages](./../../docs/04-primitive-messages.md)**: How to handle non-object JSON payloads.
+*   **[System Variables & Functions](./../../docs/02-system-variables.md)**: Full reference for all `@` variables (including `@subject`) and functions.
+*   **[Security](./../../docs/05-security.md)**: Guide to Cryptographic Signature Verification.
 
-forEach:
-  maxIterations: 100         # Max array elements per forEach
+### Example: Batch Processing with `forEach`
 
-logging:
-  level: info
-  encoding: json
-
-metrics:
-  enabled: true
-  address: :2112
-```
-
-## Rule Syntax
-
-### Basic Structure
-
-A rule is defined by a `trigger`, optional `conditions`, and an `action`. The `rule-router` specifically looks for rules with a `nats` trigger and a `nats` action.
-
-```yaml
-- trigger:
-    nats:
-      subject: input.subject          # Supports wildcards: *, >
-  conditions:
-    operator: and                     # "and" or "or"
-    items:
-      - field: fieldName
-        operator: eq                  # eq, neq, gt, lt, gte, lte, exists, contains, etc.
-        value: expectedValue
-  action:
-    nats:
-      subject: output.subject
-      payload: "JSON template"          # Mutually exclusive with 'passthrough'
-      headers:                          # Optional: Add/override NATS headers
-        X-Custom-Header: "static value"
-        X-Dynamic-Header: "{field_from_message}"
-```
-
-### Action Configuration
-
-Actions can either **template** a new message or **passthrough** the original message payload without modification.
-
-**Templated Action (default):**
-```yaml
-action:
-  nats:
-    subject: output.subject
-    payload: |
-      {
-        "transformed_field": "{original_field}",
-        "timestamp": "{@timestamp()}"
-      }
-    headers:
-      X-Priority: "high"
-```
-
-**Passthrough Action:**
-```yaml
-action:
-  nats:
-    subject: output.subject
-    passthrough: true  # Forwards original message payload
-    headers:
-      X-Processed-By: "rule-router"
-```
-
-**Important:**
-*   You must specify either `payload` OR `passthrough: true`. They are mutually exclusive.
-*   Subject and header templating works with both modes.
-*   Passthrough preserves the exact original message bytes.
-
-### Array Processing
-
-The rule-router supports powerful array operations for batch message processing.
-
-#### Array Operators in Conditions
-
-Check if any/all/none of the array elements match conditions:
-
-```yaml
-conditions:
-  operator: and
-  items:
-    # Check if ANY notification is critical
-    - field: "notifications"
-      operator: any
-      conditions:
-        operator: and  # Required
-        items:
-          - field: "severity"
-            operator: eq
-            value: "critical"
-```
-
-**Available Operators:**
-- `any`: At least one element matches
-- `all`: All elements match  
-- `none`: No elements match
-
-#### ForEach Actions
-
-Generate **one action per array element**:
-
-```yaml
-action:
-  nats:
-    forEach: "notifications"   # Path to array field
-    filter:                     # Optional: only process matching elements
-      operator: and             # Required
-      items:
-        - field: "severity"
-          operator: eq
-          value: "critical"
-    subject: "alerts.{id}"
-    payload: |
-      {
-        "id": "{id}",                    # From notifications[i]
-        "message": "{message}",          # From notifications[i]
-        "deviceId": "{@msg.deviceId}",   # From root message
-        "processedAt": "{@timestamp()}"
-      }
-```
-
-**Template Context Rules:**
-- `{field}` → Resolves to current array element field
-- `{@msg.field}` → Resolves to root message field (use for batch-level data)
-
-**Complete Example:**
+This rule processes a batch of events, generating one new message for each "critical" event in the array.
 
 ```yaml
 - trigger:
     nats:
       subject: "device.batch.>"
-    
-  conditions:
-    operator: and
-    items:
-      # Pre-filter: Check if ANY event is motion-related
-      - field: "events"
-        operator: any
-        conditions:
-          operator: and
-          items:
-            - field: "type"
-              operator: eq
-              value: "motion"
-  
   action:
     nats:
-      # Generate one alert per motion event
+      # Generate one alert per critical event
       forEach: "events"
       filter:
         operator: and
         items:
-          - field: "type"
+          - field: "status"
             operator: eq
-            value: "motion"
-      subject: "alerts.motion.{deviceId}"
+            value: "critical"
+      subject: "alerts.critical.{deviceId}"
       payload: |
         {
           "deviceId": "{deviceId}",
-          "location": "{location}",
           "timestamp": "{timestamp}",
-          "batchId": "{@msg.batchId}",
-          "receivedAt": "{@msg.receivedAt}"
+          "batchId": "{@msg.batchId}"
         }
 ```
-
-**Performance:**
-- Default limit: 100 iterations per forEach
-- Configure via `forEach.maxIterations` in config
-- Efficient zero-copy element context creation
-- Comprehensive metrics for monitoring
-
-### Primitive Message Support
-
-The rule-router fully supports any valid JSON type as root messages or array elements, including primitives. This enables seamless integration with IoT protocols and simple message formats.
-
-**Supported Root Types:**
-- Objects: `{"field": "value"}` - Pass through unchanged
-- Arrays: `[...]` - Wrapped as `{"@items": [...]}`
-- Strings: `"text"` - Wrapped as `{"@value": "text"}`
-- Numbers: `42` - Wrapped as `{"@value": 42}`
-- Booleans: `true` - Wrapped as `{"@value": true}`
-- Null: `null` - Wrapped as `{"@value": null}`
-
-#### Quick Examples
-
-**SenML IoT Data:**
-```yaml
-- trigger:
-    nats:
-      subject: "sensors.senml"
-  action:
-    nats:
-      forEach: "@items"  # Array at root
-      subject: "sensors.{n}"
-      payload: '{"metric": "{n}", "value": {v}}'
-```
-
-**Simple Log Messages:**
-```yaml
-- trigger:
-    nats:
-      subject: "logs.raw"
-  conditions:
-    operator: and
-    items:
-      - field: "@value"  # String at root
-        operator: contains
-        value: "ERROR"
-  action:
-    nats:
-      subject: "alerts.error"
-      payload: '{"message": "{@value}"}'
-```
-
-**Primitive Arrays:**
-```yaml
-- trigger:
-    nats:
-      subject: "devices.batch"
-  action:
-    nats:
-      forEach: "deviceIds"  # String array
-      subject: "process.{@value}"  # Access string value
-      payload: '{"deviceId": "{@value}"}'
-```
-
-#### Template Context
-
-When using forEach with primitive arrays:
-- `{@value}` → Access primitive array element
-- `{@msg.field}` → Access root message fields
-
-For complete documentation and examples, see the [main README: Primitive & Array Root Messages](../../README.md#primitive--array-root-messages).
-
-#### Troubleshooting
-
-- **String arrays**: Use `{@value}` not `{fieldName}`
-- **Array at root**: Access via `@items` field
-- **Reserved names**: `@value` and `@items` only used during wrapping
-- **Performance**: < 1% impact from wrapping logic
-
-### Condition Operators & System Fields
-
-The `rule-router` uses the shared rule engine, which supports a rich set of operators and system variables for building complex logic.
-
-*   **Comparison**: `eq`, `neq`, `gt`, `lt`, `gte`, `lte`, `exists`
-*   **String/Array**: `contains`, `not_contains`, `in`, `not_in`
-*   **Array**: `any`, `all`, `none` (with nested conditions)
-*   **Time-Based**: `recent` (for replay protection)
-*   **System Fields**:
-    *   `@time.hour`, `@day.name`, `@date.iso`
-    *   `@subject`, `@subject.0`, `@subject.count`
-    *   `@header.Nats-Msg-Id`
-    *   `@signature.valid`, `@signature.pubkey`
-    *   `@kv.bucket.key:path`
-    *   `@msg.field` (in forEach context)
-    *   `@value` (for primitive messages)
-    *   `@items` (for array root messages)
-*   **Template Functions**: `{@timestamp()}`, `{@uuid7()}`, `{@uuid4()}`
-
-For a complete reference on these features, please see the main project README.
-
-## Security Features
-
-`rule-router` supports cryptographic message verification using NATS NKeys, enabling secure workflows like privileged command execution and non-repudiable event logging.
-
-### Example: Physical Access Control
-
-This rule demonstrates signature verification, replay protection, and KV-based authorization.
-
-**KV Setup:**
-```bash
-nats kv add access_control
-nats kv put access_control UDXU4RCRBVXEZ... \
-  '{"active": true, "doors": ["front", "back"], "name": "alice"}'
-```
-
-**Rule:**
-```yaml
-- trigger:
-    nats:
-      subject: cmds.door.unlock
-  conditions:
-    operator: and
-    items:
-      # 1. Verify cryptographic signature is valid
-      - field: "@signature.valid"
-        operator: eq
-        value: true
-      
-      # 2. Prevent replay attacks (5 second window)
-      - field: timestamp # Unix seconds from payload
-        operator: recent
-        value: "5s"
-      
-      # 3. Check if the user's key is active in the KV store
-      - field: "@kv.access_control.{@signature.pubkey}:active"
-        operator: eq
-        value: true
-      
-      # 4. Verify the user has access to the requested door
-      - field: "@kv.access_control.{@signature.pubkey}:doors"
-        operator: contains
-        value: "{door}"
-  
-  action:
-    nats:
-      subject: hardware.door.{door}.trigger
-      payload: |
-        {
-          "door": "{door}",
-          "action": "unlock",
-          "authorized_by": "{@kv.access_control.{@signature.pubkey}:name}",
-          "timestamp": "{@timestamp()}",
-          "request_id": "{@uuid7()}"
-        }
-```
-
-For details on client-side implementation and security best practices, please refer to the main project README.
 
 ## Testing Rules
 
-This project includes a standalone `rule-cli` utility for offline validation of rule logic. It allows you to lint, scaffold, and run test suites against your rules with mocked dependencies.
+Use the standalone `rule-cli` utility for offline validation of your rules.
 
-**Example Usage:**
 ```bash
 # Scaffold tests for a new rule (auto-detects forEach)
-rule-cli --scaffold ./rules/my-new-rule.yaml
+rule-cli scaffold ./rules/my-batch-rule.yaml
 
 # Run all tests
-rule-cli --test --rules ./rules
-
-# Quick check a single message
-rule-cli --rule ./rules/my-rule.yaml \
-            --message ./test-data/message.json
+rule-cli test --rules ./rules
 ```
-
-**ForEach Rule Testing:**
-The tester automatically detects forEach operations and generates:
-- Array input examples
-- Multiple action output validation
-- Filter condition test cases
-- Empty array edge cases
 
 For complete documentation, see the [**`rule-cli` README**](../rule-cli/README.md).
 
@@ -492,159 +151,9 @@ The rule-router exposes Prometheus metrics on port `:2112` (configurable).
 
 ### Key Metrics
 
-**Message Processing:**
-```
-messages_total{status="received|processed|error"}
-rule_matches_total
-actions_total{status="success|error"}
-message_processing_backlog
-```
-
-**Array Operations:**
-```
-# ForEach processing
-forEach_iterations_total{rule_file="batch_notifications"}
-forEach_filtered_total{rule_file="batch_notifications"}
-forEach_actions_generated_total{rule_file="batch_notifications"}
-forEach_duration_seconds{rule_file="batch_notifications"}
-
-# Array operators
-array_operator_evaluations_total{operator="any|all|none",result="true|false"}
-```
-
-**Performance:**
-```
-# Rule evaluation and template processing times
-signature_verification_duration_seconds
-```
-
-**NATS:**
-```
-nats_connection_status
-nats_reconnects_total
-```
-
-**KV Operations:**
-```
-kv_cache_hits_total
-kv_cache_misses_total
-kv_cache_size
-```
-
-### Example Queries
-
-**Average forEach processing time:**
-```promql
-rate(forEach_duration_seconds_sum[5m]) / rate(forEach_duration_seconds_count[5m])
-```
-
-**ForEach filter efficiency:**
-```promql
-rate(forEach_filtered_total[5m]) / rate(forEach_iterations_total[5m])
-```
-
-**Actions per forEach operation:**
-```promql
-rate(forEach_actions_generated_total[5m]) / rate(forEach_iterations_total[5m])
-```
-
-## Troubleshooting
-
-### Common Issues
-
-**"No stream found for subject"**
-This means a rule's trigger subject (e.g., `sensors.data`) does not match any subject filter in any existing JetStream stream.
-```bash
-# Solution: Create a stream that covers the subject
-nats stream add SENSORS --subjects "sensors.>"
-```
-
-**ForEach array exceeds limit**
-```
-Error: forEach array exceeds limit: 150 elements > 100 max iterations
-```
-Solution: Increase the limit in configuration:
-```yaml
-forEach:
-  maxIterations: 200
-```
-
-**Signature verification always returns false**
-*   Ensure `security.verification.enabled: true` in your config.
-*   Check that the `Nats-Public-Key` and `Nats-Signature` headers are present on the message.
-*   Verify the signature is computed over the **raw payload bytes only**.
-
-**Recent operator always returns false**
-*   Ensure a `timestamp` field exists in the payload in Unix seconds format.
-*   Check for clock skew between the publisher and the `rule-router` machine.
-
-**ForEach not generating expected actions**
-*   Check if filter conditions are too restrictive
-*   Verify array field exists and contains objects or primitives
-*   Use `@msg` prefix for root message fields
-*   Use `@value` for primitive array elements
-*   Monitor `forEach_filtered_total` metric to see how many elements were filtered
-
-**String array forEach not working**
-*   Use `{@value}` to access string elements, not `{fieldName}`
-*   Primitive arrays are automatically wrapped for processing
-
-## CLI Options
-
-```bash
-rule-router [options]
-
-Options:
-  -config string
-        Path to config file (default "config/rule-router.yaml")
-  -rules string
-        Path to rules directory (default "rules")
-```
-
-## Performance
-
-**Benchmarks** (Intel i7, 16GB RAM):
-- Rule evaluation: ~50-100µs per message
-- Template processing: ~20-50µs per action
-- ForEach (10 elements): ~400µs
-- ForEach (100 elements): ~3.5ms
-- Throughput: 10,000+ messages/second (single instance)
-
-**Optimizations:**
-- Zero-copy message forwarding (passthrough mode)
-- Short-circuit condition evaluation
-- Efficient pattern matching with pre-compiled patterns
-- Local KV cache (~25x faster than direct NATS KV)
-- Optimized forEach element context creation
-
-## Best Practices
-
-### Rule Design
-1. ✅ Use array operators to pre-filter messages before forEach
-2. ✅ Apply forEach filters to limit iterations
-3. ✅ Use `@msg` prefix explicitly in forEach templates
-4. ✅ Configure appropriate `maxIterations` limit
-5. ✅ Monitor forEach metrics for performance
-6. ✅ Use `@value` for primitive array elements
-
-### Performance
-1. ✅ Use passthrough mode when possible (zero-copy)
-2. ✅ Enable KV local cache for frequent lookups
-3. ✅ Use wildcards efficiently (prefer exact matches when possible)
-4. ✅ Monitor `message_processing_backlog` metric
-
-### Security
-1. ✅ Enable signature verification for privileged operations
-2. ✅ Use `recent` operator to prevent replay attacks
-3. ✅ Combine signature verification with KV-based authorization
-4. ✅ Secure rule files with filesystem permissions
-
-## Examples
-
-See the [examples directory](../../examples/) for complete, working examples:
-- **forEach/**: Batch notification processing with array operations
-- **primitives/**: SenML arrays, string messages, primitive arrays
-- Basic routing and filtering
-- KV enrichment
-- Time-based routing
-- Signature verification
+*   `messages_total{status="received|processed|error"}`
+*   `rule_matches_total`
+*   `actions_total{status="success|error"}`
+*   `forEach_iterations_total{rule_file="batch_notifications"}`
+*   `kv_cache_hits_total` / `kv_cache_misses_total`
+*   `nats_connection_status`
