@@ -110,7 +110,7 @@ func (l *RulesLoader) LoadFromFile(filePath string) ([]Rule, error) {
 		"file", filePath,
 		"ruleCount", len(rules))
 
-	// NEW: Expand environment variables before validation
+	// Expand environment variables before validation
 	for i := range rules {
 		if err := l.expandEnvironmentVariables(&rules[i], filePath, i); err != nil {
 			return nil, fmt.Errorf("rule %d in %s: failed to expand environment variables: %w", i, filePath, err)

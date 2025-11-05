@@ -336,7 +336,7 @@ func setDefaults(cfg *Config) {
 		cfg.Security.Verification.SignatureHeader = "Nats-Signature"
 	}
 
-	// NEW: ForEach defaults
+	// ForEach defaults
 	if cfg.ForEach.MaxIterations == 0 {
 		cfg.ForEach.MaxIterations = 100 // Safe default: 100 iterations max
 	}
@@ -432,7 +432,7 @@ func validateConfig(cfg *Config) error {
 		}
 	}
 
-	// NEW: ForEach validation
+	// ForEach validation
 	if cfg.ForEach.MaxIterations < 0 {
 		return fmt.Errorf("forEach maxIterations cannot be negative (use 0 for unlimited)")
 	}

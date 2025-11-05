@@ -236,7 +236,7 @@ func TestLoadFromDirectory_ValidationErrors(t *testing.T) {
   action: { nats: { subject: b, payload: "" } }`,
 			errMsg: "invalid subject field format",
 		},
-		// MODIFIED: Removed tests for missing colon, as it's now valid.
+		// Removed tests for missing colon, as it's now valid.
 	}
 
 	for _, tt := range tests {
@@ -256,7 +256,7 @@ func TestLoadFromDirectory_ValidationErrors(t *testing.T) {
 	}
 }
 
-// NEW: Dedicated test suite for KV field validation.
+// Dedicated test suite for KV field validation.
 func TestKVField_Validation(t *testing.T) {
 	tests := []struct {
 		name        string

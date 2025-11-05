@@ -36,14 +36,14 @@ type Metrics struct {
 	kvCacheMisses prometheus.Counter
 	kvCacheSize   prometheus.Gauge
 
-	// NEW: ForEach metrics (shared)
+	// ForEach metrics (shared)
 	forEachIterationsTotal  *prometheus.CounterVec
 	forEachFilteredCount    *prometheus.CounterVec
 	forEachActionsGenerated *prometheus.CounterVec
 	forEachElementErrors    *prometheus.CounterVec
 	forEachDuration         *prometheus.HistogramVec
 
-	// NEW: Array operator metrics (shared)
+	// Array operator metrics (shared)
 	arrayOperatorEvaluations *prometheus.CounterVec
 
 	// System metrics (shared)
@@ -174,7 +174,7 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 			},
 		),
 
-		// NEW: ForEach metrics
+		// ForEach metrics
 		forEachIterationsTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "foreach_iterations_total",
@@ -212,7 +212,7 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 			[]string{"rule_file"},
 		),
 
-		// NEW: Array operator metrics
+		// Array operator metrics
 		arrayOperatorEvaluations: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "array_operator_evaluations_total",
@@ -388,7 +388,7 @@ func (m *Metrics) SetKVCacheSize(size float64) {
 	m.kvCacheSize.Set(size)
 }
 
-// NEW: ForEach metrics
+// ForEach metrics
 func (m *Metrics) IncForEachIterations(ruleFile string, count int) {
 	m.forEachIterationsTotal.WithLabelValues(ruleFile).Add(float64(count))
 }
@@ -409,7 +409,7 @@ func (m *Metrics) ObserveForEachDuration(ruleFile string, seconds float64) {
 	m.forEachDuration.WithLabelValues(ruleFile).Observe(seconds)
 }
 
-// NEW: Array operator metrics
+// Array operator metrics
 func (m *Metrics) IncArrayOperatorEvaluations(operator string, result bool) {
 	resultStr := "false"
 	if result {

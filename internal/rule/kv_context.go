@@ -53,7 +53,7 @@ func NewKVContext(stores map[string]jetstream.KeyValue, logger *logger.Logger, l
 		cacheStatus = "enabled"
 	}
 
-	// MODIFIED: Updated log message to reflect new syntax support
+	// Updated log message to reflect new syntax support
 	logger.Info("KV context initialized with optional path syntax",
 		"bucketCount", len(ctx.stores),
 		"buckets", ctx.getBucketNames(),
@@ -67,14 +67,14 @@ func NewKVContext(stores map[string]jetstream.KeyValue, logger *logger.Logger, l
 // The colon (:) delimiter is now optional.
 // Returns the value and whether it was found successfully
 func (kv *KVContext) GetField(field string) (interface{}, bool) {
-	// MODIFIED: Use the renamed and updated parser
+	// Use the renamed and updated parser
 	bucket, key, jsonPath, err := kv.parseKVField(field)
 	if err != nil {
 		kv.logger.Debug("invalid KV field format", "field", field, "error", err)
 		return nil, false
 	}
 
-	// MODIFIED: Enhanced logging
+	// Enhanced logging
 	kv.logger.Debug("looking up KV field with optional path syntax",
 		"field", field,
 		"bucket", bucket,
@@ -87,7 +87,7 @@ func (kv *KVContext) GetField(field string) (interface{}, bool) {
 		if cachedValue, found := kv.localCache.Get(bucket, key); found {
 			kv.logger.Debug("KV cache hit", "bucket", bucket, "key", key)
 
-			// NEW: If no path, return the whole value. Otherwise, traverse.
+			// If no path, return the whole value. Otherwise, traverse.
 			if len(jsonPath) == 0 {
 				return cachedValue, true
 			}
@@ -205,7 +205,7 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
        		kv.logger.Info("populated KV cache on first read (lazy-load)", "bucket", bucket, "key", key)
     	}
 
-	// NEW: Skip traversal if path is empty, returning the entire value
+	// Skip traversal if path is empty, returning the entire value
 	if len(jsonPath) == 0 {
 		kv.logger.Debug("KV lookup returning entire value (no path)",
 			"bucket", bucket,
@@ -233,7 +233,7 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
 	return value, true
 }
 
-// MODIFIED: Renamed and updated to handle optional JSON path
+// Updated to handle optional JSON path
 // parseKVField parses a KV field specification with an optional colon delimiter.
 // Format: "@kv.bucket.key[:json.path.to.field]"
 // If no colon is present, the entire value is returned (jsonPath is empty).
@@ -245,7 +245,7 @@ func (kv *KVContext) parseKVField(field string) (bucket, key string, jsonPath []
 
 	remainder := field[4:]
 
-	// NEW: Handle optional colon
+	// Handle optional colon
 	if !strings.Contains(remainder, ":") {
 		// No colon: entire remainder is bucket.key, path is empty
 		bucketKeyParts := strings.SplitN(remainder, ".", 2)
@@ -289,7 +289,7 @@ func (kv *KVContext) parseKVField(field string) (bucket, key string, jsonPath []
 		return "", "", nil, fmt.Errorf("KV key name cannot be empty in field: %s", field)
 	}
 
-	// NEW: Empty path after colon is a valid way to get the whole value
+	// Empty path after colon is a valid way to get the whole value
 	if jsonPathPart == "" {
 		return bucket, key, []string{}, nil // Return empty path slice
 	}

@@ -144,7 +144,7 @@ func setupTestKVContext(t *testing.T) (*KVContext, *LocalKVCache) {
 	store2 := newMockKVStore("customer_data")
 	store2.Put(context.Background(), "cust-abc", []byte(`{"tier": "premium", "profile": {"name": "Acme Corp"}}`))
 
-	// NEW: Add a store with primitives and arrays
+	// Add a store with primitives and arrays
 	store3 := newMockKVStore("primitives")
 	store3.Put(context.Background(), "api_key", []byte(`"sk-abc123"`))
 	store3.Put(context.Background(), "rate_limit", []byte(`1000`))
@@ -191,7 +191,7 @@ func TestNewKVContext(t *testing.T) {
 	})
 }
 
-// MODIFIED: Renamed and updated tests for new parsing logic
+// Renamed and updated tests for new parsing logic
 func TestParseKVField(t *testing.T) {
 	kvCtx, _ := setupTestKVContext(t)
 
@@ -208,7 +208,7 @@ func TestParseKVField(t *testing.T) {
 		{"valid array index", "@kv.customer_data.cust-abc:addresses.0.city", "customer_data", "cust-abc", []string{"addresses", "0", "city"}, false},
 		{"valid key with dots", "@kv.device_config.sensor.temp.001:location", "device_config", "sensor.temp.001", []string{"location"}, false},
 		{"valid with variables", "@kv.device_config.{device_id}:settings.{pref}", "device_config", "{device_id}", []string{"settings", "{pref}"}, false},
-		// NEW: Test cases for optional path
+		// Test cases for optional path
 		{"no colon - primitive", "@kv.primitives.api_key", "primitives", "api_key", []string{}, false},
 		{"empty path after colon", "@kv.primitives.api_key:", "primitives", "api_key", []string{}, false},
 		{"key with dots - no colon", "@kv.device_config.sensor.with.dots", "device_config", "sensor.with.dots", []string{}, false},
@@ -355,7 +355,7 @@ func TestGetField_NATSFallback(t *testing.T) {
 	})
 }
 
-// NEW: Test suite for primitive and array support
+// Test suite for primitive and array support
 func TestGetField_PrimitivesAndArrays(t *testing.T) {
 	kvCtx, cache := setupTestKVContext(t)
 	cache.Clear() // Isolate this test from cache hits

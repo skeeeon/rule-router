@@ -119,7 +119,7 @@ func (rb *RuleBuilder) getConditionsRecursive(indent string) (*rule.Conditions, 
 
 		item := rule.Condition{Field: field, Operator: operator}
 
-		// --- FIX: Changed 'else if' to a mutually exclusive 'else' block ---
+		// Changed 'else if' to a mutually exclusive 'else' block ---
 		if operator == "any" || operator == "all" || operator == "none" {
 			// Handle array operators
 			fmt.Println(indent + "    Defining nested conditions for the array operator...")
@@ -141,7 +141,6 @@ func (rb *RuleBuilder) getConditionsRecursive(indent string) (*rule.Conditions, 
 				}
 			}
 		}
-		// --- END FIX ---
 
 		conds.Items = append(conds.Items, item)
 	}

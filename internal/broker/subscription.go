@@ -345,7 +345,7 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 
 	// Publish all matched actions
 	for _, action := range actions {
-		// PHASE 2 UPDATE: Check for NATS action (new format)
+		// Check for NATS action 
 		if action.NATS != nil {
 			if err := sm.publishActionWithRetry(ctx, action.NATS); err != nil {
 				sm.logger.Error("failed to publish NATS action after retries",
@@ -362,7 +362,7 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 				sm.metrics.IncRuleMatches()
 			}
 		} else if action.HTTP != nil {
-			// PHASE 3: HTTP actions will be handled by http-gateway
+			// HTTP actions will be handled by http-gateway
 			sm.logger.Warn("HTTP action detected in rule-router - HTTP actions not supported in this application",
 				"actionURL", action.HTTP.URL,
 				"hint", "Use http-gateway for HTTP actions")
