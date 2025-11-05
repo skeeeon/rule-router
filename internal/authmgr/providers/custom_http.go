@@ -9,25 +9,21 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"regexp"
 	"strings"
 	"time"
 )
 
 // CustomHTTPProvider implements authentication via custom HTTP endpoints
 type CustomHTTPProvider struct {
-	id            string
-	authURL       string
-	method        string
-	headers       map[string]string
-	bodyTemplate  string // Body with ${VAR} placeholders
-	tokenPath     string // JSON path to extract token (e.g., "data.token")
-	refreshEvery  time.Duration
-	httpClient    *http.Client
+	id           string
+	authURL      string
+	method       string
+	headers      map[string]string
+	bodyTemplate string // Body with ${VAR} placeholders, expanded by config loader
+	tokenPath    string // JSON path to extract token (e.g., "data.token")
+	refreshEvery time.Duration
+	httpClient   *http.Client
 }
-
-var envVarPattern = regexp.MustCompile(`\$\{([A-Z0-9_]+)\}`)
 
 // NewCustomHTTPProvider creates a new custom HTTP provider
 func NewCustomHTTPProvider(
@@ -57,8 +53,8 @@ func (p *CustomHTTPProvider) ID() string {
 
 // GetToken performs HTTP authentication and extracts the token
 func (p *CustomHTTPProvider) GetToken(ctx context.Context) (string, error) {
-	// Expand environment variables in body template
-	body := p.expandEnvVars(p.bodyTemplate)
+	// The body is now pre-expanded by the config loader.
+	body := p.bodyTemplate
 
 	// Create HTTP request
 	req, err := http.NewRequestWithContext(ctx, p.method, p.authURL, bytes.NewBufferString(body))
@@ -106,15 +102,6 @@ func (p *CustomHTTPProvider) GetToken(ctx context.Context) (string, error) {
 // RefreshInterval returns how often to re-authenticate
 func (p *CustomHTTPProvider) RefreshInterval() time.Duration {
 	return p.refreshEvery
-}
-
-// expandEnvVars replaces ${VAR} with environment variable values
-func (p *CustomHTTPProvider) expandEnvVars(template string) string {
-	return envVarPattern.ReplaceAllStringFunc(template, func(match string) string {
-		// Extract variable name from ${VAR}
-		varName := match[2 : len(match)-1]
-		return os.Getenv(varName)
-	})
 }
 
 // extractJSONPath extracts a value from parsed JSON using dot notation

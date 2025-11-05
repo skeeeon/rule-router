@@ -5,12 +5,18 @@ package authmgr
 import (
 	"fmt"
 	"os"
+	"reflect"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/spf13/viper"
 	"rule-router/config"
 )
+
+// envVarPattern matches environment variable placeholders: ${VAR_NAME}
+// Allows uppercase, lowercase, numbers, and underscores for consistency
+var envVarPattern = regexp.MustCompile(`\$\{([A-Za-z0-9_]+)\}`)
 
 // Config represents the complete auth-manager configuration
 type Config struct {
@@ -78,7 +84,7 @@ func Load(configPath string) (*Config, error) {
 	v := viper.New()
 	v.SetConfigFile(configPath)
 
-	// Environment variable support
+	// Environment variable support (for direct overrides like AUTH_MGR_NATS_URLS)
 	v.SetEnvPrefix("AUTH_MGR")
 	v.AutomaticEnv()
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
@@ -96,11 +102,83 @@ func Load(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
+	// Expand ${VAR_NAME} placeholders throughout the loaded config
+	if err := expandEnvVars(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to expand environment variables: %w", err)
+	}
+
 	if err := validate(&cfg); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
 	return &cfg, nil
+}
+
+// expandEnvVars recursively expands ${VAR} placeholders in the config struct.
+func expandEnvVars(cfg interface{}) error {
+	v := reflect.ValueOf(cfg)
+	if v.Kind() != reflect.Ptr || v.IsNil() {
+		return fmt.Errorf("config must be a non-nil pointer")
+	}
+	return expandRecursive(v)
+}
+
+// expandRecursive is the helper that uses reflection to walk the config struct.
+func expandRecursive(v reflect.Value) error {
+	// Dereference pointers and interfaces to get to the actual value
+	if v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return nil
+		}
+		v = v.Elem()
+	}
+
+	switch v.Kind() {
+	case reflect.Struct:
+		for i := 0; i < v.NumField(); i++ {
+			if err := expandRecursive(v.Field(i)); err != nil {
+				return err
+			}
+		}
+	case reflect.Slice:
+		for i := 0; i < v.Len(); i++ {
+			if err := expandRecursive(v.Index(i)); err != nil {
+				return err
+			}
+		}
+	case reflect.Map:
+		for _, key := range v.MapKeys() {
+			val := v.MapIndex(key)
+			if val.Kind() == reflect.Interface {
+				val = val.Elem()
+			}
+			if val.Kind() == reflect.String {
+				expanded := expandString(val.String())
+				v.SetMapIndex(key, reflect.ValueOf(expanded))
+			} else {
+				if err := expandRecursive(val); err != nil {
+					return err
+				}
+			}
+		}
+	case reflect.String:
+		if v.CanSet() {
+			v.SetString(expandString(v.String()))
+		}
+	}
+	return nil
+}
+
+// expandString performs the actual replacement for a single string.
+func expandString(s string) string {
+	if !strings.Contains(s, "${") {
+		return s
+	}
+	return envVarPattern.ReplaceAllStringFunc(s, func(match string) string {
+		varName := match[2 : len(match)-1]
+		// os.Getenv returns an empty string for unset variables, which is the desired behavior.
+		return os.Getenv(varName)
+	})
 }
 
 // setDefaults applies sensible defaults
