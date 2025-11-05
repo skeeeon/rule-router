@@ -27,7 +27,7 @@ type webhookJob struct {
 }
 
 // InboundServer handles HTTP requests and publishes to NATS.
-// It now uses a fixed-size worker pool for bounded concurrency and backpressure.
+// It uses a fixed-size worker pool for bounded concurrency and backpressure.
 type InboundServer struct {
 	logger     *logger.Logger
 	metrics    *metrics.Metrics
@@ -38,13 +38,13 @@ type InboundServer struct {
 	publishCfg *PublishConfig
 	serverCfg  *ServerConfig
 
-	// NEW: Worker pool components
+	// Worker pool components
 	workQueue chan webhookJob   // Buffered channel acting as a job queue
 	wg        sync.WaitGroup    // Waits for all workers to gracefully shut down
 }
 
 // ServerConfig contains HTTP server configuration.
-// NEW: Added worker pool configuration fields.
+// Added worker pool configuration fields.
 type ServerConfig struct {
 	Address             string
 	ReadTimeout         time.Duration
@@ -53,11 +53,11 @@ type ServerConfig struct {
 	MaxHeaderBytes      int
 	ShutdownGracePeriod time.Duration
 
-	// NEW: Number of concurrent workers processing inbound webhooks.
+	// Number of concurrent workers processing inbound webhooks.
 	// This should be a configurable value.
 	InboundWorkerCount int
 
-	// NEW: Size of the buffered channel for incoming webhooks.
+	// Size of the buffered channel for incoming webhooks.
 	// This allows the server to absorb bursts of traffic.
 	InboundQueueSize int
 }
@@ -98,7 +98,7 @@ func NewInboundServer(
 		natsConn:   nc,
 		serverCfg:  serverCfg,
 		publishCfg: publishCfg,
-		// NEW: Initialize the buffered channel for the work queue.
+		// Initialize the buffered channel for the work queue.
 		workQueue: make(chan webhookJob, serverCfg.InboundQueueSize),
 	}
 }
@@ -130,7 +130,7 @@ func (s *InboundServer) Start(ctx context.Context) error {
 		MaxHeaderBytes: s.serverCfg.MaxHeaderBytes,
 	}
 
-	// NEW: Start the fixed-size pool of worker goroutines.
+	// Start the fixed-size pool of worker goroutines.
 	s.startWorkers(ctx)
 
 	// Start server in goroutine
@@ -149,7 +149,7 @@ func (s *InboundServer) Start(ctx context.Context) error {
 	return nil
 }
 
-// NEW: startWorkers launches the fixed pool of goroutines.
+// startWorkers launches the fixed pool of goroutines.
 func (s *InboundServer) startWorkers(ctx context.Context) {
 	for i := 0; i < s.serverCfg.InboundWorkerCount; i++ {
 		s.wg.Add(1)
@@ -231,7 +231,7 @@ func (s *InboundServer) webhookHandler(path string) http.HandlerFunc {
 			headers: headers,
 		}
 
-		// NEW: Non-blocking send to the work queue.
+		// Non-blocking send to the work queue.
 		select {
 		case s.workQueue <- job:
 			// Job successfully enqueued. Return 200 OK.

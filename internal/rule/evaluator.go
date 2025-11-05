@@ -239,7 +239,7 @@ func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Conditi
 				"accessVia", "@value")
 		}
 
-		// OPTIMIZED: Create element context directly without marshal/unmarshal
+		// Create element context directly without marshal/unmarshal
 		elementContext := &EvaluationContext{
 			Msg:             elementMap,
 			OriginalMsg:     context.OriginalMsg, // CRITICAL: Preserve root

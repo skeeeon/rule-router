@@ -172,10 +172,10 @@ func (b *AppBuilder) WithRuleProcessor() *AppBuilder {
 
 	b.base.Processor = rule.NewProcessor(b.base.Logger, b.base.Metrics, kvContext, sigVerification)
 	
-	// NEW: Configure forEach iteration limit
+	// Configure forEach iteration limit
 	b.base.Processor.SetMaxForEachIterations(b.cfg.ForEach.MaxIterations)
 	
-	// NEW: Wire up metrics to evaluator for array operator tracking
+	// Wire up metrics to evaluator for array operator tracking
 	if b.base.Metrics != nil {
 		// The evaluator needs access to metrics for array operator tracking
 		// This is done internally when evaluator is created within processor

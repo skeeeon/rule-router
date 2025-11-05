@@ -421,7 +421,7 @@ func (b *NATSBroker) initializeNATSConnection() error {
 		"connectedURL", connectedURL,
 		"availableURLs", len(b.config.NATS.URLs))
 
-	// --- BEST PRACTICE: Configure JetStream for Async Publishing ---
+	// Configure JetStream for Async Publishing ---
 	jsOpts := []jetstream.JetStreamOpt{
 		// Set a limit on the number of outstanding async publishes. This is crucial for backpressure.
 		jetstream.WithPublishAsyncMaxPending(1024),
@@ -439,7 +439,6 @@ func (b *NATSBroker) initializeNATSConnection() error {
 	if err != nil {
 		return fmt.Errorf("failed to create JetStream interface: %w", err)
 	}
-	// --- END BEST PRACTICE ---
 
 	b.logger.Info("JetStream interface created successfully with async publishing enabled")
 	return nil

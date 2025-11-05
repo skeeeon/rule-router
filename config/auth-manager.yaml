@@ -1,0 +1,82 @@
+# file: config/auth-manager.yaml
+
+# NATS Auth Manager Configuration
+# Manages authentication tokens for external APIs and stores them in NATS KV buckets
+
+nats:
+  urls:
+    - nats://localhost:4222
+  
+  # Choose one authentication method:
+  credsFile: "/etc/nats/rule-router.creds"
+  
+  # Alternative auth methods (choose one):
+  # username: "auth-manager"
+  # password: "secret"
+  # token: "mytoken"
+  # nkey: "seed..."
+
+  # Optional TLS configuration
+  # tls:
+  #   enable: true
+  #   certFile: "/etc/ssl/nats/client-cert.pem"
+  #   keyFile: "/etc/ssl/nats/client-key.pem"
+  #   caFile: "/etc/ssl/nats/ca.pem"
+  #   insecure: false
+
+storage:
+  bucket: "tokens"
+  keyPrefix: ""  # Optional: prefix all keys (e.g., "auth/")
+
+logging:
+  level: info     # debug, info, warn, error
+  encoding: json  # json or console
+
+metrics:
+  enabled: true
+  address: ":2113"
+
+providers:
+  # OAuth2 Client Credentials Example (Stripe)
+  - id: "stripe-api"
+    type: oauth2
+    tokenUrl: "https://connect.stripe.com/oauth/token"
+    clientId: "${STRIPE_CLIENT_ID}"
+    clientSecret: "${STRIPE_CLIENT_SECRET}"
+    scopes: ["read_write"]
+    refreshBefore: "5m"  # Refresh 5 minutes before expiry
+    kvKey: "stripe-api"  # Stored at tokens.stripe-api
+
+  # Custom HTTP Example (Pocketbase)
+  - id: "pocketbase"
+    type: custom-http
+    authUrl: "https://pocketbase.example.com/api/collections/users/auth-with-password"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+    body: |
+      {
+        "identity": "${PB_EMAIL}",
+        "password": "${PB_PASSWORD}"
+      }
+    tokenPath: "token"     # JSON path to extract token from response
+    refreshEvery: "30m"    # Re-authenticate every 30 minutes
+    kvKey: "pocketbase-admin"
+
+  # Another Custom HTTP Example (Generic API)
+  - id: "custom-service"
+    type: custom-http
+    authUrl: "https://api.example.com/auth/login"
+    method: POST
+    headers:
+      Content-Type: "application/json"
+      X-API-Version: "v2"
+    body: |
+      {
+        "username": "${SERVICE_USER}",
+        "password": "${SERVICE_PASS}",
+        "tenant": "production"
+      }
+    tokenPath: "data.access_token"  # Nested JSON path
+    refreshEvery: "1h"
+    kvKey: "custom-service"

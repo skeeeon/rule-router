@@ -45,7 +45,7 @@ type NATSAction struct {
 	Headers     map[string]string `json:"headers,omitempty" yaml:"headers,omitempty"`
 	RawPayload  []byte            `json:"-" yaml:"-"` // Populated during processing
 	
-	// NEW: Array iteration fields for forEach functionality
+	// Array iteration fields for forEach functionality
 	ForEach string      `json:"forEach,omitempty" yaml:"forEach,omitempty"`
 	Filter  *Conditions `json:"filter,omitempty" yaml:"filter,omitempty"`
 }
@@ -60,7 +60,7 @@ type HTTPAction struct {
 	RawPayload  []byte            `json:"-" yaml:"-"` // Populated during processing
 	Retry       *RetryConfig      `json:"retry,omitempty" yaml:"retry,omitempty"`
 	
-	// NEW: Array iteration fields for forEach functionality
+	// Array iteration fields for forEach functionality
 	ForEach string      `json:"forEach,omitempty" yaml:"forEach,omitempty"`
 	Filter  *Conditions `json:"filter,omitempty" yaml:"filter,omitempty"`
 }
@@ -85,7 +85,7 @@ type Condition struct {
 	Operator string      `json:"operator" yaml:"operator"`
 	Value    interface{} `json:"value,omitempty" yaml:"value,omitempty"`
 	
-	// NEW: For array operators (any/all/none) - nested conditions to evaluate against array elements
+	// For array operators (any/all/none) - nested conditions to evaluate against array elements
 	Conditions *Conditions `json:"conditions,omitempty" yaml:"conditions,omitempty"`
 }
 

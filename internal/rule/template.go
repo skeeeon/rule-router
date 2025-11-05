@@ -14,7 +14,7 @@ import (
 	"rule-router/internal/logger"
 )
 
-// OPTIMIZED: Single regex pattern to capture all variables in one pass
+// Single regex pattern to capture all variables in one pass
 var (
 	combinedVariablePattern = regexp.MustCompile(`\{(@?)([a-zA-Z0-9_.:()=/-]+)\}`)
 )

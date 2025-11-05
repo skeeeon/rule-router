@@ -32,7 +32,7 @@ func (r *Renderer) ListTemplates() ([]string, error) {
 		if err != nil {
 			return err
 		}
-		// FIX: The path from WalkDir is already relative to the embed root.
+		// The path from WalkDir is already relative to the embed root.
 		// No need to trim any "templates/" prefix.
 		if !d.IsDir() && (strings.HasSuffix(path, ".yaml") || strings.HasSuffix(path, ".yml")) {
 			name := strings.TrimSuffix(path, filepath.Ext(path))
@@ -48,7 +48,7 @@ func (r *Renderer) ListTemplates() ([]string, error) {
 
 // GetTemplateContent returns the raw content of a specific template.
 func (r *Renderer) GetTemplateContent(templateName string) (string, error) {
-	// FIX: The path inside the embed.FS does not include the "templates/" directory.
+	// The path inside the embed.FS does not include the "templates/" directory.
 	// The embed root *is* the templates directory.
 	filePath := fmt.Sprintf("%s.yaml", templateName)
 	content, err := fs.ReadFile(r.templateFS, filePath)

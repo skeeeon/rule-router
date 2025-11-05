@@ -54,7 +54,7 @@ type EvaluationContext struct {
 	RawPayload []byte
 	Headers    map[string]string
 
-	// NEW: Original message reference for @msg prefix
+	// Original message reference for @msg prefix
 	// ALWAYS points to root message, even when Msg points to array element
 	OriginalMsg map[string]interface{}
 
@@ -138,7 +138,7 @@ func truncateString(s string, maxLen int) string {
 
 // ResolveValue resolves a field value from the context
 // Supports message fields, system fields (@subject, @path, @header, @time, @kv, @signature)
-// NEW: Also supports @msg prefix for explicit root message access during forEach
+// Also supports @msg prefix for explicit root message access during forEach
 func (c *EvaluationContext) ResolveValue(path string) (interface{}, bool) {
 	// System fields start with @
 	if strings.HasPrefix(path, "@") {
@@ -156,10 +156,10 @@ func (c *EvaluationContext) ResolveValue(path string) (interface{}, bool) {
 }
 
 // resolveSystemField handles all @ prefixed system fields
-// NEW: Includes @msg.* prefix for explicit root message access
-// NEW: Includes fallback for wrapped fields (@value, @items)
+// Includes @msg.* prefix for explicit root message access
+// Includes fallback for wrapped fields (@value, @items)
 func (c *EvaluationContext) resolveSystemField(path string) (interface{}, bool) {
-	// NEW: @msg prefix - explicitly access root message
+	// @msg prefix - explicitly access root message
 	// This is critical during forEach to access fields outside the current array element
 	if strings.HasPrefix(path, "@msg.") {
 		fieldPath := path[5:] // Remove "@msg."
@@ -239,7 +239,7 @@ func (c *EvaluationContext) resolveSystemField(path string) (interface{}, bool) 
 		return nil, false
 	}
 
-	// NEW: Fallback for wrapped field names (@value, @items)
+	// Fallback for wrapped field names (@value, @items)
 	// These exist in the message itself after wrapIfNeeded()
 	// This enables templates like {@value} and {@items.0} to work
 	value, err := c.traverser.TraversePathString(c.Msg, path)

@@ -24,7 +24,7 @@ type Processor struct {
 	evaluator        *Evaluator
 	templater        *TemplateEngine
 	sigVerification  *SignatureVerification
-	maxForEachIters  int // NEW: Configurable forEach iteration limit
+	maxForEachIters  int // Configurable forEach iteration limit
 }
 
 type ProcessorStats struct {
@@ -373,14 +373,14 @@ func ensureObject(item interface{}) map[string]interface{} {
 }
 
 // processNATSActionWithForEach processes a NATS action with forEach iteration
-// OPTIMIZED: Reuses element context for both filter and templating
+// Reuses element context for both filter and templating
 func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *EvaluationContext) ([]*Action, error) {
 	start := time.Now()
 	
 	p.logger.Debug("processing NATS action with forEach",
 		"forEachField", action.ForEach)
 
-	// FIXED: Use brace-aware path splitting
+	// Use brace-aware path splitting
 	arrayPath, err := SplitPathRespectingBraces(action.ForEach)
 	if err != nil {
 		return nil, fmt.Errorf("invalid forEach path '%s': %w", action.ForEach, err)
@@ -428,7 +428,7 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 				"accessVia", "@value")
 		}
 
-		// OPTIMIZATION: Create context once and reuse for both filter and templating
+		// Create context once and reuse for both filter and templating
 		elementContext, err := p.createElementContextOptimized(itemMap, context)
 		if err != nil {
 			p.logger.Error("failed to create element context",
@@ -477,7 +477,7 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 		actionResult.Subject = subject
 
 		if action.Passthrough {
-			// FIXED: Handle marshal errors gracefully
+			// Handle marshal errors gracefully
 			rawPayload, err := safeMarshal(itemMap)
 			if err != nil {
 				p.logger.Error("failed to marshal element for passthrough",
@@ -605,14 +605,14 @@ func (p *Processor) processHTTPAction(action *HTTPAction, context *EvaluationCon
 }
 
 // processHTTPActionWithForEach processes an HTTP action with forEach iteration
-// OPTIMIZED: Reuses element context for both filter and templating
+// Reuses element context for both filter and templating
 func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *EvaluationContext) ([]*Action, error) {
 	start := time.Now()
 	
 	p.logger.Debug("processing HTTP action with forEach",
 		"forEachField", action.ForEach)
 
-	// FIXED: Use brace-aware path splitting
+	// Use brace-aware path splitting
 	arrayPath, err := SplitPathRespectingBraces(action.ForEach)
 	if err != nil {
 		return nil, fmt.Errorf("invalid forEach path '%s': %w", action.ForEach, err)
@@ -660,7 +660,7 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 				"accessVia", "@value")
 		}
 
-		// OPTIMIZATION: Create context once and reuse for both filter and templating
+		// Create context once and reuse for both filter and templating
 		elementContext, err := p.createElementContextOptimized(itemMap, context)
 		if err != nil {
 			p.logger.Error("failed to create element context",
@@ -726,7 +726,7 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 		actionResult.Method = method
 
 		if action.Passthrough {
-			// FIXED: Handle marshal errors gracefully
+			// Handle marshal errors gracefully
 			rawPayload, err := safeMarshal(itemMap)
 			if err != nil {
 				p.logger.Error("failed to marshal element for passthrough",
@@ -812,7 +812,7 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 }
 
 // createElementContextOptimized creates a context for array element WITHOUT marshal/unmarshal
-// PERFORMANCE OPTIMIZATION: Avoids JSON serialization roundtrip (5-10x faster)
+// Avoids JSON serialization roundtrip (5-10x faster)
 func (p *Processor) createElementContextOptimized(element map[string]interface{}, originalContext *EvaluationContext) (*EvaluationContext, error) {
 	// Direct assignment without marshal/unmarshal cycle
 	elementContext := &EvaluationContext{
@@ -854,7 +854,7 @@ func (p *Processor) templateHeaders(headers map[string]string, context *Evaluati
 }
 
 // safeMarshal marshals a value to JSON with error handling (no panic)
-// FIXED: Replaced mustMarshal to handle errors gracefully
+// Replaced mustMarshal to handle errors gracefully
 func safeMarshal(v interface{}) ([]byte, error) {
 	b, err := json.Marshal(v)
 	if err != nil {

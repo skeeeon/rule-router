@@ -75,7 +75,7 @@ func (t *Tester) Lint(rulesDir string) error {
 }
 
 // Scaffold runs the scaffold mode, generating a test directory for a rule.
-// NEW: Now detects forEach and generates appropriate test templates
+// Detects forEach and generates appropriate test templates
 func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 	if !strings.HasSuffix(rulePath, ".yaml") && !strings.HasSuffix(rulePath, ".yml") {
 		return fmt.Errorf("--scaffold requires a path to a .yaml rule file")
@@ -122,7 +122,7 @@ func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 	configBytes, _ := json.MarshalIndent(testConfig, "", "  ")
 	os.WriteFile(filepath.Join(testDir, "_test_config.json"), configBytes, 0644)
 
-	// NEW: Detect if rule uses forEach and generate appropriate examples
+	// Detect if rule uses forEach and generate appropriate examples
 	usesForEach, forEachField := detectForEach(&r)
 	
 	if usesForEach {
@@ -147,7 +147,7 @@ func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 	return nil
 }
 
-// NEW: detectForEach checks if a rule uses forEach and returns the field path
+// detectForEach checks if a rule uses forEach and returns the field path
 func detectForEach(r *rule.Rule) (bool, string) {
 	if r.Action.NATS != nil && r.Action.NATS.ForEach != "" {
 		return true, r.Action.NATS.ForEach
@@ -158,7 +158,7 @@ func detectForEach(r *rule.Rule) (bool, string) {
 	return false, ""
 }
 
-// NEW: generateForEachExamples creates example test files for forEach rules
+// generateForEachExamples creates example test files for forEach rules
 func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.Rule) {
 	// Create example match case with array
 	matchExample := map[string]interface{}{
@@ -419,7 +419,7 @@ func (t *Tester) runTestsParallel(groups []TestGroup) TestSummary {
 	return summary
 }
 
-// NEW: runSingleTestCase updated to handle multiple actions (forEach support)
+// runSingleTestCase updated to handle multiple actions (forEach support)
 func (t *Tester) runSingleTestCase(processor *rule.Processor, messagePath string, testConfig *TestConfig) TestResult {
 	start := time.Now()
 	baseName := filepath.Base(messagePath)
@@ -457,7 +457,7 @@ func (t *Tester) runSingleTestCase(processor *rule.Processor, messagePath string
 		return result
 	}
 
-	// NEW: If a match was expected, and an output file exists, validate ALL actions
+	// If a match was expected, and an output file exists, validate ALL actions
 	if matched {
 		outputFile := strings.TrimSuffix(messagePath, ".json") + "_output.json"
 		if _, err := os.Stat(outputFile); !os.IsNotExist(err) {
@@ -476,7 +476,7 @@ func (t *Tester) runSingleTestCase(processor *rule.Processor, messagePath string
 	return result
 }
 
-// NEW: validateOutputMultiple handles both single action and multiple actions (forEach)
+// validateOutputMultiple handles both single action and multiple actions (forEach)
 func validateOutputMultiple(actions []*rule.Action, outputFile string) error {
 	expectedBytes, err := os.ReadFile(outputFile)
 	if err != nil {
@@ -513,7 +513,7 @@ func validateOutputMultiple(actions []*rule.Action, outputFile string) error {
 	return validateSingleOutput(actions[0], &expectedSingle)
 }
 
-// NEW: validateSingleOutput validates one action against one expected output
+// validateSingleOutput validates one action against one expected output
 func validateSingleOutput(action *rule.Action, expected *ExpectedOutput) error {
 	if action.NATS != nil {
 		return validateNATSOutput(action.NATS, expected)
@@ -580,7 +580,7 @@ func validatePayload(payload string, passthrough bool, rawPayload []byte, expect
 	return nil
 }
 
-// NEW: validateHeaders checks if actual headers match expected headers
+// validateHeaders checks if actual headers match expected headers
 func validateHeaders(actualHeaders, expectedHeaders map[string]string) error {
 	for key, expectedValue := range expectedHeaders {
 		actualValue, exists := actualHeaders[key]
