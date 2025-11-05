@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.3.0] - 2025-11-05
+- nats-auth-manager application for JWT lifecycle management
+
 ## [0.2.2] - 2025-11-03
 - Enhanced Environment Variable Substitution 
 
@@ -25,3 +28,4 @@
 [0.2.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.2.0
 [0.2.1]: https://github.com/skeeeon/rule-router/releases/tag/v0.2.1
 [0.2.1]: https://github.com/skeeeon/rule-router/releases/tag/v0.2.2
+[0.3.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.3.0
