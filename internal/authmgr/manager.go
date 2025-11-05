@@ -5,8 +5,8 @@ package authmgr
 import (
 	"context"
 	"fmt"
-	"sync"
 	"math/rand"
+	"sync"
 	"time"
 
 	"rule-router/internal/authmgr/providers"
@@ -44,14 +44,20 @@ func (m *Manager) Start() error {
 
 	// Start one goroutine per provider
 	for _, p := range m.providers {
-		m.wg.Add(1)
-		go m.refreshLoop(p)
+		// Capture the provider for the goroutine closure. This is important!
 		provider := p
+
+		// Increment WaitGroup for the single goroutine we are about to start.
+		m.wg.Add(1)
+
+		// Launch a single goroutine for this provider.
 		go func() {
 			// Introduce a random startup delay (jitter) of 0-5 seconds
 			// to prevent a "thundering herd" of auth requests on startup.
 			jitter := time.Duration(rand.Intn(5000)) * time.Millisecond
 			time.Sleep(jitter)
+
+			// Call the refresh loop which will call wg.Done() on exit.
 			m.refreshLoop(provider)
 		}()
 	}
