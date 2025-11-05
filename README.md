@@ -1,11 +1,12 @@
 # Rule Router & HTTP Gateway
 
-A high-performance, rule-based messaging platform for NATS, providing both an internal message router and a bidirectional HTTP gateway.
+A high-performance, rule-based messaging platform for NATS, providing an internal message router, a bidirectional HTTP gateway, and an automated token manager for secure API integration.
 
-This monorepo contains two primary applications built on a shared, powerful rule engine:
+This monorepo contains three primary, interoperable applications built on a shared, powerful rule engine:
 
 *   **`rule-router`**: A high-throughput NATS-to-NATS message router for internal, event-driven workflows.
 *   **`http-gateway`**: A bidirectional bridge for integrating external systems with your NATS fabric via webhooks (HTTP → NATS) and outbound API calls (NATS → HTTP).
+*   **`nats-auth-manager`**: A standalone utility that securely manages and refreshes API tokens (OAuth2, etc.), storing them in NATS KV for use by the `http-gateway` on outbound webhooks.
 
 ---
 
@@ -173,7 +174,9 @@ You will see the message appear on the `alerts.>` subscription, having been proc
 
 *   **`cmd/rule-router`**: A dedicated NATS-to-NATS message router. Ideal for high-performance, internal event stream processing, filtering, and enrichment. [**» View Router README**](./cmd/rule-router/README.md)
 
-*   **`cmd/http-gateway`**: A bidirectional HTTP-to-NATS gateway. Perfect for integrating with third-party webhooks (e.g., GitHub, Stripe) and for triggering external APIs from NATS events. [**» View Gateway README**](./cmd/http-gateway/README.md)
+*   **`cmd/http-gateway`**: A bidirectional HTTP-to-NATS gateway. Perfect for integrating with third-party webhooks and for triggering external APIs from NATS events. [**» View Gateway README**](./cmd/http-gateway/README.md)
+
+*   **`cmd/nats-auth-manager`**: A standalone service that handles OAuth2 and custom API authentication, storing tokens in NATS KV for use by other services. [**» View Auth Manager README**](./cmd/nats-auth-manager/README.md)
 
 *   **`cmd/rule-cli`**: A powerful command-line utility for linting, scaffolding, and testing your rules offline, enabling CI/CD and ensuring rule correctness. [**» View CLI README**](./cmd/rule-cli/README.md)
 
@@ -194,6 +197,10 @@ Both applications expose a Prometheus metrics endpoint, typically on port `:2112
 **HTTP Gateway:**
 *   `http_inbound_requests_total`: (Gateway) Inbound HTTP requests.
 *   `http_outbound_requests_total`: (Gateway) Outbound HTTP requests.
+
+**Auth Manager:**
+*   `authmgr_auth_success_total`: Successful authentications by provider.
+*   `authmgr_auth_failures_total`: Failed authentications by provider.
 
 ## License
 
