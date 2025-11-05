@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"math/rand"
 	"time"
 
 	"rule-router/internal/authmgr/providers"
@@ -45,6 +46,14 @@ func (m *Manager) Start() error {
 	for _, p := range m.providers {
 		m.wg.Add(1)
 		go m.refreshLoop(p)
+		provider := p
+		go func() {
+			// Introduce a random startup delay (jitter) of 0-5 seconds
+			// to prevent a "thundering herd" of auth requests on startup.
+			jitter := time.Duration(rand.Intn(5000)) * time.Millisecond
+			time.Sleep(jitter)
+			m.refreshLoop(provider)
+		}()
 	}
 
 	return nil
