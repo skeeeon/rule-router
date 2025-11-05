@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"rule-router/config"
 )
 
 // Config represents the complete auth-manager configuration
 type Config struct {
 	NATS      NATSConfig       `mapstructure:"nats"`
 	Storage   StorageConfig    `mapstructure:"storage"`
-	Logging   LogConfig        `mapstructure:"logging"`
+	Logging   config.LogConfig `mapstructure:"logging"`
 	Metrics   MetricsConfig    `mapstructure:"metrics"`
 	Providers []ProviderConfig `mapstructure:"providers"`
 }
@@ -42,12 +43,6 @@ type NATSConfig struct {
 type StorageConfig struct {
 	Bucket    string `mapstructure:"bucket"`    // KV bucket name
 	KeyPrefix string `mapstructure:"keyPrefix"` // Optional prefix for keys
-}
-
-// LogConfig for logging (reuse pattern from rule-router)
-type LogConfig struct {
-	Level    string `mapstructure:"level"`
-	Encoding string `mapstructure:"encoding"`
 }
 
 // MetricsConfig for optional Prometheus metrics
@@ -121,6 +116,9 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Logging.Encoding == "" {
 		cfg.Logging.Encoding = "json"
+	}
+	if cfg.Logging.OutputPath == "" {
+		cfg.Logging.OutputPath = "stdout"
 	}
 	if cfg.Metrics.Address == "" {
 		cfg.Metrics.Address = ":2113"

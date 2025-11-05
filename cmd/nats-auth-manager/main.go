@@ -6,11 +6,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	flag "github.com/spf13/pflag"
 	"rule-router/internal/authmgr"
 	"rule-router/internal/authmgr/providers"
@@ -43,6 +46,30 @@ func run() error {
 
 	appLogger.Info("nats-auth-manager starting", "version", "1.0.0")
 
+	// Initialize metrics
+	var metrics *authmgr.Metrics
+	if cfg.Metrics.Enabled {
+		reg := prometheus.NewRegistry()
+		metrics, err = authmgr.NewMetrics(reg)
+		if err != nil {
+			return fmt.Errorf("failed to create metrics: %w", err)
+		}
+
+		// Start metrics server
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+		metricsServer := &http.Server{Addr: cfg.Metrics.Address, Handler: mux}
+
+		go func() {
+			appLogger.Info("starting metrics server", "address", cfg.Metrics.Address)
+			if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				appLogger.Error("metrics server error", "error", err)
+			}
+		}()
+	} else {
+		appLogger.Info("metrics are disabled")
+	}
+
 	// Connect to NATS
 	natsClient, err := authmgr.NewNATSClient(&cfg.NATS, &cfg.Storage, appLogger)
 	if err != nil {
@@ -57,7 +84,7 @@ func run() error {
 	}
 
 	// Create manager
-	manager := authmgr.NewManager(natsClient, providerList, appLogger)
+	manager := authmgr.NewManager(natsClient, providerList, appLogger, metrics)
 
 	// Start manager
 	if err := manager.Start(); err != nil {
@@ -99,7 +126,6 @@ func createProviders(configs []authmgr.ProviderConfig, log *logger.Logger) ([]pr
 
 	for _, cfg := range configs {
 		var p providers.Provider
-		var err error
 
 		switch cfg.Type {
 		case "oauth2":

@@ -17,19 +17,21 @@ type Manager struct {
 	nats      *NATSClient
 	providers []providers.Provider
 	logger    *logger.Logger
+	metrics   *Metrics
 	wg        sync.WaitGroup
 	ctx       context.Context
 	cancel    context.CancelFunc
 }
 
 // NewManager creates a new authentication manager
-func NewManager(nats *NATSClient, providerList []providers.Provider, log *logger.Logger) *Manager {
+func NewManager(nats *NATSClient, providerList []providers.Provider, log *logger.Logger, metrics *Metrics) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Manager{
 		nats:      nats,
 		providers: providerList,
 		logger:    log,
+		metrics:   metrics,
 		ctx:       ctx,
 		cancel:    cancel,
 	}
@@ -115,11 +117,17 @@ func (m *Manager) authenticate(p providers.Provider) error {
 	// Get token from provider
 	token, err := p.GetToken(ctx)
 	if err != nil {
+		if m.metrics != nil {
+			m.metrics.IncAuthFailure(providerID)
+		}
 		return fmt.Errorf("failed to get token: %w", err)
 	}
 
 	// Store token in NATS KV
 	if err := m.nats.StoreToken(ctx, providerID, token); err != nil {
+		if m.metrics != nil {
+			m.metrics.IncKVStoreFailure(providerID)
+		}
 		return fmt.Errorf("failed to store token: %w", err)
 	}
 
@@ -127,6 +135,11 @@ func (m *Manager) authenticate(p providers.Provider) error {
 	m.logger.Info("authentication successful",
 		"provider", providerID,
 		"duration", duration)
+
+	if m.metrics != nil {
+		m.metrics.IncAuthSuccess(providerID)
+		m.metrics.ObserveAuthDuration(providerID, duration.Seconds())
+	}
 
 	return nil
 }
