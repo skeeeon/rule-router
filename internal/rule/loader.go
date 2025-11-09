@@ -510,13 +510,23 @@ func (l *RulesLoader) validateHTTPAction(action *HTTPAction) error {
 
 // validateForEachConfig validates forEach field configuration
 func (l *RulesLoader) validateForEachConfig(forEachField string, filter *Conditions) error {
+	// NEW: Validate template syntax
+	if !isTemplate(forEachField) {
+		return fmt.Errorf("forEach field must use template syntax {field}, got: %s", forEachField)
+	}
+	
+	fieldName := extractVariable(forEachField)
+	if fieldName == "" {
+		return fmt.Errorf("invalid forEach template syntax: %s", forEachField)
+	}
+	
 	// Ensure it's a valid JSON path (no wildcards)
-	if strings.Contains(forEachField, "*") || strings.Contains(forEachField, ">") {
+	if strings.Contains(fieldName, "*") || strings.Contains(fieldName, ">") {
 		return fmt.Errorf("forEach field cannot contain wildcards: %s", forEachField)
 	}
 
 	// Validate path isn't too deeply nested (prevent stack overflow)
-	if strings.Count(forEachField, ".") > 10 {
+	if strings.Count(fieldName, ".") > 10 {
 		return fmt.Errorf("forEach path too deeply nested (max depth: 10): %s", forEachField)
 	}
 

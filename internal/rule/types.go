@@ -46,6 +46,7 @@ type NATSAction struct {
 	RawPayload  []byte            `json:"-" yaml:"-"` // Populated during processing
 	
 	// Array iteration fields for forEach functionality
+	// ForEach must use template syntax: "{arrayField}" or "{nested.array}" or "{@items}"
 	ForEach string      `json:"forEach,omitempty" yaml:"forEach,omitempty"`
 	Filter  *Conditions `json:"filter,omitempty" yaml:"filter,omitempty"`
 }
@@ -61,6 +62,7 @@ type HTTPAction struct {
 	Retry       *RetryConfig      `json:"retry,omitempty" yaml:"retry,omitempty"`
 	
 	// Array iteration fields for forEach functionality
+	// ForEach must use template syntax: "{arrayField}" or "{nested.array}" or "{@items}"
 	ForEach string      `json:"forEach,omitempty" yaml:"forEach,omitempty"`
 	Filter  *Conditions `json:"filter,omitempty" yaml:"filter,omitempty"`
 }
@@ -79,11 +81,38 @@ type Conditions struct {
 	Groups   []Conditions `json:"groups,omitempty" yaml:"groups,omitempty"` // For nested condition groups
 }
 
-// Condition represents a single evaluation criterion
+// Condition represents a single evaluation criterion with template-based variable resolution
+//
+// Both Field and Value now support template syntax for dynamic comparisons:
+//
+// Field Examples:
+//   - Message field: "{temperature}"
+//   - Nested field: "{sensor.reading.value}"
+//   - System time: "{@time.hour}"
+//   - Subject token: "{@subject.1}"
+//   - KV lookup: "{@kv.sensor_config.{sensor_id}:max_temp}"
+//
+// Value Examples:
+//   - Literal: 30
+//   - Literal string: "active"
+//   - Message field: "{threshold}"
+//   - KV lookup: "{@kv.config.global:max_temperature}"
+//   - System variable: "{@time.hour}"
+//
+// This enables powerful variable-to-variable comparisons:
+//   field: "{temperature}"
+//   operator: gt
+//   value: "{@kv.sensor_config.{sensor_id}:max_temp}"
+//
+// Type preservation:
+//   - Numbers remain numbers for accurate numeric comparison
+//   - Strings remain strings
+//   - Booleans remain booleans
+//   - Type coercion is performed automatically when needed
 type Condition struct {
-	Field    string      `json:"field" yaml:"field"`
-	Operator string      `json:"operator" yaml:"operator"`
-	Value    interface{} `json:"value,omitempty" yaml:"value,omitempty"`
+	Field    string      `json:"field" yaml:"field"`       // Template: "{temperature}" or "{@time.hour}"
+	Operator string      `json:"operator" yaml:"operator"` // eq, gt, contains, etc.
+	Value    interface{} `json:"value,omitempty" yaml:"value,omitempty"` // Literal or template: 30 or "{@kv.config:max_temp}"
 	
 	// For array operators (any/all/none) - nested conditions to evaluate against array elements
 	Conditions *Conditions `json:"conditions,omitempty" yaml:"conditions,omitempty"`
