@@ -10,7 +10,7 @@ The rule engine provides a rich set of system variables (prefixed with `@`) that
 | `{nested.field}` | Access nested fields using dot notation | `{user.profile.email}` |
 | `{@msg.field}` | Explicitly access root message (important in forEach) | `{@msg.batchId}` |
 | `{@value}` | Access primitive value (strings, numbers, booleans at root or in arrays) | `{@value}` → `"ERROR: timeout"` |
-| `@items` | Access array at root level | Field reference for root arrays |
+| `{@items}` | Access array at root level | Field reference for root arrays |
 
 ## NATS Subject Context (`rule-router` only)
 
@@ -60,22 +60,22 @@ The rule engine provides a rich set of system variables (prefixed with `@`) that
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `@kv.bucket.key` | Lookup value from KV store | `@kv.users.username` |
-| `@kv.bucket.key:field` | Lookup value from KV store with JSON path | `@kv.users.{userId}:name` |
-| `@kv.bucket.key:nested.field` | Nested field access in KV value | `@kv.config.app:db.host` |
+| `{@kv.bucket.key}` | Lookup value from KV store | `@kv.users.username` |
+| `{@kv.bucket.key:field}` | Lookup value from KV store with JSON path | `@kv.users.{userId}:name` |
+| `{@kv.bucket.key:nested.field}` | Nested field access in KV value | `@kv.config.app:db.host` |
 
-**Syntax:** `@kv.{bucketName}.{keyName}:{jsonPath}`
+**Syntax:** `{@kv.{bucketName}.{keyName}:jsonPath.nestedValue}`
 
 **Examples:**
 ```yaml
 # Simple field access
-field: "@kv.device_status.sensor-123"
+field: "{@kv.device_status.sensor-123}"
 
 # Variable in key name and JSON path
-field: "@kv.users.{user_id}:permissions"
+field: "{@kv.users.{user_id}:permissions}"
 
 # Nested JSON path
-field: "@kv.config.app:database.connection.host"
+field: "{@kv.config.app:database.connection.host}"
 ```
 
 ## Cryptographic Signatures
@@ -133,25 +133,25 @@ All system variables can be used in conditions with these operators:
     operator: and
     items:
       # Time-based: only during business hours
-      - field: "@time.hour"
+      - field: "{@time.hour}"
         operator: gte
         value: 9
-      - field: "@time.hour"
+      - field: "{@time.hour}"
         operator: lt
         value: 17
       
       # Day-based: weekdays only
-      - field: "@day.number"
+      - field: "{@day.number}"
         operator: lte
         value: 5
       
       # KV lookup: check if sensor is active
-      - field: "@kv.sensors.{@subject.1}:active"
+      - field: "{@kv.sensors.{@subject.1}:active}"
         operator: eq
         value: true
       
       # Value check
-      - field: "temperature"
+      - field: "{temperature}"
         operator: gt
         value: 25
   

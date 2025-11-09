@@ -9,7 +9,7 @@ Messages are automatically wrapped to provide consistent field access:
 | Message Type | Wrapped As | Access Pattern |
 |--------------|------------|----------------|
 | Object | `{"field": ...}` (unchanged) | `{field}` |
-| Array | `{"@items": [...]}` | `@items` |
+| Array | `{"@items": [...]}` | `{@items}` |
 | String | `{"@value": "text"}` | `{@value}` |
 | Number | `{"@value": 42}` | `{@value}` |
 | Boolean | `{"@value": true}` | `{@value}` |
@@ -43,22 +43,22 @@ SenML (Sensor Markup Language) is a common IoT format that sends arrays at the r
     operator: and
     items:
       # Check if ANY measurement is temperature
-      - field: "@items"
+      - field: "{@items}"
         operator: any
         conditions:
           operator: and
           items:
-            - field: "n"
+            - field: "{n}"
               operator: eq
               value: "temperature"
   
   action:
     nats:
-      forEach: "@items"
+      forEach: "{@items}"
       filter:
         operator: and
         items:
-          - field: "v"
+          - field: "{v}"
             operator: gt
             value: 20
       subject: "sensors.{n}"
@@ -89,7 +89,7 @@ Perfect for simple log aggregation or status messages.
   conditions:
     operator: and
     items:
-      - field: "@value"
+      - field: "{@value}"
         operator: contains
         value: "ERROR"
   
@@ -124,7 +124,7 @@ Process lists of device IDs, usernames, or other primitive values.
   
   action:
     nats:
-      forEach: "deviceIds"
+      forEach: "{deviceIds}"
       subject: "provision.{@value}"
       payload: |
         {
