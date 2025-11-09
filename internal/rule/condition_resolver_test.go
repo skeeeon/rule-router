@@ -47,7 +47,7 @@ func TestIsTemplate(t *testing.T) {
 		{
 			name:     "empty braces",
 			input:    "{}",
-			expected: true, // Contains braces, but extractVariable will return ""
+			expected: true, // Contains braces, but ExtractVariable will return ""
 		},
 		{
 			name:     "partial brace - opening only",
@@ -63,9 +63,9 @@ func TestIsTemplate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isTemplate(tt.input)
+			result := IsTemplate(tt.input) // ✅ Fixed: Uppercase
 			if result != tt.expected {
-				t.Errorf("isTemplate(%q) = %v, expected %v", tt.input, result, tt.expected)
+				t.Errorf("IsTemplate(%q) = %v, expected %v", tt.input, result, tt.expected)
 			}
 		})
 	}
@@ -141,29 +141,19 @@ func TestExtractVariable(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := extractVariable(tt.input)
+			result := ExtractVariable(tt.input) // ✅ Fixed: Uppercase
 			if result != tt.expected {
-				t.Errorf("extractVariable(%q) = %q, expected %q", tt.input, result, tt.expected)
+				t.Errorf("ExtractVariable(%q) = %q, expected %q", tt.input, result, tt.expected)
 			}
 		})
 	}
 }
 
 func TestResolveConditionValue(t *testing.T) {
-	log := logger.NewLogger("info", "console", "stdout")
+	log := logger.NewNopLogger() // ✅ Fixed: Use NewNopLogger()
 
 	// Create a simple test context with known values
-	msgData := map[string]interface{}{
-		"temperature": 25.5,
-		"status":      "active",
-		"count":       42,
-		"enabled":     true,
-		"sensor": map[string]interface{}{
-			"id":   "sensor-001",
-			"type": "temperature",
-		},
-	}
-
+	// ✅ Fixed: Removed unused msgData, create context directly
 	timeCtx := NewSystemTimeProvider().GetCurrentContext()
 	subjectCtx := NewSubjectContext("sensors.temperature.room1")
 
@@ -281,19 +271,9 @@ func TestResolveConditionValue(t *testing.T) {
 }
 
 func TestResolveConditionValue_TypePreservation(t *testing.T) {
-	log := logger.NewLogger("info", "console", "stdout")
+	log := logger.NewNopLogger() // ✅ Fixed: Use NewNopLogger()
 
-	// Create context with various types
-	msgData := map[string]interface{}{
-		"num_int":     42,
-		"num_float":   3.14,
-		"str":         "hello",
-		"bool_true":   true,
-		"bool_false":  false,
-		"arr":         []interface{}{1, 2, 3},
-		"obj":         map[string]interface{}{"nested": "value"},
-	}
-
+	// ✅ Fixed: Removed unused msgData, create context directly
 	context, err := NewEvaluationContext(
 		[]byte(`{"num_int":42,"num_float":3.14,"str":"hello","bool_true":true,"bool_false":false,"arr":[1,2,3],"obj":{"nested":"value"}}`),
 		nil,
