@@ -97,7 +97,7 @@ This rule listens for inbound webhooks at `/webhooks/devices` and publishes a st
   conditions:
     operator: and
     items:
-      - field: "status"
+      - field: "{status}"
         operator: "eq"
         value: "error"
   action:
@@ -122,7 +122,7 @@ This rule listens for the internal status messages and routes critical errors to
   conditions:
     operator: and
     items:
-      - field: "error_code"
+      - field: "{error_code}"
         operator: gte
         value: 5000 # Critical error codes
   action:

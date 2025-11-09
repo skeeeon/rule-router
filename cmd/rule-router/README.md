@@ -67,7 +67,7 @@ This application is purpose-built for internal, high-throughput message routing,
       conditions:
         operator: and
         items:
-          - field: temperature
+          - field: "{temperature}"
             operator: gt
             value: 30
       action:
@@ -115,11 +115,11 @@ This rule processes a batch of events, generating one new message for each "crit
   action:
     nats:
       # Generate one alert per critical event
-      forEach: "events"
+      forEach: "{events}"
       filter:
         operator: and
         items:
-          - field: "status"
+          - field: "{status}"
             operator: eq
             value: "critical"
       subject: "alerts.critical.{deviceId}"
