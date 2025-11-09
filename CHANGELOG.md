@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.0] - 2025-11-09
+- BREAKING CHANGE
+- Variable syntax updated to require {} in all invocations
+- Variable support added for condition values 
+
 ## [0.3.0] - 2025-11-05
 - nats-auth-manager application for JWT lifecycle management
 
@@ -29,3 +34,4 @@
 [0.2.1]: https://github.com/skeeeon/rule-router/releases/tag/v0.2.1
 [0.2.1]: https://github.com/skeeeon/rule-router/releases/tag/v0.2.2
 [0.3.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.3.0
+[0.4.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.4.0
