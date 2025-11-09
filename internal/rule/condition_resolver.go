@@ -7,20 +7,22 @@ import (
 	"strings"
 )
 
-// isTemplate checks if a string looks like a template variable: "{something}"
+// IsTemplate checks if a string looks like a template variable: "{something}"
 // Simple check - if it contains braces, we treat it as a template
-func isTemplate(s string) bool {
+// Exported for use in validation (loader.go)
+func IsTemplate(s string) bool {
 	return strings.Contains(s, "{") && strings.Contains(s, "}")
 }
 
-// extractVariable extracts the variable name from a template string
+// ExtractVariable extracts the variable name from a template string
 // Examples:
 //   "{temperature}" -> "temperature"
 //   "{@time.hour}" -> "@time.hour"
 //   "{@kv.config.sensor:max}" -> "@kv.config.sensor:max"
 //   "temperature" -> "" (not a template)
 //   "{}" -> "" (malformed)
-func extractVariable(template string) string {
+// Exported for use in validation (loader.go)
+func ExtractVariable(template string) string {
 	template = strings.TrimSpace(template)
 	
 	// Must start with { and end with }
@@ -65,12 +67,12 @@ func resolveConditionValue(value interface{}, context *EvaluationContext) (inter
 	}
 	
 	// Fast path: if no braces, it's a literal string
-	if !isTemplate(strValue) {
+	if !IsTemplate(strValue) {
 		return value, nil
 	}
 	
 	// Extract variable name from template
-	varName := extractVariable(strValue)
+	varName := ExtractVariable(strValue)
 	if varName == "" {
 		// Malformed template like "{}" - treat as literal for robustness
 		return value, nil

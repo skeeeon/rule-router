@@ -103,9 +103,13 @@ func (rb *RuleBuilder) getConditionsRecursive(indent string) (*rule.Conditions, 
 
 	fmt.Println(indent + "Enter conditions for this group (press Enter on 'Field' to finish):")
 	for {
-		field, err := rb.prompter.Ask(indent + "  - Field:")
-		if err != nil || field == "" {
-			break
+		// Get field with validation
+		field, err := rb.getConditionField(indent + "  - ")
+		if err != nil {
+			return nil, err
+		}
+		if field == "" {
+			break // User pressed Enter to finish
 		}
 
 		var operator string
@@ -119,7 +123,7 @@ func (rb *RuleBuilder) getConditionsRecursive(indent string) (*rule.Conditions, 
 
 		item := rule.Condition{Field: field, Operator: operator}
 
-		// Changed 'else if' to a mutually exclusive 'else' block ---
+		// Handle array operators vs regular operators
 		if operator == "any" || operator == "all" || operator == "none" {
 			// Handle array operators
 			fmt.Println(indent + "    Defining nested conditions for the array operator...")
@@ -131,13 +135,20 @@ func (rb *RuleBuilder) getConditionsRecursive(indent string) (*rule.Conditions, 
 		} else {
 			// Handle all other (non-array) operators
 			if operator != "exists" {
-				valueStr, _ := rb.prompter.Ask(indent + "  - Value:")
-				if f, err := strconv.ParseFloat(valueStr, 64); err == nil {
-					item.Value = f
-				} else if b, err := strconv.ParseBool(valueStr); err == nil {
-					item.Value = b
-				} else {
+				valueStr, _ := rb.prompter.Ask(indent + "  - Value (can be {variable} or literal):")
+				// Parse value - check if it's a template variable or literal
+				if isTemplateVariable(valueStr) {
+					// It's a variable comparison - store as string
 					item.Value = valueStr
+				} else {
+					// Try to parse as number or boolean, otherwise string
+					if f, err := strconv.ParseFloat(valueStr, 64); err == nil {
+						item.Value = f
+					} else if b, err := strconv.ParseBool(valueStr); err == nil {
+						item.Value = b
+					} else {
+						item.Value = valueStr
+					}
 				}
 			}
 		}
@@ -155,6 +166,46 @@ func (rb *RuleBuilder) getConditionsRecursive(indent string) (*rule.Conditions, 
 	}
 
 	return conds, nil
+}
+
+// getConditionField prompts for a condition field with validation and auto-fix
+func (rb *RuleBuilder) getConditionField(indent string) (string, error) {
+	prompt := indent + "Field (use {braces}, e.g., {temperature} or {@time.hour}):"
+	
+	for {
+		field, err := rb.prompter.Ask(prompt)
+		if err != nil {
+			return "", err
+		}
+		
+		// Empty input means user wants to finish
+		if strings.TrimSpace(field) == "" {
+			return "", nil
+		}
+		
+		// Check if field uses template syntax
+		if !isTemplateVariable(field) {
+			fmt.Printf("%s    ⚠️  Field must use template syntax with {braces}%s\n", ColorYellow, ColorReset)
+			
+			// Offer auto-fix
+			suggested := fmt.Sprintf("{%s}", strings.TrimSpace(field))
+			fmt.Printf("    Did you mean: %s? (Y/n): ", suggested)
+			var response string
+			fmt.Scanln(&response)
+			response = strings.ToLower(strings.TrimSpace(response))
+			
+			if response == "" || response == "y" || response == "yes" {
+				fmt.Printf("%s    ✓ Using: %s%s\n", ColorGreen, suggested, ColorReset)
+				return suggested, nil
+			}
+			
+			// User declined auto-fix, prompt again
+			fmt.Println("    Please enter field with {braces} or press Enter to skip.")
+			continue
+		}
+		
+		return field, nil
+	}
 }
 
 func (rb *RuleBuilder) getAction() (*rule.Action, error) {
@@ -184,16 +235,21 @@ func (rb *RuleBuilder) getAction() (*rule.Action, error) {
 func (rb *RuleBuilder) getNATSAction() (*rule.NATSAction, error) {
 	cardinality, _ := rb.prompter.Select("Select Action Cardinality:", []string{"Single Action", "ForEach (Batch) Action"})
 	if cardinality == 0 { // Single
-		subject, _ := rb.prompter.Ask("Enter NATS Action Subject (e.g., 'alerts.high_temp'):")
+		subject, _ := rb.prompter.Ask("Enter NATS Action Subject (e.g., 'alerts.high_temp.{device_id}'):")
 		payload := `{
   "message": "Rule matched and processed.",
+  "device_id": "{device_id}",
   "processed_at": "{@timestamp()}"
 }`
 		return &rule.NATSAction{Subject: subject, Payload: payload}, nil
 	}
 
 	// ForEach
-	forEachField, _ := rb.prompter.Ask("Enter path to array field in message (e.g., 'notifications'):")
+	forEachField, err := rb.getForEachField()
+	if err != nil {
+		return nil, err
+	}
+	
 	subject, _ := rb.prompter.Ask("Enter NATS Action Subject (can use element fields, e.g., 'alerts.{id}'):")
 	payload := `{
   "element_id": "{id}",
@@ -204,6 +260,9 @@ func (rb *RuleBuilder) getNATSAction() (*rule.NATSAction, error) {
 
 	addFilter, _ := rb.prompter.Confirm("Add a filter to process only some elements?")
 	if addFilter {
+		fmt.Println("\n" + ColorBlue + "Filter Conditions" + ColorReset)
+		fmt.Println("These conditions evaluate against each array element.")
+		fmt.Println("Use {field} for element fields, {@msg.field} for root message fields.")
 		filter, err := rb.getConditionsRecursive("    ")
 		if err != nil {
 			return nil, err
@@ -223,17 +282,24 @@ func (rb *RuleBuilder) getHTTPAction() (*rule.HTTPAction, error) {
 	retry := &rule.RetryConfig{MaxAttempts: 3, InitialDelay: "1s"}
 
 	if cardinality == 0 { // Single
-		url, _ := rb.prompter.Ask("Enter HTTP Action URL (e.g., 'https://api.example.com/alerts'):")
+		url, _ := rb.prompter.Ask("Enter HTTP Action URL (e.g., 'https://api.example.com/alerts/{device_id}'):")
 		return &rule.HTTPAction{URL: url, Method: method, Payload: payload, Retry: retry}, nil
 	}
 
 	// ForEach
-	forEachField, _ := rb.prompter.Ask("Enter path to array field in message (e.g., 'items'):")
+	forEachField, err := rb.getForEachField()
+	if err != nil {
+		return nil, err
+	}
+	
 	url, _ := rb.prompter.Ask("Enter HTTP Action URL (can use element fields, e.g., 'https://api.example.com/items/{id}'):")
 	action := &rule.HTTPAction{ForEach: forEachField, URL: url, Method: method, Payload: payload, Retry: retry}
 
 	addFilter, _ := rb.prompter.Confirm("Add a filter to process only some elements?")
 	if addFilter {
+		fmt.Println("\n" + ColorBlue + "Filter Conditions" + ColorReset)
+		fmt.Println("These conditions evaluate against each array element.")
+		fmt.Println("Use {field} for element fields, {@msg.field} for root message fields.")
 		filter, err := rb.getConditionsRecursive("    ")
 		if err != nil {
 			return nil, err
@@ -241,4 +307,67 @@ func (rb *RuleBuilder) getHTTPAction() (*rule.HTTPAction, error) {
 		action.Filter = filter
 	}
 	return action, nil
+}
+
+// getForEachField prompts for a forEach field with validation and auto-fix
+func (rb *RuleBuilder) getForEachField() (string, error) {
+	prompt := "Enter path to array field (use {braces}, e.g., {notifications} or {data.items}):"
+	
+	for {
+		field, err := rb.prompter.Ask(prompt)
+		if err != nil {
+			return "", err
+		}
+		
+		field = strings.TrimSpace(field)
+		if field == "" {
+			return "", fmt.Errorf("forEach field cannot be empty")
+		}
+		
+		// Check if field uses template syntax
+		if !isTemplateVariable(field) {
+			fmt.Printf("%s    ⚠️  ForEach field must use template syntax with {braces}%s\n", ColorYellow, ColorReset)
+			
+			// Offer auto-fix
+			suggested := fmt.Sprintf("{%s}", field)
+			fmt.Printf("    Did you mean: %s? (Y/n): ", suggested)
+			var response string
+			fmt.Scanln(&response)
+			response = strings.ToLower(strings.TrimSpace(response))
+			
+			if response == "" || response == "y" || response == "yes" {
+				fmt.Printf("%s    ✓ Using: %s%s\n", ColorGreen, suggested, ColorReset)
+				return suggested, nil
+			}
+			
+			// User declined auto-fix, prompt again
+			fmt.Println("    Please enter field with {braces}.")
+			continue
+		}
+		
+		// Additional validation: forEach cannot contain wildcards
+		innerField := extractInnerField(field)
+		if strings.Contains(innerField, "*") || strings.Contains(innerField, ">") {
+			fmt.Printf("%s    ✖ ForEach field cannot contain wildcards (* or >)%s\n", ColorYellow, ColorReset)
+			fmt.Println("    Please enter a specific array path.")
+			continue
+		}
+		
+		return field, nil
+	}
+}
+
+// isTemplateVariable checks if a string is a template variable with {braces}
+func isTemplateVariable(s string) bool {
+	s = strings.TrimSpace(s)
+	return strings.HasPrefix(s, "{") && strings.HasSuffix(s, "}")
+}
+
+// extractInnerField extracts the content from {field} -> field
+func extractInnerField(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "{") && strings.HasSuffix(s, "}") {
+		return s[1 : len(s)-1]
+	}
+	return s
 }
