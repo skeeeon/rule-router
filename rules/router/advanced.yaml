@@ -10,22 +10,22 @@
   conditions:
     operator: and
     items:
-      - field: status
+      - field: "{status}"
         operator: eq
         value: active
     groups:
       - operator: or
         items:
-          - field: temperature
+          - field: "{temperature}"
             operator: gt
             value: 32
         groups:
           - operator: and
             items:
-              - field: humidity
+              - field: "{humidity}"
                 operator: gt
                 value: 85
-              - field: pressure
+              - field: "{pressure}"
                 operator: lt
                 value: 990
   action:

@@ -6,10 +6,10 @@
   conditions:
     operator: and
     items:
-      - field: sensor.reading             # ✅ Nested field access in conditions
+      - field: "{sensor.reading}"             # ✅ Nested field access in conditions
         operator: gt
         value: 30
-      - field: sensor.location            # ✅ Nested string field
+      - field: "{sensor.location}"            # ✅ Nested string field
         operator: eq
         value: "bedroom"
   action:

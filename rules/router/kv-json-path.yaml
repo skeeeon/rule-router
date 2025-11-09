@@ -27,10 +27,10 @@
   conditions:
     operator: and
     items:
-      - field: "@kv.customer_data.{customer_id}:tier"              # ✅ Colon separates key from path
+      - field: "{@kv.customer_data.{customer_id}:tier}"              # ✅ Colon separates key from path
         operator: eq
         value: "premium"
-      - field: "@kv.customer_data.{customer_id}:billing.credits"   # ✅ Nested JSON path
+      - field: "{@kv.customer_data.{customer_id}:billing.credits}"   # ✅ Nested JSON path
         operator: gt
         value: 1000
   action:
@@ -64,9 +64,9 @@
   conditions:
     operator: and
     items:
-      - field: customer_id
+      - field: "{customer_id}"
         operator: exists
-      - field: "@kv.customer_data.{customer_id}:shipping.addresses.0.type"  # ✅ Array index after colon
+      - field: "{@kv.customer_data.{customer_id}:shipping.addresses.0.type}"  # ✅ Array index after colon
         operator: eq
         value: "primary"
   action:
@@ -101,11 +101,11 @@
   conditions:
     operator: and
     items:
-      - field: sensor_id
+      - field: "{sensor_id}"
         operator: exists
-      - field: temperature
+      - field: "{temperature}"
         operator: gt
-        value: "@kv.device_config.{sensor_id}:thresholds.max"      # ✅ Key can have dots!
+        value: "{@kv.device_config.{sensor_id}:thresholds.max}"      # ✅ Key can have dots!
   action:
     nats:
       subject: alerts.temperature-exceeded
@@ -145,10 +145,10 @@
   conditions:
     operator: and
     items:
-      - field: email_type
+      - field: "{email_type}"
         operator: eq
         value: "alert"
-      - field: "@kv.system_config.email_settings:smtp.tls"         # ✅ Deep config access
+      - field: "{@kv.system_config.email_settings:smtp.tls}"         # ✅ Deep config access
         operator: eq
         value: true
   action:
@@ -185,12 +185,12 @@
   conditions:
     operator: and
     items:
-      - field: user_id
+      - field: "{user_id}"
         operator: exists
-      - field: "@kv.user_permissions.{user_id}:role"               # ✅ Check role
+      - field: "{@kv.user_permissions.{user_id}:role}"               # ✅ Check role
         operator: eq
         value: "admin"
-      - field: "@kv.user_permissions.{user_id}:features.admin_panel"  # ✅ Check feature flag
+      - field: "{@kv.user_permissions.{user_id}:features.admin_panel}"  # ✅ Check feature flag
         operator: eq
         value: true
   action:
@@ -238,10 +238,10 @@
   conditions:
     operator: and
     items:
-      - field: experiment_id
+      - field: "{experiment_id}"
         operator: eq
         value: "experiment_123"
-      - field: "@kv.feature_flags.{experiment_id}:enabled"         # ✅ Check if experiment enabled
+      - field: "{@kv.feature_flags.{experiment_id}:enabled}"         # ✅ Check if experiment enabled
         operator: eq
         value: true
   action:
@@ -287,9 +287,9 @@
   conditions:
     operator: and
     items:
-      - field: "@kv.equipment_maintenance.{@subject.3}:schedules.{maintenance_type}.frequency_days"  # ✅ Complex path
+      - field: "{@kv.equipment_maintenance.{@subject.3}:schedules.{maintenance_type}.frequency_days}"  # ✅ Complex path
         operator: exists
-      - field: maintenance_type
+      - field: "{maintenance_type}"
         operator: eq
         value: "routine"
   action:
@@ -326,10 +326,10 @@
   conditions:
     operator: and
     items:
-      - field: service_name
+      - field: "{service_name}"
         operator: eq
         value: "logs.api.auth.service.v2"
-      - field: "@kv.logs.{service_name}:errors.count"              # ✅ Key with many dots!
+      - field: "{@kv.logs.{service_name}:errors.count}"              # ✅ Key with many dots!
         operator: gt
         value: 10
   action:

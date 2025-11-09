@@ -15,7 +15,7 @@
   conditions:
     operator: and
     items:
-      - field: tags
+      - field: "{tags}"
         operator: contains
         value: "premium"  # ✅ Does tags array contain "premium"?
   action:
@@ -37,11 +37,11 @@
   conditions:
     operator: and
     items:
-      - field: flags
+      - field: "{flags}"
         operator: not_contains
         value: "banned"  # ✅ Ensure flags array does NOT contain "banned"
       
-      - field: flags
+      - field: "{flags}"
         operator: not_contains
         value: "suspended"  # ✅ Also not suspended
   action:
@@ -63,11 +63,11 @@
   conditions:
     operator: or
     items:
-      - field: name
+      - field: "{name}"
         operator: contains
         value: "Smith"  # ✅ String substring match still works
       
-      - field: email
+      - field: "{email}"
         operator: contains
         value: "@example.com"  # ✅ Email domain check
   action:
@@ -95,7 +95,7 @@
   conditions:
     operator: and
     items:
-      - field: status
+      - field: "{status}"
         operator: in
         value: ["confirmed", "processing", "shipped"]  # ✅ Allowed statuses
   action:
@@ -117,11 +117,11 @@
   conditions:
     operator: and
     items:
-      - field: tenant_id
+      - field: "{tenant_id}"
         operator: in
         value: ["tenant-a", "tenant-b", "tenant-c"]  # ✅ Allowed tenants
       
-      - field: action
+      - field: "{action}"
         operator: not_in
         value: ["delete", "purge", "destroy"]  # ✅ Forbidden actions
   action:
@@ -144,7 +144,7 @@
   conditions:
     operator: and
     items:
-      - field: priority
+      - field: "{priority}"
         operator: in
         value: [1, 2, 3]  # ✅ High priority tasks (works with numbers!)
   action:
@@ -172,11 +172,11 @@
   conditions:
     operator: and
     items:
-      - field: action
+      - field: "{action}"
         operator: not_in
         value: ["admin_access", "sudo", "root_login"]  # ✅ Blocked actions
       
-      - field: user_id
+      - field: "{user_id}"
         operator: not_in
         value: ["banned-001", "banned-002", "banned-003"]  # ✅ Banned users
   action:
@@ -204,15 +204,15 @@
   conditions:
     operator: and
     items:
-      - field: feature
+      - field: "{feature}"
         operator: in
         value: ["new_dashboard", "advanced_analytics", "api_v2"]  # Enabled features
       
-      - field: user_roles
+      - field: "{user_roles}"
         operator: contains
         value: "beta_tester"  # Must have beta_tester role in array
       
-      - field: user_roles
+      - field: "{user_roles}"
         operator: not_contains
         value: "restricted"  # Must NOT have restricted flag
   action:
@@ -237,10 +237,10 @@
   conditions:
     operator: and
     items:
-      - field: device_id
+      - field: "{device_id}"
         operator: exists
       
-      - field: event_type
+      - field: "{event_type}"
         operator: in
         value: ["temperature_reading", "humidity_reading", "battery_status"]
       
@@ -266,15 +266,15 @@
   conditions:
     operator: and
     items:
-      - field: "@time.hour"
+      - field: "{@time.hour}"
         operator: gte
         value: 22  # After 10 PM
       
-      - field: operation
+      - field: "{operation}"
         operator: in
         value: ["backup", "maintenance", "cleanup"]  # Allowed off-hours operations
       
-      - field: criticality
+      - field: "{criticality}"
         operator: not_in
         value: ["low", "trivial"]  # Only important operations off-hours
   action:
@@ -298,19 +298,19 @@
   conditions:
     operator: and
     items:
-      - field: payment_method
+      - field: "{payment_method}"
         operator: in
         value: ["credit_card", "debit_card", "paypal"]  # Accepted payment methods
       
-      - field: shipping_country
+      - field: "{shipping_country}"
         operator: in
         value: ["US", "CA", "GB", "DE", "FR"]  # Supported countries
       
-      - field: items_tags
+      - field: "{items_tags}"
         operator: contains
         value: "fragile"  # Has fragile items
       
-      - field: items_tags
+      - field: "{items_tags}"
         operator: not_contains
         value: "hazmat"  # No hazardous materials
   action:
@@ -335,15 +335,15 @@
   conditions:
     operator: and
     items:
-      - field: content_flags
+      - field: "{content_flags}"
         operator: contains
         value: "user_reported"  # Has been reported
       
-      - field: content_flags
+      - field: "{content_flags}"
         operator: not_contains
         value: "auto_approved"  # Not auto-approved
       
-      - field: author_status
+      - field: "{author_status}"
         operator: not_in
         value: ["banned", "suspended", "deleted"]  # Author account is valid
   action:
@@ -372,7 +372,7 @@
     operator: and
     items:
       # ✅ Empty array: [] contains "something" → false
-      - field: tags
+      - field: "{tags}"
         operator: contains
         value: "important"  # False if tags is empty array
       
@@ -396,7 +396,7 @@
   conditions:
     operator: and
     items:
-      - field: port
+      - field: "{port}"
         operator: in
         value: [80, 443, 8080, 8443]  # ✅ Number comparison with type coercion
   action:

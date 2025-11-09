@@ -10,10 +10,10 @@
   conditions:
     operator: and
     items:
-      - field: value
+      - field: "{value}"
         operator: gt
         value: 30
-      - field: "@subject.1"           # Subject token: "temperature", "pressure", etc.
+      - field: "{@subject.1}"           # Subject token: "temperature", "pressure", etc.
         operator: neq
         value: "test"                 # Skip test sensors
   action:
@@ -38,10 +38,10 @@
   conditions:
     operator: and
     items:
-      - field: status
+      - field: "{status}"
         operator: eq
         value: "alert"
-      - field: "@subject.count"       # Must have at least 3 tokens
+      - field: "{@subject.count}"       # Must have at least 3 tokens
         operator: gte  
         value: 3
   action:
@@ -77,10 +77,10 @@
   conditions:
     operator: and
     items:
-      - field: "@subject.1"           # Device ID must start with known prefix
+      - field: "{@subject.1}"           # Device ID must start with known prefix
         operator: contains
         value: "sensor"
-      - field: device_status
+      - field: "{device_status}"
         operator: eq
         value: "online"
   action:
@@ -111,13 +111,13 @@
   conditions:
     operator: and
     items:
-      - field: priority
+      - field: "{priority}"
         operator: eq
         value: "high"
-      - field: "@subject.count"       # Ensure enough structure
+      - field: "{@subject.count}"       # Ensure enough structure
         operator: gte
         value: 4
-      - field: "@subject.1"           # Department must be known
+      - field: "{@subject.1}"           # Department must be known
         operator: in
         value: ["engineering", "sales", "hr", "marketing"]
   action:
@@ -159,7 +159,7 @@
   conditions:
     operator: and
     items:
-      - field: value
+      - field: "{value}"
         operator: gt
         value: 25
   action:
@@ -184,18 +184,18 @@
     groups:
       - operator: and
         items:
-          - field: "@subject.1"       # Second token is "health"
+          - field: "{@subject.1}"       # Second token is "health"
             operator: eq
             value: "health"
-          - field: status
+          - field: "{status}"
             operator: neq
             value: "ok"
       - operator: and  
         items:
-          - field: "@subject.1"       # Second token is "performance"
+          - field: "{@subject.1}"       # Second token is "performance"
             operator: eq
             value: "performance"
-          - field: response_time
+          - field: "{response_time}"
             operator: gt
             value: 1000
   action:
@@ -230,7 +230,7 @@
   conditions:
     operator: and
     items:
-      - field: severity
+      - field: "{severity}"
         operator: eq
         value: "critical"
   action:
