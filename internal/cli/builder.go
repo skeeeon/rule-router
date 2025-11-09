@@ -135,20 +135,34 @@ func (rb *RuleBuilder) getConditionsRecursive(indent string) (*rule.Conditions, 
 		} else {
 			// Handle all other (non-array) operators
 			if operator != "exists" {
-				valueStr, _ := rb.prompter.Ask(indent + "  - Value (can be {variable} or literal):")
-				// Parse value - check if it's a template variable or literal
-				if isTemplateVariable(valueStr) {
-					// It's a variable comparison - store as string
+				// NEW: Get value with variable comparison support
+				valueStr, valueType, err := rb.getConditionValue(indent+"  - ", field)
+				if err != nil {
+					return nil, err
+				}
+				
+				// Store value based on type
+				switch valueType {
+				case "variable":
+					// Variable comparison - store as template string
 					item.Value = valueStr
-				} else {
-					// Try to parse as number or boolean, otherwise string
+				case "number":
+					// Parse as number
 					if f, err := strconv.ParseFloat(valueStr, 64); err == nil {
 						item.Value = f
-					} else if b, err := strconv.ParseBool(valueStr); err == nil {
+					} else {
+						return nil, fmt.Errorf("invalid number: %s", valueStr)
+					}
+				case "boolean":
+					// Parse as boolean
+					if b, err := strconv.ParseBool(valueStr); err == nil {
 						item.Value = b
 					} else {
-						item.Value = valueStr
+						return nil, fmt.Errorf("invalid boolean: %s", valueStr)
 					}
+				case "string":
+					// Store as string
+					item.Value = valueStr
 				}
 			}
 		}
@@ -208,6 +222,72 @@ func (rb *RuleBuilder) getConditionField(indent string) (string, error) {
 	}
 }
 
+// getConditionValue prompts for a condition value with support for variable comparisons
+// Returns: (value string, value type, error)
+// Value types: "variable", "number", "boolean", "string"
+func (rb *RuleBuilder) getConditionValue(indent, field string) (string, string, error) {
+	// Show helpful context about variable comparisons
+	fmt.Printf("\n%s    💡 Value Types:%s\n", ColorBlue, ColorReset)
+	fmt.Println("       1. Variable comparison: {threshold}, {@kv.config:max}, {@time.hour}")
+	fmt.Println("       2. Literal number: 30, 25.5, -10")
+	fmt.Println("       3. Literal boolean: true, false")
+	fmt.Println("       4. Literal string: active, \"hello world\"")
+	fmt.Printf("%s    Tip: Use variables for dynamic comparisons!%s\n\n", ColorBlue, ColorReset)
+	
+	prompt := indent + "Value (variable or literal):"
+	
+	for {
+		valueStr, err := rb.prompter.Ask(prompt)
+		if err != nil {
+			return "", "", err
+		}
+		
+		valueStr = strings.TrimSpace(valueStr)
+		if valueStr == "" {
+			fmt.Println("    Value cannot be empty. Please try again.")
+			continue
+		}
+		
+		// Check if it's a template variable
+		if isTemplateVariable(valueStr) {
+			// Validate template syntax
+			varName := extractInnerField(valueStr)
+			if varName == "" {
+				fmt.Printf("%s    ✖ Invalid template syntax (empty variable name)%s\n", ColorYellow, ColorReset)
+				fmt.Println("    Please enter a valid template like {field} or {@system.var}")
+				continue
+			}
+			
+			// Show what we detected
+			fmt.Printf("%s    ✓ Variable comparison detected: %s%s\n", ColorGreen, valueStr, ColorReset)
+			
+			// Offer example of what this means
+			fieldName := extractInnerField(field)
+			fmt.Printf("    This will compare %s against %s dynamically\n", fieldName, varName)
+			
+			return valueStr, "variable", nil
+		}
+		
+		// Try to parse as number
+		if _, err := strconv.ParseFloat(valueStr, 64); err == nil {
+			fmt.Printf("%s    ✓ Number literal: %s%s\n", ColorGreen, valueStr, ColorReset)
+			return valueStr, "number", nil
+		}
+		
+		// Try to parse as boolean
+		if valueStr == "true" || valueStr == "false" {
+			fmt.Printf("%s    ✓ Boolean literal: %s%s\n", ColorGreen, valueStr, ColorReset)
+			return valueStr, "boolean", nil
+		}
+		
+		// Default to string
+		// Remove quotes if present (user might have added them)
+		valueStr = strings.Trim(valueStr, "\"")
+		fmt.Printf("%s    ✓ String literal: \"%s\"%s\n", ColorGreen, valueStr, ColorReset)
+		return valueStr, "string", nil
+	}
+}
+
 func (rb *RuleBuilder) getAction() (*rule.Action, error) {
 	fmt.Printf("\n%s3. Action (What should the rule do?)%s\n", ColorBlue, ColorReset)
 	choice, err := rb.prompter.Select("Select Action Type:", []string{"NATS (Publish Message)", "HTTP (Send Webhook)"})
@@ -263,6 +343,8 @@ func (rb *RuleBuilder) getNATSAction() (*rule.NATSAction, error) {
 		fmt.Println("\n" + ColorBlue + "Filter Conditions" + ColorReset)
 		fmt.Println("These conditions evaluate against each array element.")
 		fmt.Println("Use {field} for element fields, {@msg.field} for root message fields.")
+		fmt.Println("\n" + ColorYellow + "💡 TIP: You can use variable comparisons in filters too!" + ColorReset)
+		fmt.Println("Example: {value} > {@msg.threshold}")
 		filter, err := rb.getConditionsRecursive("    ")
 		if err != nil {
 			return nil, err
@@ -300,6 +382,8 @@ func (rb *RuleBuilder) getHTTPAction() (*rule.HTTPAction, error) {
 		fmt.Println("\n" + ColorBlue + "Filter Conditions" + ColorReset)
 		fmt.Println("These conditions evaluate against each array element.")
 		fmt.Println("Use {field} for element fields, {@msg.field} for root message fields.")
+		fmt.Println("\n" + ColorYellow + "💡 TIP: You can use variable comparisons in filters too!" + ColorReset)
+		fmt.Println("Example: {value} > {@msg.threshold}")
 		filter, err := rb.getConditionsRecursive("    ")
 		if err != nil {
 			return nil, err
