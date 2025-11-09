@@ -15,23 +15,23 @@
     items:
       # Use the 'any' operator to check if at least one element in the
       # 'events' array matches the nested conditions.
-      - field: "events"
+      - field: "{events}"
         operator: any
         conditions:
           operator: and
           items:
-            - field: "severity"
+            - field: "{severity}"
               operator: eq
               value: "critical"
   action:
     nats:
       # Because the condition passed, we know there's at least one interesting
       # element. Now, use 'forEach' with a filter to process only those elements.
-      forEach: "events"
+      forEach: "{events}"
       filter:
         operator: and
         items:
-          - field: "severity"
+          - field: "{severity}"
             operator: eq
             value: "critical"
       subject: "alerts.critical.{id}"

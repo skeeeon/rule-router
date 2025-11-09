@@ -15,7 +15,7 @@
     items:
       # Check if a field in the incoming message meets a condition.
       # Use dot-notation for nested fields, e.g., "data.reading.value".
-      - field: "temperature"
+      - field: "{temperature}"
         operator: gt
         value: 30
   action:

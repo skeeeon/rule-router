@@ -14,7 +14,7 @@
       # You can also use KV lookups in conditions.
       # This rule only runs if the device is marked as 'active' in the KV store.
       # Syntax: @kv.bucket.key:json.path
-      - field: "@kv.customers.{customer_id}:active"
+      - field: "{@kv.customers.{customer_id}:active}"
         operator: eq
         value: true
   action:

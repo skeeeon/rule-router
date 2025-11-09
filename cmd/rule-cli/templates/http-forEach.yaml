@@ -13,12 +13,12 @@
   action:
     nats:
       # The field in the webhook body that contains the array.
-      forEach: "data"
+      forEach: "{data}"
       # (Optional) Filter to process only specific elements.
       filter:
         operator: and
         items:
-          - field: "type"
+          - field: "{type}"
             operator: eq
             value: "charge.succeeded"
       # The NATS subject for each new message. Can use element fields.

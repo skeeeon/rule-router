@@ -13,12 +13,12 @@
   action:
     nats:
       # The field in the message that contains the array to iterate over.
-      forEach: "events"
+      forEach: "{events}"
       # (Optional) Only process elements that match these conditions.
       filter:
         operator: and
         items:
-          - field: "status"
+          - field: "{status}"
             operator: eq
             value: "critical"
       # The subject for each new message. Can use variables from the array element.

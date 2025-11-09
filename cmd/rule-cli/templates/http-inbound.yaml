@@ -15,11 +15,11 @@
     operator: and
     items:
       # Check an HTTP header for a specific value.
-      - field: "@header.X-GitHub-Event"
+      - field: "{@header.X-GitHub-Event}"
         operator: eq
         value: "push"
       # Check a field in the JSON body of the webhook.
-      - field: "ref"
+      - field: "{ref}"
         operator: eq
         value: "refs/heads/main"
   action:
