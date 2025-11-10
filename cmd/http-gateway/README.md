@@ -28,7 +28,7 @@ Bidirectional HTTP ↔ NATS integration gateway with rule-based routing, templat
 go build -o http-gateway ./cmd/http-gateway
 
 # Run
-./http-gateway -config config/http-gateway.yaml -rules rules/
+./http-gateway --config config/http-gateway.yaml --rules rules/
 ```
 
 ### Example Configuration

@@ -139,12 +139,12 @@ You will need two separate configuration files (see the `config/` directory for 
 
 **Terminal 1: Start the HTTP Gateway**
 ```bash
-./http-gateway -config config/http-gateway.yaml -rules ./rules
+./http-gateway --config config/http-gateway.yaml --rules ./rules
 ```
 
 **Terminal 2: Start the Rule Router**
 ```bash
-./rule-router -config config/rule-router.yaml -rules ./rules
+./rule-router --config config/rule-router.yaml --rules ./rules
 ```
 
 ### 5. Test the Flow

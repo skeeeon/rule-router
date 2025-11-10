@@ -56,7 +56,7 @@ providers:
 ### 4. Run
 
 ```bash
-./nats-auth-manager -config config/auth-manager.yaml
+./nats-auth-manager --config config/auth-manager.yaml
 ```
 
 ### 5. Use Tokens in Rules

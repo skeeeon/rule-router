@@ -83,7 +83,7 @@ This application is purpose-built for internal, high-throughput message routing,
 
 3.  **Run `rule-router`**
     ```bash
-    ./rule-router -config config/rule-router.yaml -rules rules/
+    ./rule-router --config config/rule-router.yaml --rules rules/
     ```
 
 4.  **Test the Rule**
