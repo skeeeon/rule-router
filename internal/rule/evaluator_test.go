@@ -55,19 +55,19 @@ func TestEvaluateCondition_Equality(t *testing.T) {
 	}{
 		{
 			name:      "string equals - match",
-			condition: Condition{Field: "status", Operator: "eq", Value: "active"},
+			condition: Condition{Field: "{status}", Operator: "eq", Value: "active"},
 			data:      map[string]interface{}{"status": "active"},
 			want:      true,
 		},
 		{
 			name:      "string not equals - match",
-			condition: Condition{Field: "status", Operator: "neq", Value: "error"},
+			condition: Condition{Field: "{status}", Operator: "neq", Value: "error"},
 			data:      map[string]interface{}{"status": "active"},
 			want:      true,
 		},
 		{
 			name:      "type coercion - string to int",
-			condition: Condition{Field: "port", Operator: "eq", Value: "8080"},
+			condition: Condition{Field: "{port}", Operator: "eq", Value: "8080"},
 			data:      map[string]interface{}{"port": 8080},
 			want:      true,
 		},
@@ -96,19 +96,19 @@ func TestEvaluateCondition_Numeric(t *testing.T) {
 	}{
 		{
 			name:      "greater than - true",
-			condition: Condition{Field: "temperature", Operator: "gt", Value: 25},
+			condition: Condition{Field: "{temperature}", Operator: "gt", Value: 25},
 			data:      map[string]interface{}{"temperature": 30},
 			want:      true,
 		},
 		{
 			name:      "less than or equal - equal",
-			condition: Condition{Field: "count", Operator: "lte", Value: 10},
+			condition: Condition{Field: "{count}", Operator: "lte", Value: 10},
 			data:      map[string]interface{}{"count": 10},
 			want:      true,
 		},
 		{
 			name:      "string number comparison",
-			condition: Condition{Field: "port", Operator: "gt", Value: "8000"},
+			condition: Condition{Field: "{port}", Operator: "gt", Value: "8000"},
 			data:      map[string]interface{}{"port": "8080"},
 			want:      true,
 		},
@@ -137,19 +137,19 @@ func TestEvaluateCondition_Exists(t *testing.T) {
 	}{
 		{
 			name:      "field exists",
-			condition: Condition{Field: "temperature", Operator: "exists"},
+			condition: Condition{Field: "{temperature}", Operator: "exists"},
 			data:      map[string]interface{}{"temperature": 25},
 			want:      true,
 		},
 		{
 			name:      "field does not exist",
-			condition: Condition{Field: "humidity", Operator: "exists"},
+			condition: Condition{Field: "{humidity}", Operator: "exists"},
 			data:      map[string]interface{}{"temperature": 25},
 			want:      false,
 		},
 		{
 			name:      "field exists with nil value",
-			condition: Condition{Field: "value", Operator: "exists"},
+			condition: Condition{Field: "{value}", Operator: "exists"},
 			data:      map[string]interface{}{"value": nil},
 			want:      false,
 		},
@@ -176,7 +176,7 @@ func TestEvaluateCondition_NestedFields(t *testing.T) {
 			},
 		},
 	}
-	condition := Condition{Field: "user.profile.email", Operator: "eq", Value: "john@example.com"}
+	condition := Condition{Field: "{user.profile.email}", Operator: "eq", Value: "john@example.com"}
 
 	context := newTestContext(data, "test.subject")
 	if !evaluator.evaluateCondition(&condition, context) {
@@ -191,7 +191,7 @@ func TestEvaluateCondition_TimeFields(t *testing.T) {
 	timeProvider := NewMockTimeProvider(fixedTime)
 
 	context, _ := NewEvaluationContext([]byte("{}"), nil, NewSubjectContext("test.subject"), nil, timeProvider.GetCurrentContext(), nil, nil, logger.NewNopLogger())
-	condition := Condition{Field: "@time.hour", Operator: "eq", Value: 14}
+	condition := Condition{Field: "{@time.hour}", Operator: "eq", Value: 14}
 
 	if !evaluator.evaluateCondition(&condition, context) {
 		t.Error("Failed to evaluate time field condition")
@@ -202,7 +202,7 @@ func TestEvaluateCondition_TimeFields(t *testing.T) {
 func TestEvaluateCondition_SubjectFields(t *testing.T) {
 	evaluator := newTestEvaluator()
 	context := newTestContext(map[string]interface{}{}, "sensors.temperature.room1")
-	condition := Condition{Field: "@subject.1", Operator: "eq", Value: "temperature"}
+	condition := Condition{Field: "{@subject.1}", Operator: "eq", Value: "temperature"}
 
 	if !evaluator.evaluateCondition(&condition, context) {
 		t.Error("Failed to evaluate subject field condition")
@@ -215,8 +215,8 @@ func TestEvaluateConditions_LogicalOperators(t *testing.T) {
 	conditions := Conditions{
 		Operator: "and",
 		Items: []Condition{
-			{Field: "temperature", Operator: "gt", Value: 20},
-			{Field: "status", Operator: "eq", Value: "active"},
+			{Field: "{temperature}", Operator: "gt", Value: 20},
+			{Field: "{status}", Operator: "eq", Value: "active"},
 		},
 	}
 	data := map[string]interface{}{"temperature": 25, "status": "active"}
@@ -232,13 +232,13 @@ func TestEvaluateConditions_NestedGroups(t *testing.T) {
 	evaluator := newTestEvaluator()
 	conditions := Conditions{
 		Operator: "and",
-		Items:    []Condition{{Field: "active", Operator: "eq", Value: true}},
+		Items:    []Condition{{Field: "{active}", Operator: "eq", Value: true}},
 		Groups: []Conditions{
 			{
 				Operator: "or",
 				Items: []Condition{
-					{Field: "temperature", Operator: "gt", Value: 30},
-					{Field: "humidity", Operator: "gt", Value: 80},
+					{Field: "{temperature}", Operator: "gt", Value: 30},
+					{Field: "{humidity}", Operator: "gt", Value: 80},
 				},
 			},
 		},
@@ -248,6 +248,571 @@ func TestEvaluateConditions_NestedGroups(t *testing.T) {
 	context := newTestContext(data, "test.subject")
 	if !evaluator.Evaluate(&conditions, context) {
 		t.Error("Failed to evaluate nested condition group")
+	}
+}
+
+// ========================================
+// VARIABLE-TO-VARIABLE COMPARISON TESTS
+// ========================================
+
+// TestEvaluator_VariableToVariableComparison tests the new variable comparison feature
+func TestEvaluator_VariableToVariableComparison(t *testing.T) {
+	evaluator := newTestEvaluator()
+
+	tests := []struct {
+		name      string
+		condition Condition
+		data      map[string]interface{}
+		want      bool
+	}{
+		{
+			name: "number to number - greater than (true)",
+			condition: Condition{
+				Field:    "{temperature}",
+				Operator: "gt",
+				Value:    "{threshold}",
+			},
+			data: map[string]interface{}{
+				"temperature": 105,
+				"threshold":   100,
+			},
+			want: true,
+		},
+		{
+			name: "number to number - greater than (false)",
+			condition: Condition{
+				Field:    "{temperature}",
+				Operator: "gt",
+				Value:    "{threshold}",
+			},
+			data: map[string]interface{}{
+				"temperature": 95,
+				"threshold":   100,
+			},
+			want: false,
+		},
+		{
+			name: "number to number - equals (true)",
+			condition: Condition{
+				Field:    "{count}",
+				Operator: "eq",
+				Value:    "{expected_count}",
+			},
+			data: map[string]interface{}{
+				"count":          42,
+				"expected_count": 42,
+			},
+			want: true,
+		},
+		{
+			name: "string to string - equals (true)",
+			condition: Condition{
+				Field:    "{status}",
+				Operator: "eq",
+				Value:    "{expected_status}",
+			},
+			data: map[string]interface{}{
+				"status":          "active",
+				"expected_status": "active",
+			},
+			want: true,
+		},
+		{
+			name: "string to string - not equals (true)",
+			condition: Condition{
+				Field:    "{status}",
+				Operator: "neq",
+				Value:    "{expected_status}",
+			},
+			data: map[string]interface{}{
+				"status":          "active",
+				"expected_status": "inactive",
+			},
+			want: true,
+		},
+		{
+			name: "float comparison - less than or equal (true)",
+			condition: Condition{
+				Field:    "{current_value}",
+				Operator: "lte",
+				Value:    "{max_value}",
+			},
+			data: map[string]interface{}{
+				"current_value": 99.5,
+				"max_value":     100.0,
+			},
+			want: true,
+		},
+		{
+			name: "boolean comparison - equals (true)",
+			condition: Condition{
+				Field:    "{enabled}",
+				Operator: "eq",
+				Value:    "{expected_enabled}",
+			},
+			data: map[string]interface{}{
+				"enabled":          true,
+				"expected_enabled": true,
+			},
+			want: true,
+		},
+		{
+			name: "timestamp comparison - greater than (true)",
+			condition: Condition{
+				Field:    "{end_time}",
+				Operator: "gt",
+				Value:    "{start_time}",
+			},
+			data: map[string]interface{}{
+				"end_time":   1700000000,
+				"start_time": 1699000000,
+			},
+			want: true,
+		},
+		{
+			name: "nested field to nested field comparison",
+			condition: Condition{
+				Field:    "{sensor.reading}",
+				Operator: "gt",
+				Value:    "{sensor.threshold}",
+			},
+			data: map[string]interface{}{
+				"sensor": map[string]interface{}{
+					"reading":   150,
+					"threshold": 100,
+				},
+			},
+			want: true,
+		},
+		{
+			name: "variable not found in value - should fail gracefully",
+			condition: Condition{
+				Field:    "{temperature}",
+				Operator: "gt",
+				Value:    "{missing_threshold}",
+			},
+			data: map[string]interface{}{
+				"temperature": 105,
+			},
+			want: false,
+		},
+		{
+			name: "variable not found in field - should fail gracefully",
+			condition: Condition{
+				Field:    "{missing_temperature}",
+				Operator: "gt",
+				Value:    "{threshold}",
+			},
+			data: map[string]interface{}{
+				"threshold": 100,
+			},
+			want: false,
+		},
+		{
+			name: "both variables missing - should fail gracefully",
+			condition: Condition{
+				Field:    "{missing_field}",
+				Operator: "gt",
+				Value:    "{missing_value}",
+			},
+			data: map[string]interface{}{
+				"other": "data",
+			},
+			want: false,
+		},
+		{
+			name: "type coercion - string to number comparison",
+			condition: Condition{
+				Field:    "{string_number}",
+				Operator: "gt",
+				Value:    "{number}",
+			},
+			data: map[string]interface{}{
+				"string_number": "100",
+				"number":        50,
+			},
+			want: true,
+		},
+		{
+			name: "variable to literal - should work (backward compatibility)",
+			condition: Condition{
+				Field:    "{temperature}",
+				Operator: "gt",
+				Value:    100,
+			},
+			data: map[string]interface{}{
+				"temperature": 105,
+			},
+			want: true,
+		},
+		{
+			name: "literal field to variable value - field is not template",
+			condition: Condition{
+				Field:    "{temperature}",
+				Operator: "eq",
+				Value:    "{status}",
+			},
+			data: map[string]interface{}{
+				"temperature": "active",
+				"status":      "active",
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			context := newTestContext(tt.data, "test.subject")
+			got := evaluator.evaluateCondition(&tt.condition, context)
+			if got != tt.want {
+				t.Errorf("evaluateCondition() = %v, want %v\nField: %v, Value: %v, Data: %+v",
+					got, tt.want, tt.condition.Field, tt.condition.Value, tt.data)
+			}
+		})
+	}
+}
+
+// TestEvaluator_VariableComparison_WithSystemVariables tests variable comparisons using system variables
+func TestEvaluator_VariableComparison_WithSystemVariables(t *testing.T) {
+	evaluator := newTestEvaluator()
+	fixedTime := time.Date(2024, 3, 15, 14, 30, 0, 0, time.UTC)
+	timeProvider := NewMockTimeProvider(fixedTime)
+
+	tests := []struct {
+		name      string
+		condition Condition
+		data      map[string]interface{}
+		want      bool
+	}{
+		{
+			name: "compare message field to system time",
+			condition: Condition{
+				Field:    "{expected_hour}",
+				Operator: "eq",
+				Value:    "{@time.hour}",
+			},
+			data: map[string]interface{}{
+				"expected_hour": 14,
+			},
+			want: true,
+		},
+		{
+			name: "compare system time to literal",
+			condition: Condition{
+				Field:    "{@time.hour}",
+				Operator: "gte",
+				Value:    9,
+			},
+			data: map[string]interface{}{},
+			want: true,
+		},
+		{
+			name: "compare two system variables",
+			condition: Condition{
+				Field:    "{@time.hour}",
+				Operator: "lt",
+				Value:    "{@time.minute}",
+			},
+			data: map[string]interface{}{},
+			want: true, // hour=14, minute=30, so 14 < 30
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload, _ := json.Marshal(tt.data)
+			context, _ := NewEvaluationContext(
+				payload,
+				nil,
+				NewSubjectContext("test.subject"),
+				nil,
+				timeProvider.GetCurrentContext(),
+				nil,
+				nil,
+				logger.NewNopLogger(),
+			)
+			got := evaluator.evaluateCondition(&tt.condition, context)
+			if got != tt.want {
+				t.Errorf("evaluateCondition() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestEvaluator_VariableComparison_TypePreservation tests that types are preserved correctly
+func TestEvaluator_VariableComparison_TypePreservation(t *testing.T) {
+	evaluator := newTestEvaluator()
+
+	tests := []struct {
+		name      string
+		condition Condition
+		data      map[string]interface{}
+		want      bool
+	}{
+		{
+			name: "float to float - precise comparison",
+			condition: Condition{
+				Field:    "{reading}",
+				Operator: "gt",
+				Value:    "{threshold}",
+			},
+			data: map[string]interface{}{
+				"reading":   25.5,
+				"threshold": 25.4,
+			},
+			want: true,
+		},
+		{
+			name: "int to int comparison",
+			condition: Condition{
+				Field:    "{count}",
+				Operator: "eq",
+				Value:    "{expected}",
+			},
+			data: map[string]interface{}{
+				"count":    42,
+				"expected": 42,
+			},
+			want: true,
+		},
+		{
+			name: "mixed int and float - type coercion",
+			condition: Condition{
+				Field:    "{int_value}",
+				Operator: "lt",
+				Value:    "{float_value}",
+			},
+			data: map[string]interface{}{
+				"int_value":   42,
+				"float_value": 42.5,
+			},
+			want: true,
+		},
+		{
+			name: "string comparison - case sensitive",
+			condition: Condition{
+				Field:    "{status}",
+				Operator: "eq",
+				Value:    "{expected}",
+			},
+			data: map[string]interface{}{
+				"status":   "Active",
+				"expected": "active",
+			},
+			want: false, // Case sensitive
+		},
+		{
+			name: "boolean comparison",
+			condition: Condition{
+				Field:    "{flag1}",
+				Operator: "eq",
+				Value:    "{flag2}",
+			},
+			data: map[string]interface{}{
+				"flag1": true,
+				"flag2": true,
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			context := newTestContext(tt.data, "test.subject")
+			got := evaluator.evaluateCondition(&tt.condition, context)
+			if got != tt.want {
+				t.Errorf("evaluateCondition() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestEvaluator_VariableComparison_RealWorldScenarios tests realistic use cases
+func TestEvaluator_VariableComparison_RealWorldScenarios(t *testing.T) {
+	evaluator := newTestEvaluator()
+
+	t.Run("booking validation - end after start", func(t *testing.T) {
+		data := map[string]interface{}{
+			"booking": map[string]interface{}{
+				"start_time": 1700000000,
+				"end_time":   1700003600, // 1 hour later
+			},
+		}
+		condition := Condition{
+			Field:    "{booking.end_time}",
+			Operator: "gt",
+			Value:    "{booking.start_time}",
+		}
+		context := newTestContext(data, "bookings.validate")
+		if !evaluator.evaluateCondition(&condition, context) {
+			t.Error("Booking validation should pass when end_time > start_time")
+		}
+	})
+
+	t.Run("temperature threshold check", func(t *testing.T) {
+		data := map[string]interface{}{
+			"sensor": map[string]interface{}{
+				"current_temp": 85,
+				"max_temp":     80,
+			},
+		}
+		condition := Condition{
+			Field:    "{sensor.current_temp}",
+			Operator: "gt",
+			Value:    "{sensor.max_temp}",
+		}
+		context := newTestContext(data, "sensors.check")
+		if !evaluator.evaluateCondition(&condition, context) {
+			t.Error("Should trigger alert when current_temp > max_temp")
+		}
+	})
+
+	t.Run("permission level check", func(t *testing.T) {
+		data := map[string]interface{}{
+			"user": map[string]interface{}{
+				"level": 5,
+			},
+			"resource": map[string]interface{}{
+				"required_level": 3,
+			},
+		}
+		condition := Condition{
+			Field:    "{user.level}",
+			Operator: "gte",
+			Value:    "{resource.required_level}",
+		}
+		context := newTestContext(data, "access.check")
+		if !evaluator.evaluateCondition(&condition, context) {
+			t.Error("User should have access when level >= required_level")
+		}
+	})
+
+	t.Run("rate limit check", func(t *testing.T) {
+		data := map[string]interface{}{
+			"current_requests": 450,
+			"max_requests":     500,
+		}
+		condition := Condition{
+			Field:    "{current_requests}",
+			Operator: "lt",
+			Value:    "{max_requests}",
+		}
+		context := newTestContext(data, "api.request")
+		if !evaluator.evaluateCondition(&condition, context) {
+			t.Error("Should allow request when current < max")
+		}
+	})
+
+	t.Run("range validation - within bounds", func(t *testing.T) {
+		data := map[string]interface{}{
+			"value": 50,
+			"min":   10,
+			"max":   100,
+		}
+		conditions := Conditions{
+			Operator: "and",
+			Items: []Condition{
+				{Field: "{value}", Operator: "gte", Value: "{min}"},
+				{Field: "{value}", Operator: "lte", Value: "{max}"},
+			},
+		}
+		context := newTestContext(data, "validation.range")
+		if !evaluator.Evaluate(&conditions, context) {
+			t.Error("Value should be within range")
+		}
+	})
+}
+
+// TestEvaluator_VariableComparison_ErrorHandling tests error conditions
+func TestEvaluator_VariableComparison_ErrorHandling(t *testing.T) {
+	evaluator := newTestEvaluator()
+
+	tests := []struct {
+		name      string
+		condition Condition
+		data      map[string]interface{}
+		want      bool
+		desc      string
+	}{
+		{
+			name: "nil value in comparison",
+			condition: Condition{
+				Field:    "{value}",
+				Operator: "gt",
+				Value:    "{threshold}",
+			},
+			data: map[string]interface{}{
+				"value":     nil,
+				"threshold": 100,
+			},
+			want: false,
+			desc: "Should fail gracefully when field is nil",
+		},
+		{
+			name: "comparing against nil",
+			condition: Condition{
+				Field:    "{value}",
+				Operator: "gt",
+				Value:    "{threshold}",
+			},
+			data: map[string]interface{}{
+				"value":     100,
+				"threshold": nil,
+			},
+			want: false,
+			desc: "Should fail gracefully when value is nil",
+		},
+		{
+			name: "incompatible type comparison",
+			condition: Condition{
+				Field:    "{text}",
+				Operator: "gt",
+				Value:    "{number}",
+			},
+			data: map[string]interface{}{
+				"text":   "hello",
+				"number": 42,
+			},
+			want: false,
+			desc: "Should fail when comparing incompatible types",
+		},
+		{
+			name: "malformed template in field - no closing brace",
+			condition: Condition{
+				Field:    "{temperature",
+				Operator: "gt",
+				Value:    "{threshold}",
+			},
+			data: map[string]interface{}{
+				"temperature": 100,
+				"threshold":   50,
+			},
+			want: false,
+			desc: "Should fail with malformed template",
+		},
+		{
+			name: "empty template in value",
+			condition: Condition{
+				Field:    "{temperature}",
+				Operator: "gt",
+				Value:    "{}",
+			},
+			data: map[string]interface{}{
+				"temperature": 100,
+			},
+			want: false,
+			desc: "Should fail with empty template",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			context := newTestContext(tt.data, "test.subject")
+			got := evaluator.evaluateCondition(&tt.condition, context)
+			if got != tt.want {
+				t.Errorf("evaluateCondition() = %v, want %v (%s)", got, tt.want, tt.desc)
+			}
+		})
 	}
 }
 
@@ -275,11 +840,11 @@ func TestArrayOperator_Any(t *testing.T) {
 				},
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "any",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: true,
@@ -294,11 +859,11 @@ func TestArrayOperator_Any(t *testing.T) {
 				},
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "any",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: true,
@@ -312,11 +877,11 @@ func TestArrayOperator_Any(t *testing.T) {
 				},
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "any",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: false,
@@ -327,11 +892,11 @@ func TestArrayOperator_Any(t *testing.T) {
 				"items": []interface{}{},
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "any",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: false,
@@ -347,11 +912,11 @@ func TestArrayOperator_Any(t *testing.T) {
 				},
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "any",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: true,
@@ -362,11 +927,11 @@ func TestArrayOperator_Any(t *testing.T) {
 				"items": []interface{}{"string", 42, true, 3.14},
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "any",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: false,
@@ -404,11 +969,11 @@ func TestArrayOperator_All(t *testing.T) {
 				},
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "all",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: true,
@@ -423,11 +988,11 @@ func TestArrayOperator_All(t *testing.T) {
 				},
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "all",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: false,
@@ -438,11 +1003,11 @@ func TestArrayOperator_All(t *testing.T) {
 				"items": []interface{}{},
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "all",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: false,
@@ -457,11 +1022,11 @@ func TestArrayOperator_All(t *testing.T) {
 				},
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "all",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: false,
@@ -476,11 +1041,11 @@ func TestArrayOperator_All(t *testing.T) {
 				},
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "all",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: false,
@@ -491,11 +1056,11 @@ func TestArrayOperator_All(t *testing.T) {
 				"items": []interface{}{"string", 42, true},
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "all",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: false,
@@ -532,11 +1097,11 @@ func TestArrayOperator_None(t *testing.T) {
 				},
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "none",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: true,
@@ -550,11 +1115,11 @@ func TestArrayOperator_None(t *testing.T) {
 				},
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "none",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: false,
@@ -565,11 +1130,11 @@ func TestArrayOperator_None(t *testing.T) {
 				"items": []interface{}{},
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "none",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: true,
@@ -585,11 +1150,11 @@ func TestArrayOperator_None(t *testing.T) {
 				},
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "none",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: true,
@@ -600,11 +1165,11 @@ func TestArrayOperator_None(t *testing.T) {
 				"items": []interface{}{"string", 42, true},
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "none",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: true,
@@ -641,13 +1206,13 @@ func TestArrayOperator_ComplexConditions(t *testing.T) {
 				},
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "any",
 				Conditions: &Conditions{
 					Operator: "and",
 					Items: []Condition{
-						{Field: "status", Operator: "eq", Value: "active"},
-						{Field: "priority", Operator: "eq", Value: "high"},
+						{Field: "{status}", Operator: "eq", Value: "active"},
+						{Field: "{priority}", Operator: "eq", Value: "high"},
 					},
 				},
 			},
@@ -663,13 +1228,13 @@ func TestArrayOperator_ComplexConditions(t *testing.T) {
 				},
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "all",
 				Conditions: &Conditions{
 					Operator: "or",
 					Items: []Condition{
-						{Field: "status", Operator: "eq", Value: "active"},
-						{Field: "priority", Operator: "eq", Value: "high"},
+						{Field: "{status}", Operator: "eq", Value: "active"},
+						{Field: "{priority}", Operator: "eq", Value: "high"},
 					},
 				},
 			},
@@ -692,11 +1257,11 @@ func TestArrayOperator_ComplexConditions(t *testing.T) {
 				},
 			},
 			cond: Condition{
-				Field:    "notifications",
+				Field:    "{notifications}",
 				Operator: "any",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "event.type", Operator: "eq", Value: "MOTION_DETECTED"}},
+					Items:    []Condition{{Field: "{event.type}", Operator: "eq", Value: "MOTION_DETECTED"}},
 				},
 			},
 			want: true,
@@ -730,11 +1295,11 @@ func TestArrayOperator_EdgeCases(t *testing.T) {
 				"items": "not-an-array",
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "any",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: false,
@@ -745,11 +1310,11 @@ func TestArrayOperator_EdgeCases(t *testing.T) {
 				"other": "value",
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "any",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: false,
@@ -762,7 +1327,7 @@ func TestArrayOperator_EdgeCases(t *testing.T) {
 				},
 			},
 			cond: Condition{
-				Field:      "items",
+				Field:      "{items}",
 				Operator:   "any",
 				Conditions: nil,
 			},
@@ -776,11 +1341,11 @@ func TestArrayOperator_EdgeCases(t *testing.T) {
 				},
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "all",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: true,
@@ -842,11 +1407,11 @@ func TestArrayOperator_RealWorldScenario(t *testing.T) {
 		{
 			name: "check if ANY notification is motion",
 			cond: Condition{
-				Field:    "notification",
+				Field:    "{notification}",
 				Operator: "any",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "type", Operator: "eq", Value: "DEVICE_MOTION_START"}},
+					Items:    []Condition{{Field: "{type}", Operator: "eq", Value: "DEVICE_MOTION_START"}},
 				},
 			},
 			want: true,
@@ -854,11 +1419,11 @@ func TestArrayOperator_RealWorldScenario(t *testing.T) {
 		{
 			name: "check if ALL notifications are motion (should be false)",
 			cond: Condition{
-				Field:    "notification",
+				Field:    "{notification}",
 				Operator: "all",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "type", Operator: "eq", Value: "DEVICE_MOTION_START"}},
+					Items:    []Condition{{Field: "{type}", Operator: "eq", Value: "DEVICE_MOTION_START"}},
 				},
 			},
 			want: false,
@@ -866,11 +1431,11 @@ func TestArrayOperator_RealWorldScenario(t *testing.T) {
 		{
 			name: "check if NONE are temperature alerts",
 			cond: Condition{
-				Field:    "notification",
+				Field:    "{notification}",
 				Operator: "none",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "type", Operator: "eq", Value: "DEVICE_TEMP_ALERT"}},
+					Items:    []Condition{{Field: "{type}", Operator: "eq", Value: "DEVICE_TEMP_ALERT"}},
 				},
 			},
 			want: true,
@@ -878,11 +1443,11 @@ func TestArrayOperator_RealWorldScenario(t *testing.T) {
 		{
 			name: "check if ANY have specific alarm ID with nested field",
 			cond: Condition{
-				Field:    "notification",
+				Field:    "{notification}",
 				Operator: "any",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "event.alarmId", Operator: "eq", Value: "alarm-abc"}},
+					Items:    []Condition{{Field: "{event.alarmId}", Operator: "eq", Value: "alarm-abc"}},
 				},
 			},
 			want: true,
@@ -933,11 +1498,11 @@ func TestArrayOperator_ShortCircuitBehavior(t *testing.T) {
 				"items": largeArrayFirstMatch,
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "any",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: true,
@@ -949,11 +1514,11 @@ func TestArrayOperator_ShortCircuitBehavior(t *testing.T) {
 				"items": largeArrayFirstNoMatch,
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "all",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: false,
@@ -965,11 +1530,11 @@ func TestArrayOperator_ShortCircuitBehavior(t *testing.T) {
 				"items": largeArrayFirstMatch,
 			},
 			cond: Condition{
-				Field:    "items",
+				Field:    "{items}",
 				Operator: "none",
 				Conditions: &Conditions{
 					Operator: "and",
-					Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+					Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 				},
 			},
 			want: false,
@@ -992,7 +1557,7 @@ func TestArrayOperator_ShortCircuitBehavior(t *testing.T) {
 
 func BenchmarkEvaluateCondition_Simple(b *testing.B) {
 	evaluator := newTestEvaluator()
-	condition := Condition{Field: "temperature", Operator: "gt", Value: 25}
+	condition := Condition{Field: "{temperature}", Operator: "gt", Value: 25}
 	context := newTestContext(map[string]interface{}{"temperature": 30}, "test.subject")
 
 	b.ResetTimer()
@@ -1005,13 +1570,13 @@ func BenchmarkEvaluateConditions_Complex(b *testing.B) {
 	evaluator := newTestEvaluator()
 	conditions := Conditions{
 		Operator: "and",
-		Items:    []Condition{{Field: "active", Operator: "eq", Value: true}},
+		Items:    []Condition{{Field: "{active}", Operator: "eq", Value: true}},
 		Groups: []Conditions{
 			{
 				Operator: "or",
 				Items: []Condition{
-					{Field: "temperature", Operator: "gt", Value: 30},
-					{Field: "user.profile.tier", Operator: "eq", Value: "premium"},
+					{Field: "{temperature}", Operator: "gt", Value: 30},
+					{Field: "{user.profile.tier}", Operator: "eq", Value: "premium"},
 				},
 			},
 		},
@@ -1026,6 +1591,18 @@ func BenchmarkEvaluateConditions_Complex(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		evaluator.Evaluate(&conditions, context)
+	}
+}
+
+// BenchmarkEvaluateCondition_VariableComparison benchmarks variable-to-variable comparisons
+func BenchmarkEvaluateCondition_VariableComparison(b *testing.B) {
+	evaluator := newTestEvaluator()
+	condition := Condition{Field: "{temperature}", Operator: "gt", Value: "{threshold}"}
+	context := newTestContext(map[string]interface{}{"temperature": 105, "threshold": 100}, "test.subject")
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		evaluator.evaluateCondition(&condition, context)
 	}
 }
 
@@ -1045,11 +1622,11 @@ func BenchmarkArrayOperator_Any(b *testing.B) {
 
 	data := map[string]interface{}{"items": items}
 	cond := Condition{
-		Field:    "items",
+		Field:    "{items}",
 		Operator: "any",
 		Conditions: &Conditions{
 			Operator: "and",
-			Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+			Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 		},
 	}
 	context := newTestContext(data, "test.subject")
@@ -1072,11 +1649,11 @@ func BenchmarkArrayOperator_All(b *testing.B) {
 
 	data := map[string]interface{}{"items": items}
 	cond := Condition{
-		Field:    "items",
+		Field:    "{items}",
 		Operator: "all",
 		Conditions: &Conditions{
 			Operator: "and",
-			Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+			Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 		},
 	}
 	context := newTestContext(data, "test.subject")
@@ -1099,11 +1676,11 @@ func BenchmarkArrayOperator_None(b *testing.B) {
 
 	data := map[string]interface{}{"items": items}
 	cond := Condition{
-		Field:    "items",
+		Field:    "{items}",
 		Operator: "none",
 		Conditions: &Conditions{
 			Operator: "and",
-			Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+			Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 		},
 	}
 	context := newTestContext(data, "test.subject")
@@ -1127,11 +1704,11 @@ func BenchmarkArrayOperator_ShortCircuit(b *testing.B) {
 
 	data := map[string]interface{}{"items": items}
 	cond := Condition{
-		Field:    "items",
+		Field:    "{items}",
 		Operator: "any",
 		Conditions: &Conditions{
 			Operator: "and",
-			Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+			Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 		},
 	}
 	context := newTestContext(data, "test.subject")
@@ -1160,11 +1737,11 @@ func BenchmarkArrayOperator_MixedArray(b *testing.B) {
 
 	data := map[string]interface{}{"items": items}
 	cond := Condition{
-		Field:    "items",
+		Field:    "{items}",
 		Operator: "any",
 		Conditions: &Conditions{
 			Operator: "and",
-			Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+			Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 		},
 	}
 	context := newTestContext(data, "test.subject")

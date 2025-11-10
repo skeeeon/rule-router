@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"rule-router/internal/cli"
 	"rule-router/internal/logger"
-	"rule-router/internal/rule" // <-- FIX: Added missing import for rule package
+	"rule-router/internal/rule"
 	"rule-router/internal/tester"
 )
 

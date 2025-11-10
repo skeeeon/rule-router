@@ -54,7 +54,7 @@ func (t *Tester) Lint(rulesDir string) error {
 		if ext != ".yaml" && ext != ".yml" {
 			return nil
 		}
-		// LoadFromFile now performs all necessary validation
+		// LoadFromFile now performs all necessary validation including new syntax
 		if _, err := loader.LoadFromFile(path); err != nil {
 			fmt.Printf("✖ FAIL: %s\n  Error: %v\n", path, err)
 			failed = true
@@ -75,7 +75,7 @@ func (t *Tester) Lint(rulesDir string) error {
 }
 
 // Scaffold runs the scaffold mode, generating a test directory for a rule.
-// Detects forEach and generates appropriate test templates
+// ENHANCED: Better detection and example generation for new v0.4 syntax features
 func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 	if !strings.HasSuffix(rulePath, ".yaml") && !strings.HasSuffix(rulePath, ".yml") {
 		return fmt.Errorf("--scaffold requires a path to a .yaml rule file")
@@ -122,29 +122,163 @@ func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 	configBytes, _ := json.MarshalIndent(testConfig, "", "  ")
 	os.WriteFile(filepath.Join(testDir, "_test_config.json"), configBytes, 0644)
 
-	// Detect if rule uses forEach and generate appropriate examples
-	usesForEach, forEachField := detectForEach(&r)
+	// Analyze rule features to generate appropriate examples
+	features := analyzeRuleFeatures(&r)
 	
-	if usesForEach {
-		fmt.Printf("✓ Detected forEach operation on field: %s\n", forEachField)
-		fmt.Printf("  Generating array-based test examples...\n")
-		
-		// Generate array input example
-		t.generateForEachExamples(testDir, forEachField, &r)
+	fmt.Printf("📋 Rule Analysis:\n")
+	if features.UsesForEach {
+		fmt.Printf("   ✓ ForEach operation detected: %s\n", features.ForEachField)
+	}
+	if features.HasVariableComparisons {
+		fmt.Printf("   ✓ Variable-to-variable comparisons detected\n")
+	}
+	if features.HasKVLookups {
+		fmt.Printf("   ✓ KV store lookups detected\n")
+	}
+	if features.HasTimeConditions {
+		fmt.Printf("   ✓ Time-based conditions detected\n")
+	}
+	if features.HasArrayOperators {
+		fmt.Printf("   ✓ Array operators (any/all/none) detected\n")
+	}
+	fmt.Println()
+
+	// Generate examples based on detected features
+	if features.UsesForEach {
+		t.generateForEachExamples(testDir, features.ForEachField, &r, features)
+	} else if features.HasVariableComparisons || features.HasKVLookups {
+		t.generateVariableComparisonExamples(testDir, &r, features)
 	} else {
 		// Standard single-object examples
-		os.WriteFile(filepath.Join(testDir, "match_1.json"), []byte("{\n  \"field\": \"value\"\n}\n"), 0644)
-		os.WriteFile(filepath.Join(testDir, "not_match_1.json"), []byte("{\n  \"field\": \"other\"\n}\n"), 0644)
+		t.generateBasicExamples(testDir, &r, features)
+	}
+
+	// Generate mock KV data if needed
+	if features.HasKVLookups {
+		t.generateMockKVData(testDir, features.KVBuckets)
 	}
 
 	fmt.Printf("✓ Scaffolded test directory at: %s\n", testDir)
-	if usesForEach {
-		fmt.Printf("\n💡 TIP: Your rule uses forEach - example test files include:\n")
-		fmt.Printf("   • Array input messages\n")
-		fmt.Printf("   • Array output validation (multiple actions)\n")
-		fmt.Printf("   • Filter condition examples\n")
-	}
+	
+	// Provide helpful tips based on features
+	t.printScaffoldTips(features)
+	
 	return nil
+}
+
+// RuleFeatures holds analysis results about what features a rule uses
+type RuleFeatures struct {
+	UsesForEach            bool
+	ForEachField           string
+	HasVariableComparisons bool
+	HasKVLookups           bool
+	HasTimeConditions      bool
+	HasArrayOperators      bool
+	KVBuckets              []string
+	ComparisonFields       []string
+}
+
+// analyzeRuleFeatures performs comprehensive analysis of rule features
+func analyzeRuleFeatures(r *rule.Rule) RuleFeatures {
+	features := RuleFeatures{
+		KVBuckets:        make([]string, 0),
+		ComparisonFields: make([]string, 0),
+	}
+
+	// Check for forEach
+	if r.Action.NATS != nil && r.Action.NATS.ForEach != "" {
+		features.UsesForEach = true
+		features.ForEachField = r.Action.NATS.ForEach
+	} else if r.Action.HTTP != nil && r.Action.HTTP.ForEach != "" {
+		features.UsesForEach = true
+		features.ForEachField = r.Action.HTTP.ForEach
+	}
+
+	// Analyze conditions
+	if r.Conditions != nil {
+		analyzeConditions(r.Conditions, &features)
+	}
+
+	return features
+}
+
+// analyzeConditions recursively analyzes condition features
+func analyzeConditions(conds *rule.Conditions, features *RuleFeatures) {
+	for _, item := range conds.Items {
+		// Check for array operators
+		if item.Operator == "any" || item.Operator == "all" || item.Operator == "none" {
+			features.HasArrayOperators = true
+			if item.Conditions != nil {
+				analyzeConditions(item.Conditions, features)
+			}
+			continue
+		}
+
+		// Check for time-based conditions
+		if strings.Contains(item.Field, "@time") || strings.Contains(item.Field, "@day") || strings.Contains(item.Field, "@date") {
+			features.HasTimeConditions = true
+		}
+
+		// Check for KV lookups in field
+		if strings.Contains(item.Field, "@kv.") {
+			features.HasKVLookups = true
+			if bucket := extractKVBucket(item.Field); bucket != "" {
+				features.KVBuckets = appendUnique(features.KVBuckets, bucket)
+			}
+		}
+
+		// Check for variable comparisons (value is a template)
+		if valueStr, ok := item.Value.(string); ok {
+			if strings.HasPrefix(valueStr, "{") && strings.HasSuffix(valueStr, "}") {
+				features.HasVariableComparisons = true
+				features.ComparisonFields = appendUnique(features.ComparisonFields, item.Field)
+				
+				// Check for KV lookups in value
+				if strings.Contains(valueStr, "@kv.") {
+					features.HasKVLookups = true
+					if bucket := extractKVBucket(valueStr); bucket != "" {
+						features.KVBuckets = appendUnique(features.KVBuckets, bucket)
+					}
+				}
+			}
+		}
+	}
+
+	// Recurse into nested groups
+	for _, group := range conds.Groups {
+		analyzeConditions(&group, features)
+	}
+}
+
+// extractKVBucket extracts bucket name from a KV field reference
+func extractKVBucket(field string) string {
+	// Look for @kv.bucket.key pattern
+	if !strings.Contains(field, "@kv.") {
+		return ""
+	}
+	
+	start := strings.Index(field, "@kv.")
+	if start == -1 {
+		return ""
+	}
+	
+	remainder := field[start+4:] // Skip "@kv."
+	parts := strings.SplitN(remainder, ".", 2)
+	if len(parts) > 0 {
+		return parts[0]
+	}
+	
+	return ""
+}
+
+// appendUnique adds item to slice if not already present
+func appendUnique(slice []string, item string) []string {
+	for _, existing := range slice {
+		if existing == item {
+			return slice
+		}
+	}
+	return append(slice, item)
 }
 
 // detectForEach checks if a rule uses forEach and returns the field path
@@ -158,47 +292,157 @@ func detectForEach(r *rule.Rule) (bool, string) {
 	return false, ""
 }
 
+// detectVariableComparisons checks if a rule uses variable-to-variable comparisons
+func detectVariableComparisons(r *rule.Rule) bool {
+	if r.Conditions == nil {
+		return false
+	}
+	return hasVariableComparisonsRecursive(r.Conditions)
+}
+
+// hasVariableComparisonsRecursive checks conditions recursively for variable comparisons
+func hasVariableComparisonsRecursive(conds *rule.Conditions) bool {
+	for _, item := range conds.Items {
+		// Check if value is a template variable (not a literal)
+		if valueStr, ok := item.Value.(string); ok {
+			if strings.HasPrefix(valueStr, "{") && strings.HasSuffix(valueStr, "}") {
+				return true
+			}
+		}
+		
+		// Check nested conditions (for array operators)
+		if item.Conditions != nil {
+			if hasVariableComparisonsRecursive(item.Conditions) {
+				return true
+			}
+		}
+	}
+	
+	// Check nested groups
+	for _, group := range conds.Groups {
+		if hasVariableComparisonsRecursive(&group) {
+			return true
+		}
+	}
+	
+	return false
+}
+
+// generateBasicExamples creates simple test examples
+func (t *Tester) generateBasicExamples(testDir string, r *rule.Rule, features RuleFeatures) {
+	// Create basic match example
+	matchExample := map[string]interface{}{
+		"field":     "value",
+		"status":    "active",
+		"timestamp": "2025-01-15T10:30:00Z",
+	}
+	
+	matchBytes, _ := json.MarshalIndent(matchExample, "", "  ")
+	os.WriteFile(filepath.Join(testDir, "match_1.json"), matchBytes, 0644)
+
+	// Create basic non-match example
+	notMatchExample := map[string]interface{}{
+		"field":     "other",
+		"status":    "inactive",
+		"timestamp": "2025-01-15T10:30:00Z",
+	}
+	
+	notMatchBytes, _ := json.MarshalIndent(notMatchExample, "", "  ")
+	os.WriteFile(filepath.Join(testDir, "not_match_1.json"), notMatchBytes, 0644)
+	
+	// Generate README
+	readme := `# Test Suite
+
+This is a basic rule test suite. Update the example files to match your rule's conditions.
+
+## Test Files
+
+- **match_1.json**: Should match the rule conditions
+- **not_match_1.json**: Should NOT match the rule conditions
+
+## Tips
+
+1. Update field values to match your actual conditions
+2. Add match_1_output.json to validate the generated action
+3. Create additional test cases for edge cases
+
+## New v0.4 Syntax
+
+This rule uses the new {braces} syntax:
+- All condition fields use {braces}: {temperature}, {@time.hour}
+- Template variables use {braces}: {field}
+- Variable comparisons are now supported: field: "{a}" value: "{b}"
+`
+	
+	os.WriteFile(filepath.Join(testDir, "README.md"), []byte(readme), 0644)
+}
+
 // generateForEachExamples creates example test files for forEach rules
-func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.Rule) {
+func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.Rule, features RuleFeatures) {
+	// Extract field name from {braces} if present
+	fieldName := forEachField
+	if strings.HasPrefix(forEachField, "{") && strings.HasSuffix(forEachField, "}") {
+		fieldName = forEachField[1 : len(forEachField)-1]
+	}
+	
 	// Create example match case with array
 	matchExample := map[string]interface{}{
 		"timestamp": "2025-01-15T10:30:00Z",
-		forEachField: []interface{}{
-			map[string]interface{}{
-				"id":     "item-1",
-				"status": "active",
-				"value":  100,
-			},
-			map[string]interface{}{
-				"id":     "item-2",
-				"status": "active",
-				"value":  200,
-			},
-			map[string]interface{}{
-				"id":     "item-3",
-				"status": "inactive",
-				"value":  150,
-			},
+		"batch_id":  "batch-001",
+	}
+	
+	// Build realistic array data
+	arrayData := []interface{}{
+		map[string]interface{}{
+			"id":     "item-1",
+			"status": "active",
+			"value":  100,
+			"type":   "CRITICAL",
 		},
+		map[string]interface{}{
+			"id":     "item-2",
+			"status": "active",
+			"value":  200,
+			"type":   "CRITICAL",
+		},
+		map[string]interface{}{
+			"id":     "item-3",
+			"status": "inactive",
+			"value":  150,
+			"type":   "INFO",
+		},
+	}
+	
+	// Handle nested paths in forEach field (e.g., "data.items")
+	if strings.Contains(fieldName, ".") {
+		parts := strings.Split(fieldName, ".")
+		current := matchExample
+		for i := 0; i < len(parts)-1; i++ {
+			newLevel := make(map[string]interface{})
+			current[parts[i]] = newLevel
+			current = newLevel
+		}
+		current[parts[len(parts)-1]] = arrayData
+	} else {
+		matchExample[fieldName] = arrayData
 	}
 	
 	matchBytes, _ := json.MarshalIndent(matchExample, "", "  ")
 	os.WriteFile(filepath.Join(testDir, "match_1.json"), matchBytes, 0644)
 
 	// Create example output file (array of expected actions)
-	// This demonstrates multi-action validation
 	var outputExample []ExpectedOutput
 	
 	if r.Action.NATS != nil {
-		// Generate 2 expected NATS actions (assuming filter matches 2 items)
+		// Generate 2 expected NATS actions (assuming filter matches first 2 items)
 		outputExample = []ExpectedOutput{
 			{
 				Subject: "example.item-1",
-				Payload: json.RawMessage(`{"id":"item-1","status":"active","value":100}`),
+				Payload: json.RawMessage(`{"id":"item-1","status":"active","value":100,"type":"CRITICAL"}`),
 			},
 			{
 				Subject: "example.item-2",
-				Payload: json.RawMessage(`{"id":"item-2","status":"active","value":200}`),
+				Payload: json.RawMessage(`{"id":"item-2","status":"active","value":200,"type":"CRITICAL"}`),
 			},
 		}
 	} else if r.Action.HTTP != nil {
@@ -207,12 +451,12 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 			{
 				URL:     "https://api.example.com/items/item-1",
 				Method:  "POST",
-				Payload: json.RawMessage(`{"id":"item-1","status":"active","value":100}`),
+				Payload: json.RawMessage(`{"id":"item-1","status":"active","value":100,"type":"CRITICAL"}`),
 			},
 			{
 				URL:     "https://api.example.com/items/item-2",
 				Method:  "POST",
-				Payload: json.RawMessage(`{"id":"item-2","status":"active","value":200}`),
+				Payload: json.RawMessage(`{"id":"item-2","status":"active","value":200,"type":"CRITICAL"}`),
 			},
 		}
 	}
@@ -220,16 +464,32 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 	outputBytes, _ := json.MarshalIndent(outputExample, "", "  ")
 	os.WriteFile(filepath.Join(testDir, "match_1_output.json"), outputBytes, 0644)
 
-	// Create example non-match case (empty array or no matching elements)
+	// Create example non-match case (elements that don't pass filter)
 	notMatchExample := map[string]interface{}{
 		"timestamp": "2025-01-15T10:30:00Z",
-		forEachField: []interface{}{
-			map[string]interface{}{
-				"id":     "item-99",
-				"status": "inactive",
-				"value":  50,
-			},
+		"batch_id":  "batch-002",
+	}
+	
+	notMatchArray := []interface{}{
+		map[string]interface{}{
+			"id":     "item-99",
+			"status": "inactive",
+			"value":  50,
+			"type":   "INFO",
 		},
+	}
+	
+	if strings.Contains(fieldName, ".") {
+		parts := strings.Split(fieldName, ".")
+		current := notMatchExample
+		for i := 0; i < len(parts)-1; i++ {
+			newLevel := make(map[string]interface{})
+			current[parts[i]] = newLevel
+			current = newLevel
+		}
+		current[parts[len(parts)-1]] = notMatchArray
+	} else {
+		notMatchExample[fieldName] = notMatchArray
 	}
 	
 	notMatchBytes, _ := json.MarshalIndent(notMatchExample, "", "  ")
@@ -237,12 +497,357 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 
 	// Create additional example with empty array
 	emptyArrayExample := map[string]interface{}{
-		"timestamp":  "2025-01-15T10:30:00Z",
-		forEachField: []interface{}{},
+		"timestamp": "2025-01-15T10:30:00Z",
+		"batch_id":  "batch-003",
+	}
+	
+	if strings.Contains(fieldName, ".") {
+		parts := strings.Split(fieldName, ".")
+		current := emptyArrayExample
+		for i := 0; i < len(parts)-1; i++ {
+			newLevel := make(map[string]interface{})
+			current[parts[i]] = newLevel
+			current = newLevel
+		}
+		current[parts[len(parts)-1]] = []interface{}{}
+	} else {
+		emptyArrayExample[fieldName] = []interface{}{}
 	}
 	
 	emptyBytes, _ := json.MarshalIndent(emptyArrayExample, "", "  ")
 	os.WriteFile(filepath.Join(testDir, "not_match_2_empty_array.json"), emptyBytes, 0644)
+	
+	// Generate comprehensive README
+	readme := fmt.Sprintf(`# Test Suite for Rule with forEach
+
+This rule uses forEach on the field: %s
+
+## Test Files
+
+### match_1.json
+- Contains an array with 3 items
+- First 2 items should match the filter conditions
+- Expected to generate 2 actions (see match_1_output.json)
+
+### match_1_output.json
+- Array of expected actions
+- Each element represents one expected action from the forEach iteration
+- Update this based on your actual rule's subject/URL and payload templates
+
+### not_match_1.json
+- Contains items that don't match the filter conditions
+- Expected to generate 0 actions
+
+### not_match_2_empty_array.json
+- Contains an empty array
+- Expected to generate 0 actions
+
+## Tips
+
+1. Update the field values to match your actual conditions
+2. If your rule has a filter, ensure test data reflects what should/shouldn't pass
+3. The output file should match the EXACT subject/URL and payload your rule generates
+4. Add more test cases for edge cases specific to your rule
+
+## v0.4 Syntax Features
+
+This rule uses the new {braces} syntax:
+- **Condition fields**: {field}
+- **ForEach fields**: {arrayField}
+- **Template variables**: {variable}
+- **All references consistently use {braces}**
+
+## ForEach Context
+
+Remember the scope rules:
+- **{field}** → Current array element field
+- **{@msg.field}** → Root message field (explicit access)
+- **{@time.hour}** → System variables work in both scopes
+
+Example:
+` + "```yaml" + `
+forEach: "{readings}"
+filter:
+  items:
+    - field: "{value}"          # Element field
+      operator: gt
+      value: "{@msg.threshold}" # Root message field
+` + "```" + `
+`, forEachField)
+	
+	os.WriteFile(filepath.Join(testDir, "README.md"), []byte(readme), 0644)
+}
+
+// generateVariableComparisonExamples creates examples for rules with variable-to-variable comparisons
+func (t *Tester) generateVariableComparisonExamples(testDir string, r *rule.Rule, features RuleFeatures) {
+	// Create example with both fields present (should match)
+	matchExample := map[string]interface{}{
+		"temperature": 105,
+		"threshold":   100,
+		"sensor_id":   "sensor-001",
+		"timestamp":   "2025-01-15T10:30:00Z",
+	}
+	
+	matchBytes, _ := json.MarshalIndent(matchExample, "", "  ")
+	os.WriteFile(filepath.Join(testDir, "match_1_above_threshold.json"), matchBytes, 0644)
+
+	// Create example where comparison fails (below threshold)
+	notMatchExample := map[string]interface{}{
+		"temperature": 95,
+		"threshold":   100,
+		"sensor_id":   "sensor-001",
+		"timestamp":   "2025-01-15T10:30:00Z",
+	}
+	
+	notMatchBytes, _ := json.MarshalIndent(notMatchExample, "", "  ")
+	os.WriteFile(filepath.Join(testDir, "not_match_1_below_threshold.json"), notMatchBytes, 0644)
+
+	// Create example with missing comparison field
+	missingExample := map[string]interface{}{
+		"temperature": 105,
+		// threshold is missing
+		"sensor_id": "sensor-001",
+		"timestamp": "2025-01-15T10:30:00Z",
+	}
+	
+	missingBytes, _ := json.MarshalIndent(missingExample, "", "  ")
+	os.WriteFile(filepath.Join(testDir, "not_match_2_missing_field.json"), missingBytes, 0644)
+	
+	// Create example with type mismatch
+	typeMismatchExample := map[string]interface{}{
+		"temperature": "105",  // String instead of number
+		"threshold":   100,
+		"sensor_id":   "sensor-001",
+		"timestamp":   "2025-01-15T10:30:00Z",
+	}
+	
+	typeMismatchBytes, _ := json.MarshalIndent(typeMismatchExample, "", "  ")
+	os.WriteFile(filepath.Join(testDir, "match_2_type_coercion.json"), typeMismatchBytes, 0644)
+	
+	// Generate comprehensive README
+	readme := `# Test Suite for Rule with Variable Comparisons
+
+This rule uses variable-to-variable comparisons in conditions.
+
+## v0.4 Syntax Features
+
+This rule demonstrates the new {braces} syntax for variable comparisons:
+
+` + "```yaml" + `
+conditions:
+  items:
+    - field: "{temperature}"    # Left side: message field
+      operator: gt
+      value: "{threshold}"      # Right side: another message field (or @kv, @time, etc.)
+` + "```" + `
+
+## Test Files
+
+### match_1_above_threshold.json
+- Both fields present (temperature and threshold)
+- Comparison passes (temperature > threshold)
+- Expected to match and generate action
+
+### not_match_1_below_threshold.json
+- Both fields present
+- Comparison fails (temperature < threshold)
+- Expected to NOT match
+
+### not_match_2_missing_field.json
+- Missing the comparison field (threshold)
+- Expected to NOT match (missing variables fail gracefully)
+
+### match_2_type_coercion.json
+- Tests automatic type coercion
+- temperature is string "105", threshold is number 100
+- Should match due to automatic coercion
+
+## Tips for Variable Comparison Rules
+
+### 1. Always Test Both Fields Present
+This is your happy path - both variables exist and comparison works.
+
+### 2. Test Missing Fields
+Ensure your rule handles missing variables gracefully (should fail the condition).
+
+### 3. Test Type Mismatches
+The engine performs automatic type coercion:
+- String "100" == Number 100 → true
+- String "100" > Number 50 → true (coerced to number)
+- But be aware of edge cases!
+
+### 4. Use KV for Dynamic Thresholds
+` + "```yaml" + `
+field: "{temperature}"
+operator: gt
+value: "{@kv.sensor_config.{sensor_id}:max_temp}"
+` + "```" + `
+
+**Important**: Update **mock_kv_data.json** if using KV lookups!
+
+### 5. Add Output Validation
+Create a **match_1_output.json** file to validate the generated action:
+` + "```json" + `
+{
+  "subject": "alerts.sensor-001.high",
+  "payload": {
+    "sensor_id": "sensor-001",
+    "temperature": 105,
+    "threshold": 100
+  }
+}
+` + "```" + `
+
+## Common Patterns
+
+### Dynamic Threshold (from message)
+` + "```yaml" + `
+field: "{temperature}"
+operator: gt
+value: "{threshold}"
+` + "```" + `
+
+### Dynamic Threshold (from KV)
+` + "```yaml" + `
+field: "{temperature}"
+operator: gt
+value: "{@kv.config.{sensor_id}:max_temp}"
+` + "```" + `
+
+### Cross-Field Validation
+` + "```yaml" + `
+field: "{end_time}"
+operator: gt
+value: "{start_time}"
+` + "```" + `
+
+### Time-Based Comparison
+` + "```yaml" + `
+field: "{scheduled_hour}"
+operator: eq
+value: "{@time.hour}"
+` + "```" + `
+
+### Range Validation (Multiple Comparisons)
+` + "```yaml" + `
+conditions:
+  operator: and
+  items:
+    - field: "{value}"
+      operator: gte
+      value: "{min_threshold}"
+    - field: "{value}"
+      operator: lte
+      value: "{max_threshold}"
+` + "```" + `
+
+## Type Coercion Rules
+
+The engine automatically handles type conversions:
+
+| Left Type | Right Type | Comparison Behavior |
+|-----------|------------|---------------------|
+| number    | number     | Numeric comparison |
+| string    | string     | String comparison (case-sensitive) |
+| number    | string     | String coerced to number |
+| string    | number     | String coerced to number |
+| boolean   | boolean    | Boolean comparison |
+| boolean   | string     | String coerced to boolean ("true"/"false") |
+
+**Pro Tip**: Keep types consistent in your data for predictable behavior!
+
+## Troubleshooting
+
+### Variable Not Found Error
+` + "```" + `
+Error: variable not found: threshold
+` + "```" + `
+**Solution**: Ensure the field exists in your test JSON file.
+
+### Type Mismatch Unexpected Results
+` + "```json" + `
+{"temperature": "not_a_number", "threshold": 100}
+` + "```" + `
+**Solution**: Type coercion may fail silently. Validate your data types!
+
+### KV Lookup Returns Empty
+` + "```yaml" + `
+value: "{@kv.config.{sensor_id}:max_temp}"
+` + "```" + `
+**Solution**: Check **mock_kv_data.json** has the bucket and key defined.
+`
+	
+	os.WriteFile(filepath.Join(testDir, "README.md"), []byte(readme), 0644)
+}
+
+// generateMockKVData creates a mock KV data file for testing
+func (t *Tester) generateMockKVData(testDir string, buckets []string) {
+	mockKV := make(map[string]map[string]interface{})
+	
+	for _, bucket := range buckets {
+		mockKV[bucket] = map[string]interface{}{
+			"example-key": map[string]interface{}{
+				"field1": "value1",
+				"field2": 100,
+				"nested": map[string]interface{}{
+					"field3": "value3",
+				},
+			},
+		}
+	}
+	
+	kvBytes, _ := json.MarshalIndent(mockKV, "", "  ")
+	
+	// Add helpful comment at top
+	comment := `{
+  "_comment": "Mock KV data for testing. Structure: bucket -> key -> value",
+  "_instructions": "Update this file to match your KV references in the rule",
+`
+	
+	// Insert comment after opening brace
+	kvStr := string(kvBytes)
+	kvStr = "{" + comment[1:] + kvStr[1:]
+	
+	os.WriteFile(filepath.Join(testDir, "mock_kv_data.json"), []byte(kvStr), 0644)
+}
+
+// printScaffoldTips prints helpful tips based on detected features
+func (t *Tester) printScaffoldTips(features RuleFeatures) {
+	fmt.Println("\n💡 Tips for Your Rule:")
+	
+	if features.UsesForEach {
+		fmt.Println("   • This rule uses forEach - example files include array handling")
+		fmt.Println("   • Update match_1_output.json with expected actions (one per array element)")
+		fmt.Println("   • Test with empty arrays and filtered elements")
+	}
+	
+	if features.HasVariableComparisons {
+		fmt.Println("   • This rule uses variable comparisons - test with missing fields")
+		fmt.Println("   • Consider type coercion edge cases (string vs number)")
+		fmt.Println("   • Test both passing and failing comparisons")
+	}
+	
+	if features.HasKVLookups {
+		fmt.Println("   • This rule uses KV lookups - update mock_kv_data.json")
+		fmt.Printf("   • KV buckets detected: %s\n", strings.Join(features.KVBuckets, ", "))
+		fmt.Println("   • Ensure mock data matches your @kv.bucket.key:path references")
+	}
+	
+	if features.HasTimeConditions {
+		fmt.Println("   • This rule uses time conditions - update mockTime in _test_config.json")
+		fmt.Println("   • Test with different hours/days to verify time logic")
+	}
+	
+	if features.HasArrayOperators {
+		fmt.Println("   • This rule uses array operators (any/all/none)")
+		fmt.Println("   • Test with arrays of different sizes and match patterns")
+	}
+	
+	fmt.Println("\n📖 New v0.4 Syntax Reminders:")
+	fmt.Println("   • All condition fields use {braces}: {temperature}")
+	fmt.Println("   • System variables use {braces}: {@time.hour}, {@kv.bucket.key:field}")
+	fmt.Println("   • Variable comparisons are now supported: value: \"{threshold}\"")
+	fmt.Println("   • ForEach fields use {braces}: forEach: \"{items}\"")
 }
 
 // QuickCheck runs the quick check mode for interactive testing.

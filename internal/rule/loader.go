@@ -510,13 +510,23 @@ func (l *RulesLoader) validateHTTPAction(action *HTTPAction) error {
 
 // validateForEachConfig validates forEach field configuration
 func (l *RulesLoader) validateForEachConfig(forEachField string, filter *Conditions) error {
+	// CRITICAL: Validate template syntax for forEach fields
+	if !IsTemplate(forEachField) {
+		return fmt.Errorf("forEach field must use template syntax {field}, got: %s", forEachField)
+	}
+	
+	fieldName := ExtractVariable(forEachField)
+	if fieldName == "" {
+		return fmt.Errorf("invalid forEach template syntax: %s", forEachField)
+	}
+	
 	// Ensure it's a valid JSON path (no wildcards)
-	if strings.Contains(forEachField, "*") || strings.Contains(forEachField, ">") {
+	if strings.Contains(fieldName, "*") || strings.Contains(fieldName, ">") {
 		return fmt.Errorf("forEach field cannot contain wildcards: %s", forEachField)
 	}
 
 	// Validate path isn't too deeply nested (prevent stack overflow)
-	if strings.Count(forEachField, ".") > 10 {
+	if strings.Count(fieldName, ".") > 10 {
 		return fmt.Errorf("forEach path too deeply nested (max depth: 10): %s", forEachField)
 	}
 
@@ -565,9 +575,25 @@ func (l *RulesLoader) validateConditions(conditions *Conditions) error {
 	}
 
 	for i, condition := range conditions.Items {
+		// CRITICAL VALIDATION: All condition fields must use template syntax
 		if condition.Field == "" {
 			return fmt.Errorf("condition field cannot be empty at index %d", i)
 		}
+		
+		// Validate that condition field uses template syntax {field}
+		if !IsTemplate(condition.Field) {
+			return fmt.Errorf("condition field must use template syntax {variable} at index %d, got: %s (did you forget the braces?)", 
+				i, condition.Field)
+		}
+		
+		// Validate that the template is well-formed
+		varName := ExtractVariable(condition.Field)
+		if varName == "" {
+			return fmt.Errorf("condition field has malformed template syntax at index %d: %s (empty variable name)", 
+				i, condition.Field)
+		}
+		
+		// Validate operator
 		if !l.isValidOperator(condition.Operator) {
 			return fmt.Errorf("invalid condition operator '%s' at index %d", condition.Operator, i)
 		}
@@ -584,20 +610,21 @@ func (l *RulesLoader) validateConditions(conditions *Conditions) error {
 			}
 		}
 
-		if strings.HasPrefix(condition.Field, "@subject") {
-			if err := l.validateSubjectField(condition.Field); err != nil {
+		// Validate system fields (these are already templates, so just validate their content)
+		if strings.HasPrefix(varName, "@subject") {
+			if err := l.validateSubjectField(varName); err != nil {
 				return fmt.Errorf("invalid subject field '%s' at index %d: %w", condition.Field, i, err)
 			}
 		}
 
-		if strings.HasPrefix(condition.Field, "@path") {
-			if err := l.validatePathField(condition.Field); err != nil {
+		if strings.HasPrefix(varName, "@path") {
+			if err := l.validatePathField(varName); err != nil {
 				return fmt.Errorf("invalid path field '%s' at index %d: %w", condition.Field, i, err)
 			}
 		}
 
-		if strings.HasPrefix(condition.Field, "@kv") {
-			if err := l.validateKVFieldWithVariables(condition.Field); err != nil {
+		if strings.HasPrefix(varName, "@kv") {
+			if err := l.validateKVFieldWithVariables(varName); err != nil {
 				return fmt.Errorf("invalid KV field '%s' at index %d: %w", condition.Field, i, err)
 			}
 		}

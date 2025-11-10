@@ -5,6 +5,7 @@ package rule
 import (
 	json "github.com/goccy/go-json"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -47,6 +48,37 @@ type ElementError struct {
 	Index     int
 	ErrorType string
 	Error     error
+}
+
+// extractForEachField unwraps the forEach field from template syntax to get the actual path.
+// This is critical for the new brace-everywhere syntax.
+//
+// Examples:
+//   "{notifications}"        → "notifications"
+//   "{data.readings}"        → "data.readings"
+//   "{nested.path.array}"    → "nested.path.array"
+//   "{@items}"               → "@items"
+//   "notifications"          → "" (invalid - missing braces)
+//   "{}"                     → "" (invalid - empty)
+//
+// Returns empty string if the template is invalid (missing braces or empty content).
+func extractForEachField(forEachTemplate string) string {
+	template := strings.TrimSpace(forEachTemplate)
+	
+	// Must have both opening and closing braces
+	if !strings.HasPrefix(template, "{") || !strings.HasSuffix(template, "}") {
+		return ""
+	}
+	
+	// Extract content between braces
+	fieldPath := template[1 : len(template)-1]
+	
+	// Content cannot be empty
+	if strings.TrimSpace(fieldPath) == "" {
+		return ""
+	}
+	
+	return fieldPath
 }
 
 // NewProcessor creates a new processor with optional signature verification
@@ -380,10 +412,21 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 	p.logger.Debug("processing NATS action with forEach",
 		"forEachField", action.ForEach)
 
-	// Use brace-aware path splitting
-	arrayPath, err := SplitPathRespectingBraces(action.ForEach)
+	// Extract the field path from template braces
+	// forEach: "{data.readings}" → "data.readings"
+	fieldPath := extractForEachField(action.ForEach)
+	if fieldPath == "" {
+		return nil, fmt.Errorf("invalid forEach template syntax (must be {field}): %s", action.ForEach)
+	}
+	
+	p.logger.Debug("extracted forEach field path",
+		"template", action.ForEach,
+		"extractedPath", fieldPath)
+
+	// Use brace-aware path splitting on the EXTRACTED path
+	arrayPath, err := SplitPathRespectingBraces(fieldPath)
 	if err != nil {
-		return nil, fmt.Errorf("invalid forEach path '%s': %w", action.ForEach, err)
+		return nil, fmt.Errorf("invalid forEach path '%s': %w", fieldPath, err)
 	}
 
 	arrayValue, err := context.traverser.TraversePath(context.Msg, arrayPath)
@@ -612,10 +655,21 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 	p.logger.Debug("processing HTTP action with forEach",
 		"forEachField", action.ForEach)
 
-	// Use brace-aware path splitting
-	arrayPath, err := SplitPathRespectingBraces(action.ForEach)
+	// Extract the field path from template braces
+	// forEach: "{data.readings}" → "data.readings"
+	fieldPath := extractForEachField(action.ForEach)
+	if fieldPath == "" {
+		return nil, fmt.Errorf("invalid forEach template syntax (must be {field}): %s", action.ForEach)
+	}
+	
+	p.logger.Debug("extracted forEach field path",
+		"template", action.ForEach,
+		"extractedPath", fieldPath)
+
+	// Use brace-aware path splitting on the EXTRACTED path
+	arrayPath, err := SplitPathRespectingBraces(fieldPath)
 	if err != nil {
-		return nil, fmt.Errorf("invalid forEach path '%s': %w", action.ForEach, err)
+		return nil, fmt.Errorf("invalid forEach path '%s': %w", fieldPath, err)
 	}
 
 	arrayValue, err := context.traverser.TraversePath(context.Msg, arrayPath)

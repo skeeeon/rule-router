@@ -13,18 +13,18 @@
     operator: and
     items:
       # 1. Verify the signature is valid.
-      - field: "@signature.valid"
+      - field: "{@signature.valid}"
         operator: eq
         value: true
 
       # 2. (Recommended) Prevent replay attacks by checking the timestamp.
       #    This requires the message payload to have a 'timestamp' field (Unix seconds).
-      - field: "timestamp"
+      - field: "{timestamp}"
         operator: recent
         value: "10s" # Message must be recent (e.g., within 10 seconds).
 
       # 3. (Optional) Authorize the signer's public key against a KV store.
-      - field: "@kv.access_control.{@signature.pubkey}:status"
+      - field: "{@kv.access_control.{@signature.pubkey}:status}"
         operator: eq
         value: "active"
   action:

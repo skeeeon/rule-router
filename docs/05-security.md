@@ -71,22 +71,22 @@ The rule combines multiple checks for a robust security posture.
     operator: and
     items:
       # 1. Verify the cryptographic signature is valid
-      - field: "@signature.valid"
+      - field: "{@signature.valid}"
         operator: eq
         value: true
       
       # 2. Prevent replay attacks (message must be recent)
-      - field: "timestamp" # Unix seconds from payload
+      - field: "{timestamp}" # Unix seconds from payload
         operator: recent
         value: "5s"
       
       # 3. Check if the user's key is active in the KV store
-      - field: "@kv.access_control.{@signature.pubkey}:active"
+      - field: "{@kv.access_control.{@signature.pubkey}:active}"
         operator: eq
         value: true
       
       # 4. Verify the user has access to the requested door
-      - field: "@kv.access_control.{@signature.pubkey}:doors"
+      - field: "{@kv.access_control.{@signature.pubkey}:doors}"
         operator: contains
         value: "{door}"
   

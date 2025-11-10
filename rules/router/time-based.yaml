@@ -9,19 +9,19 @@
   conditions:
     operator: and
     items:
-      - field: temperature
+      - field: "{temperature}"
         operator: gt
         value: 25
-      - field: "@time.hour"
+      - field: "{@time.hour}"
         operator: gte
         value: 9
-      - field: "@time.hour"
+      - field: "{@time.hour}"
         operator: lt
         value: 17
-      - field: "@day.number"
+      - field: "{@day.number}"
         operator: gte
         value: 1        # Monday
-      - field: "@day.number"
+      - field: "{@day.number}"
         operator: lte
         value: 5        # Friday
   action:
@@ -45,10 +45,10 @@
   conditions:
     operator: and
     items:
-      - field: severity
+      - field: "{severity}"
         operator: eq
         value: "critical"
-      - field: "@day.number"
+      - field: "{@day.number}"
         operator: gt
         value: 5        # Saturday (6) or Sunday (7)
   action:
@@ -73,16 +73,16 @@
   conditions:
     operator: and
     items:
-      - field: motion_detected
+      - field: "{motion_detected}"
         operator: eq
         value: true
-      - field: "@time.hour"
+      - field: "{@time.hour}"
         operator: gte
         value: 22       # After 10 PM
     groups:
       - operator: or
         items:
-          - field: "@time.hour"
+          - field: "{@time.hour}"
             operator: lt
             value: 6    # Before 6 AM
   action:
@@ -106,16 +106,16 @@
   conditions:
     operator: and
     items:
-      - field: alert_type
+      - field: "{alert_type}"
         operator: neq
         value: "critical"
-      - field: "@day.name"
+      - field: "{@day.name}"
         operator: eq
         value: "sunday"
-      - field: "@time.hour"
+      - field: "{@time.hour}"
         operator: gte
         value: 2
-      - field: "@time.hour"
+      - field: "{@time.hour}"
         operator: lt
         value: 4
   action:
@@ -138,13 +138,13 @@
   conditions:
     operator: and
     items:
-      - field: data_type
+      - field: "{data_type}"
         operator: eq
         value: "analytics"
-      - field: "@time.hour"
+      - field: "{@time.hour}"
         operator: gte
         value: 18       # After 6 PM
-      - field: "@time.hour"
+      - field: "{@time.hour}"
         operator: lt
         value: 24       # Before midnight
   action:
@@ -168,16 +168,16 @@
   conditions:
     operator: and
     items:
-      - field: check_type
+      - field: "{check_type}"
         operator: eq
         value: "monthly"
-      - field: "@date.day"
+      - field: "{@date.day}"
         operator: eq
         value: 1        # First day of month
-      - field: "@time.hour"
+      - field: "{@time.hour}"
         operator: eq
         value: 8        # 8 AM
-      - field: "@time.minute"
+      - field: "{@time.minute}"
         operator: eq
         value: 0        # Exactly 8:00 AM
   action:
@@ -200,10 +200,10 @@
   conditions:
     operator: and
     items:
-      - field: task_type
+      - field: "{task_type}"
         operator: eq
         value: "batch_job"
-      - field: "@day.number"
+      - field: "{@day.number}"
         operator: lte
         value: 5        # Monday through Friday
   action:
@@ -226,10 +226,10 @@
   conditions:
     operator: and
     items:
-      - field: task_type
+      - field: "{task_type}"
         operator: eq
         value: "batch_job"
-      - field: "@day.number"
+      - field: "{@day.number}"
         operator: gt
         value: 5        # Saturday and Sunday
   action:
@@ -253,13 +253,13 @@
   conditions:
     operator: and
     items:
-      - field: event_type
+      - field: "{event_type}"
         operator: eq
         value: "notification"
-      - field: "@date.month"
+      - field: "{@date.month}"
         operator: eq
         value: 12       # December
-      - field: "@date.day"
+      - field: "{@date.day}"
         operator: eq
         value: 25       # 25th
   action:
@@ -284,10 +284,10 @@
   conditions:
     operator: and
     items:
-      - field: schedule_type
+      - field: "{schedule_type}"
         operator: eq
         value: "delayed"
-      - field: delay_hours
+      - field: "{delay_hours}"
         operator: gt
         value: 0
   action:

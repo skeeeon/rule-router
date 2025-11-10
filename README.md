@@ -97,7 +97,7 @@ This rule listens for inbound webhooks at `/webhooks/devices` and publishes a st
   conditions:
     operator: and
     items:
-      - field: "status"
+      - field: "{status}"
         operator: "eq"
         value: "error"
   action:
@@ -122,7 +122,7 @@ This rule listens for the internal status messages and routes critical errors to
   conditions:
     operator: and
     items:
-      - field: "error_code"
+      - field: "{error_code}"
         operator: gte
         value: 5000 # Critical error codes
   action:
@@ -139,12 +139,12 @@ You will need two separate configuration files (see the `config/` directory for 
 
 **Terminal 1: Start the HTTP Gateway**
 ```bash
-./http-gateway -config config/http-gateway.yaml -rules ./rules
+./http-gateway --config config/http-gateway.yaml --rules ./rules
 ```
 
 **Terminal 2: Start the Rule Router**
 ```bash
-./rule-router -config config/rule-router.yaml -rules ./rules
+./rule-router --config config/rule-router.yaml --rules ./rules
 ```
 
 ### 5. Test the Flow

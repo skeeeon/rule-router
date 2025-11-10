@@ -28,7 +28,7 @@ Bidirectional HTTP ↔ NATS integration gateway with rule-based routing, templat
 go build -o http-gateway ./cmd/http-gateway
 
 # Run
-./http-gateway -config config/http-gateway.yaml -rules rules/
+./http-gateway --config config/http-gateway.yaml --rules rules/
 ```
 
 ### Example Configuration
@@ -64,7 +64,7 @@ Receive HTTP webhooks and publish to NATS:
   conditions:
     operator: and
     items:
-      - field: "@header.X-GitHub-Event"
+      - field: "{@header.X-GitHub-Event}"
         operator: eq
         value: "pull_request"
   action:
@@ -117,11 +117,11 @@ This example processes a Stripe webhook containing multiple events, generating o
   action:
     nats:
       # Generate one NATS message per successful charge
-      forEach: "data"
+      forEach: "{data}"
       filter:
         operator: and
         items:
-          - field: "type"
+          - field: "{type}"
             operator: eq
             value: "charge.succeeded"
       subject: "payments.success.{object.customer}"

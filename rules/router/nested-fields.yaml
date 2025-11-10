@@ -30,16 +30,16 @@
     operator: and
     items:
       # Nested field access in conditions (NOW SUPPORTED!)
-      - field: device.type                     # ✅ Nested field access
+      - field: "{device.type}"                     # ✅ Nested field access
         operator: eq
         value: "temperature"
-      - field: data.reading.value              # ✅ Deep nested access
+      - field: "{data.reading.value}"              # ✅ Deep nested access
         operator: gt
         value: 25
-      - field: data.reading.unit               # ✅ Nested string field
+      - field: "{data.reading.unit}"               # ✅ Nested string field
         operator: eq
         value: "celsius"
-      - field: metadata.calibrated             # ✅ Nested boolean field
+      - field: "{metadata.calibrated}"             # ✅ Nested boolean field
         operator: eq
         value: true
   action:
@@ -95,19 +95,19 @@
   conditions:
     operator: and
     items:
-      - field: event.type                      # ✅ Nested condition
+      - field: "{event.type}"                      # ✅ Nested condition
         operator: eq
         value: "order"
-      - field: event.action                    # ✅ Nested condition
+      - field: "{event.action}"                    # ✅ Nested condition
         operator: eq
         value: "created"
-      - field: order.customer.tier             # ✅ Deep nested condition
+      - field: "{order.customer.tier}"             # ✅ Deep nested condition
         operator: eq
         value: "premium"
-      - field: order.items.total_value         # ✅ Nested numeric condition
+      - field: "{order.items.total_value}"         # ✅ Nested numeric condition
         operator: gte
         value: 1000
-      - field: order.payment.method            # ✅ Nested string condition
+      - field: "{order.payment.method}"            # ✅ Nested string condition
         operator: eq
         value: "credit_card"
   action:
@@ -166,16 +166,16 @@
   conditions:
     operator: and
     items:
-      - field: response.status.code            # ✅ Nested numeric condition
+      - field: "{response.status.code}"             # ✅ Nested numeric condition
         operator: eq
         value: 200
-      - field: response.headers.content_type   # ✅ Nested string condition
+      - field: "{response.headers.content_type}"    # ✅ Nested string condition
         operator: eq
         value: "application/json"
-      - field: response.body.data.user_count   # ✅ Deep nested condition
+      - field: "{response.body.data.user_count}"    # ✅ Deep nested condition
         operator: gt
         value: 1000
-      - field: response.body.data.system_health # ✅ Nested health check
+      - field: "{response.body.data.system_health}" # ✅ Nested health check
         operator: eq
         value: "healthy"
   action:
@@ -222,28 +222,28 @@
     operator: and
     items:
       # Mix of top-level and nested conditions
-      - field: priority                       # ✅ Top-level field (backward compatible)
+      - field: "{priority}"                       # ✅ Top-level field (backward compatible)
         operator: eq
         value: "high"
-      - field: source                         # ✅ Top-level field
+      - field: "{source}"                         # ✅ Top-level field
         operator: eq
         value: "production"
-      - field: alert.severity                 # ✅ Nested field
+      - field: "{alert.severity}"                 # ✅ Nested field
         operator: eq
         value: "critical"
-      - field: alert.details.cpu_usage       # ✅ Deep nested numeric field
+      - field: "{alert.details.cpu_usage}"        # ✅ Deep nested numeric field
         operator: gte
         value: 90
-      - field: alert.details.memory_usage     # ✅ Deep nested numeric field
+      - field: "{alert.details.memory_usage}"     # ✅ Deep nested numeric field
         operator: gte
         value: 85
     groups:
       - operator: or
         items:
-          - field: alert.details.disk_space   # ✅ Nested in group condition
+          - field: "{alert.details.disk_space}"   # ✅ Nested in group condition
             operator: lte
             value: 20
-          - field: alert.category             # ✅ Nested condition in OR group
+          - field: "{alert.category}"             # ✅ Nested condition in OR group
             operator: eq
             value: "performance"
   action:
@@ -293,13 +293,13 @@
   conditions:
     operator: and
     items:
-      - field: user.profile.preferences.notifications  # ✅ Very deep nesting
+      - field: "{user.profile.preferences.notifications}"  # ✅ Very deep nesting
         operator: eq
         value: true
-      - field: user.activity.session_count             # ✅ Nested numeric
+      - field: "{user.activity.session_count}"             # ✅ Nested numeric
         operator: gt
         value: 10
-      - field: user.profile.preferences.theme          # ✅ Deep nested string
+      - field: "{user.profile.preferences.theme}"          # ✅ Deep nested string
         operator: eq
         value: "dark"
   action:

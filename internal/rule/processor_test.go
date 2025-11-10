@@ -60,7 +60,7 @@ func TestProcessor_Orchestration(t *testing.T) {
 			},
 			Conditions: &Conditions{
 				Operator: "and",
-				Items:    []Condition{{Field: "status", Operator: "eq", Value: "active"}},
+				Items:    []Condition{{Field: "{status}", Operator: "eq", Value: "active"}},
 			},
 			Action: Action{
 				NATS: &NATSAction{
@@ -234,6 +234,84 @@ func TestTemplateEngine_ComplexTemplates(t *testing.T) {
 }
 
 // ========================================
+// EXTRACT FOREACH FIELD TESTS (NEW)
+// ========================================
+
+// TestExtractForEachField tests the new forEach field extraction with brace syntax
+func TestExtractForEachField(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "simple field with braces",
+			input:    "{notifications}",
+			expected: "notifications",
+		},
+		{
+			name:     "nested field with braces",
+			input:    "{data.items}",
+			expected: "data.items",
+		},
+		{
+			name:     "deeply nested field",
+			input:    "{response.data.events.items}",
+			expected: "response.data.events.items",
+		},
+		{
+			name:     "root array accessor",
+			input:    "{@items}",
+			expected: "@items",
+		},
+		{
+			name:     "field with whitespace",
+			input:    "  {notifications}  ",
+			expected: "notifications",
+		},
+		{
+			name:     "invalid - missing braces",
+			input:    "notifications",
+			expected: "",
+		},
+		{
+			name:     "invalid - only opening brace",
+			input:    "{notifications",
+			expected: "",
+		},
+		{
+			name:     "invalid - only closing brace",
+			input:    "notifications}",
+			expected: "",
+		},
+		{
+			name:     "invalid - empty braces",
+			input:    "{}",
+			expected: "",
+		},
+		{
+			name:     "invalid - whitespace only in braces",
+			input:    "{  }",
+			expected: "",
+		},
+		{
+			name:     "complex nested path",
+			input:    "{nested.path.with.many.levels}",
+			expected: "nested.path.with.many.levels",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractForEachField(tt.input)
+			if result != tt.expected {
+				t.Errorf("extractForEachField(%q) = %q, expected %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// ========================================
 // FOREACH TESTS - NATS ACTIONS
 // ========================================
 
@@ -242,7 +320,7 @@ func TestProcessNATSActionWithForEach_Basic(t *testing.T) {
 	processor := newTestProcessor()
 
 	action := &NATSAction{
-		ForEach: "items",
+		ForEach: "{items}",
 		Subject: "alerts.{id}",
 		Payload: `{"id": "{id}", "value": {value}}`,
 	}
@@ -285,16 +363,84 @@ func TestProcessNATSActionWithForEach_Basic(t *testing.T) {
 	}
 }
 
+// TestProcessNATSActionWithForEach_InvalidSyntax tests forEach with old syntax (should fail)
+func TestProcessNATSActionWithForEach_InvalidSyntax(t *testing.T) {
+	processor := newTestProcessor()
+
+	tests := []struct {
+		name        string
+		forEachField string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "missing braces",
+			forEachField: "items",
+			wantErr:     true,
+			errContains: "invalid forEach template syntax",
+		},
+		{
+			name:        "empty braces",
+			forEachField: "{}",
+			wantErr:     true,
+			errContains: "invalid forEach template syntax",
+		},
+		{
+			name:        "only opening brace",
+			forEachField: "{items",
+			wantErr:     true,
+			errContains: "invalid forEach template syntax",
+		},
+		{
+			name:        "valid syntax",
+			forEachField: "{items}",
+			wantErr:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			action := &NATSAction{
+				ForEach: tt.forEachField,
+				Subject: "alerts.{id}",
+				Payload: `{"id": "{id}"}`,
+			}
+
+			data := map[string]interface{}{
+				"items": []interface{}{
+					map[string]interface{}{"id": "item1"},
+				},
+			}
+
+			context := newTemplateTestContext(data, "test.subject", time.Now())
+
+			_, err := processor.processNATSActionWithForEach(action, context)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("Expected error containing '%s', got nil", tt.errContains)
+				} else if !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("Expected error containing '%s', got: %v", tt.errContains, err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Expected no error, got: %v", err)
+				}
+			}
+		})
+	}
+}
+
 // TestProcessNATSActionWithForEach_WithFilter tests forEach with filter conditions
 func TestProcessNATSActionWithForEach_WithFilter(t *testing.T) {
 	processor := newTestProcessor()
 
 	action := &NATSAction{
-		ForEach: "items",
+		ForEach: "{items}",
 		Filter: &Conditions{
 			Operator: "and",
 			Items: []Condition{
-				{Field: "status", Operator: "eq", Value: "active"},
+				{Field: "{status}", Operator: "eq", Value: "active"},
 			},
 		},
 		Subject: "alerts.{id}",
@@ -335,7 +481,7 @@ func TestProcessNATSActionWithForEach_EmptyArray(t *testing.T) {
 	processor := newTestProcessor()
 
 	action := &NATSAction{
-		ForEach: "items",
+		ForEach: "{items}",
 		Subject: "alerts.{id}",
 		Payload: `{"id": "{id}"}`,
 	}
@@ -363,11 +509,11 @@ func TestProcessNATSActionWithForEach_MixedArray(t *testing.T) {
 	// MODIFICATION: Add a filter to explicitly process only elements that have an 'id' field.
 	// This is the correct way to handle mixed arrays.
 	action := &NATSAction{
-		ForEach: "items",
+		ForEach: "{items}",
 		Filter: &Conditions{
 			Operator: "and",
 			Items: []Condition{
-				{Field: "id", Operator: "exists"},
+				{Field: "{id}", Operator: "exists"},
 			},
 		},
 		Subject: "alerts.{id}",
@@ -412,7 +558,7 @@ func TestProcessNATSActionWithForEach_RootMessageAccess(t *testing.T) {
 	processor := newTestProcessor()
 
 	action := &NATSAction{
-		ForEach: "notifications",
+		ForEach: "{notifications}",
 		Subject: "alerts.{id}",
 		Payload: `{"id": "{id}", "siteId": "{@msg.siteId}", "deviceId": "{@msg.deviceId}"}`,
 	}
@@ -461,7 +607,7 @@ func TestProcessNATSActionWithForEach_Passthrough(t *testing.T) {
 	processor := newTestProcessor()
 
 	action := &NATSAction{
-		ForEach:     "items",
+		ForEach:     "{items}",
 		Subject:     "alerts.{id}",
 		Passthrough: true,
 	}
@@ -506,7 +652,7 @@ func TestProcessNATSActionWithForEach_IterationLimit(t *testing.T) {
 	processor.SetMaxForEachIterations(5) // Set low limit for testing
 
 	action := &NATSAction{
-		ForEach: "items",
+		ForEach: "{items}",
 		Subject: "alerts.{id}",
 		Payload: `{"id": "{id}"}`,
 	}
@@ -538,7 +684,7 @@ func TestProcessNATSActionWithForEach_NestedFields(t *testing.T) {
 	processor := newTestProcessor()
 
 	action := &NATSAction{
-		ForEach: "notifications",
+		ForEach: "{notifications}",
 		Subject: "alerts.{event.alarmId}",
 		Payload: `{"alarmId": "{event.alarmId}", "alarmName": "{event.alarmName}"}`,
 	}
@@ -585,7 +731,7 @@ func TestProcessNATSActionWithForEach_Headers(t *testing.T) {
 	processor := newTestProcessor()
 
 	action := &NATSAction{
-		ForEach: "items",
+		ForEach: "{items}",
 		Subject: "alerts.{id}",
 		Payload: `{"id": "{id}"}`,
 		Headers: map[string]string{
@@ -634,7 +780,7 @@ func TestProcessHTTPActionWithForEach_Basic(t *testing.T) {
 	processor := newTestProcessor()
 
 	action := &HTTPAction{
-		ForEach: "items",
+		ForEach: "{items}",
 		URL:     "https://api.example.com/items/{id}",
 		Method:  "POST",
 		Payload: `{"id": "{id}", "value": {value}}`,
@@ -667,6 +813,35 @@ func TestProcessHTTPActionWithForEach_Basic(t *testing.T) {
 	}
 }
 
+// TestProcessHTTPActionWithForEach_InvalidSyntax tests forEach with old syntax (should fail)
+func TestProcessHTTPActionWithForEach_InvalidSyntax(t *testing.T) {
+	processor := newTestProcessor()
+
+	action := &HTTPAction{
+		ForEach: "items", // Missing braces
+		URL:     "https://api.example.com/items/{id}",
+		Method:  "POST",
+		Payload: `{"id": "{id}"}`,
+	}
+
+	data := map[string]interface{}{
+		"items": []interface{}{
+			map[string]interface{}{"id": "item1"},
+		},
+	}
+
+	context := newTemplateTestContext(data, "test.subject", time.Now())
+
+	_, err := processor.processHTTPActionWithForEach(action, context)
+	if err == nil {
+		t.Fatal("Expected error for missing braces, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "invalid forEach template syntax") {
+		t.Errorf("Expected 'invalid forEach template syntax' error, got: %v", err)
+	}
+}
+
 // TestProcessHTTPActionWithForEach_WithRetry tests retry config preservation
 func TestProcessHTTPActionWithForEach_WithRetry(t *testing.T) {
 	processor := newTestProcessor()
@@ -678,7 +853,7 @@ func TestProcessHTTPActionWithForEach_WithRetry(t *testing.T) {
 	}
 
 	action := &HTTPAction{
-		ForEach: "items",
+		ForEach: "{items}",
 		URL:     "https://api.example.com/items/{id}",
 		Method:  "POST",
 		Payload: `{"id": "{id}"}`,
@@ -720,7 +895,7 @@ func TestProcessForEach_NonExistentField(t *testing.T) {
 	processor := newTestProcessor()
 
 	action := &NATSAction{
-		ForEach: "nonexistent",
+		ForEach: "{nonexistent}",
 		Subject: "alerts.{id}",
 		Payload: `{"id": "{id}"}`,
 	}
@@ -746,7 +921,7 @@ func TestProcessForEach_NonArrayField(t *testing.T) {
 	processor := newTestProcessor()
 
 	action := &NATSAction{
-		ForEach: "items",
+		ForEach: "{items}",
 		Subject: "alerts.{id}",
 		Payload: `{"id": "{id}"}`,
 	}
@@ -772,11 +947,11 @@ func TestProcessForEach_AllElementsFiltered(t *testing.T) {
 	processor := newTestProcessor()
 
 	action := &NATSAction{
-		ForEach: "items",
+		ForEach: "{items}",
 		Filter: &Conditions{
 			Operator: "and",
 			Items: []Condition{
-				{Field: "status", Operator: "eq", Value: "critical"},
+				{Field: "{status}", Operator: "eq", Value: "critical"},
 			},
 		},
 		Subject: "alerts.{id}",
@@ -811,11 +986,11 @@ func TestProcessForEach_RealWorldBatchNotification(t *testing.T) {
 	processor := newTestProcessor()
 
 	action := &NATSAction{
-		ForEach: "notification",
+		ForEach: "{notification}",
 		Filter: &Conditions{
 			Operator: "and",
 			Items: []Condition{
-				{Field: "type", Operator: "eq", Value: "DEVICE_MOTION_START"},
+				{Field: "{type}", Operator: "eq", Value: "DEVICE_MOTION_START"},
 			},
 		},
 		Subject: "alerts.motion.{event.alarmId}",
@@ -929,7 +1104,7 @@ func BenchmarkProcessForEach_Small(b *testing.B) {
 	processor := newTestProcessor()
 
 	action := &NATSAction{
-		ForEach: "items",
+		ForEach: "{items}",
 		Subject: "alerts.{id}",
 		Payload: `{"id": "{id}", "value": {value}}`,
 	}
@@ -955,7 +1130,7 @@ func BenchmarkProcessForEach_Large(b *testing.B) {
 	processor := newTestProcessor()
 
 	action := &NATSAction{
-		ForEach: "items",
+		ForEach: "{items}",
 		Subject: "alerts.{id}",
 		Payload: `{"id": "{id}", "value": {value}}`,
 	}
@@ -983,11 +1158,11 @@ func BenchmarkProcessForEach_WithFilter(b *testing.B) {
 	processor := newTestProcessor()
 
 	action := &NATSAction{
-		ForEach: "items",
+		ForEach: "{items}",
 		Filter: &Conditions{
 			Operator: "and",
 			Items: []Condition{
-				{Field: "value", Operator: "gt", Value: 50},
+				{Field: "{value}", Operator: "gt", Value: 50},
 			},
 		},
 		Subject: "alerts.{id}",
@@ -1017,7 +1192,7 @@ func BenchmarkProcessForEach_MixedArray(b *testing.B) {
 	processor := newTestProcessor()
 
 	action := &NATSAction{
-		ForEach: "items",
+		ForEach: "{items}",
 		Subject: "alerts.{id}",
 		Payload: `{"id": "{id}"}`,
 	}
@@ -1043,5 +1218,20 @@ func BenchmarkProcessForEach_MixedArray(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		processor.processNATSActionWithForEach(action, context)
+	}
+}
+
+// BenchmarkExtractForEachField benchmarks the forEach field extraction
+func BenchmarkExtractForEachField(b *testing.B) {
+	testCases := []string{
+		"{notifications}",
+		"{data.items}",
+		"{nested.path.array}",
+		"{@items}",
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		extractForEachField(testCases[i%len(testCases)])
 	}
 }

@@ -57,11 +57,17 @@ func TestLoadFromDirectory_SuccessCases(t *testing.T) {
 	loader := newTestLoader()
 	tempDir := t.TempDir()
 
-	// UPDATED: YAML content now uses the new trigger/action structure.
+	// UPDATED: All fields now use template syntax {field}
 	createTempRuleFile(t, tempDir, "rule1.yaml", `
 - trigger:
     nats:
       subject: sensors.temp
+  conditions:
+    operator: and
+    items:
+      - field: "{temperature}"
+        operator: gt
+        value: 25
   action:
     nats:
       subject: alerts.temp
@@ -71,6 +77,12 @@ func TestLoadFromDirectory_SuccessCases(t *testing.T) {
 - trigger:
     nats:
       subject: sensors.humidity
+  conditions:
+    operator: and
+    items:
+      - field: "{humidity}"
+        operator: gte
+        value: 60
   action:
     nats:
       subject: alerts.humidity
@@ -80,6 +92,12 @@ func TestLoadFromDirectory_SuccessCases(t *testing.T) {
 - trigger:
     nats:
       subject: multi.1
+  conditions:
+    operator: and
+    items:
+      - field: "{status}"
+        operator: eq
+        value: "active"
   action:
     nats:
       subject: out.1
@@ -225,18 +243,50 @@ func TestLoadFromDirectory_ValidationErrors(t *testing.T) {
 		{
 			name: "invalid condition item operator",
 			ruleContent: `- trigger: { nats: { subject: a } }
-  conditions: { operator: "and", items: [{field: f, operator: "equals", value: "v"}] }
+  conditions: { operator: "and", items: [{field: "{f}", operator: "equals", value: "v"}] }
   action: { nats: { subject: b, payload: "" } }`,
 			errMsg: "invalid condition operator 'equals'",
 		},
 		{
 			name: "invalid subject field (non-numeric)",
 			ruleContent: `- trigger: { nats: { subject: a } }
-  conditions: { operator: "and", items: [{field: "@subject.abc", operator: "exists"}] }
+  conditions: { operator: "and", items: [{field: "{@subject.abc}", operator: "exists"}] }
   action: { nats: { subject: b, payload: "" } }`,
 			errMsg: "invalid subject field format",
 		},
-		// Removed tests for missing colon, as it's now valid.
+		// NEW: Template syntax validation tests
+		{
+			name: "condition field missing braces",
+			ruleContent: `- trigger: { nats: { subject: a } }
+  conditions: { operator: "and", items: [{field: "temperature", operator: "gt", value: 30}] }
+  action: { nats: { subject: b, payload: "" } }`,
+			errMsg: "must use template syntax {variable}",
+		},
+		{
+			name: "condition field with malformed template",
+			ruleContent: `- trigger: { nats: { subject: a } }
+  conditions: { operator: "and", items: [{field: "{}", operator: "gt", value: 30}] }
+  action: { nats: { subject: b, payload: "" } }`,
+			errMsg: "malformed template syntax",
+		},
+		{
+			name: "forEach field missing braces",
+			ruleContent: `- trigger: { nats: { subject: a } }
+  action: { nats: { forEach: "items", subject: "out.{id}", payload: "{}" } }`,
+			errMsg: "forEach field must use template syntax {field}",
+		},
+		{
+			name: "forEach field with empty braces",
+			ruleContent: `- trigger: { nats: { subject: a } }
+  action: { nats: { forEach: "{}", subject: "out.{id}", payload: "{}" } }`,
+			errMsg: "invalid forEach template syntax",
+		},
+		{
+			name: "forEach field with wildcards",
+			ruleContent: `- trigger: { nats: { subject: a } }
+  action: { nats: { forEach: "{items.*}", subject: "out.{id}", payload: "{}" } }`,
+			errMsg: "forEach field cannot contain wildcards",
+		},
 	}
 
 	for _, tt := range tests {
@@ -251,6 +301,409 @@ func TestLoadFromDirectory_ValidationErrors(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tt.errMsg) {
 				t.Errorf("Expected error to contain '%s', but got: %v", tt.errMsg, err)
+			}
+		})
+	}
+}
+
+// TestConditionField_TemplateSyntaxValidation tests the new template syntax requirement
+func TestConditionField_TemplateSyntaxValidation(t *testing.T) {
+	tests := []struct {
+		name        string
+		field       string
+		shouldPass  bool
+		errMsg      string
+	}{
+		{
+			name:       "valid message field with braces",
+			field:      "{temperature}",
+			shouldPass: true,
+		},
+		{
+			name:       "valid nested field with braces",
+			field:      "{sensor.reading.value}",
+			shouldPass: true,
+		},
+		{
+			name:       "valid system time field",
+			field:      "{@time.hour}",
+			shouldPass: true,
+		},
+		{
+			name:       "valid subject token",
+			field:      "{@subject.1}",
+			shouldPass: true,
+		},
+		{
+			name:       "valid KV field",
+			field:      "{@kv.device_config.sensor-123:threshold}",
+			shouldPass: true,
+		},
+		{
+			name:       "valid header field",
+			field:      "{@header.X-Device-ID}",
+			shouldPass: true,
+		},
+		{
+			name:       "invalid - missing braces",
+			field:      "temperature",
+			shouldPass: false,
+			errMsg:     "must use template syntax {variable}",
+		},
+		{
+			name:       "invalid - only opening brace",
+			field:      "{temperature",
+			shouldPass: false,
+			errMsg:     "must use template syntax {variable}",
+		},
+		{
+			name:       "invalid - only closing brace",
+			field:      "temperature}",
+			shouldPass: false,
+			errMsg:     "must use template syntax {variable}",
+		},
+		{
+			name:       "invalid - empty braces",
+			field:      "{}",
+			shouldPass: false,
+			errMsg:     "malformed template syntax",
+		},
+		{
+			name:       "invalid - whitespace only in braces",
+			field:      "{  }",
+			shouldPass: false,
+			errMsg:     "malformed template syntax",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			loader := newTestLoader()
+			ruleContent := `- trigger: { nats: { subject: a } }
+  conditions: { operator: "and", items: [{field: "` + tt.field + `", operator: "exists"}] }
+  action: { nats: { subject: b, payload: "" } }`
+			
+			tempDir := t.TempDir()
+			createTempRuleFile(t, tempDir, "test.yaml", ruleContent)
+
+			_, err := loader.LoadFromDirectory(tempDir)
+
+			if tt.shouldPass {
+				if err != nil {
+					t.Errorf("Expected rule to pass validation, but got error: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("Expected validation error containing '%s', but got nil", tt.errMsg)
+				} else if !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("Expected error to contain '%s', but got: %v", tt.errMsg, err)
+				}
+			}
+		})
+	}
+}
+
+// TestConditionValue_VariableSupport tests that values can be variables or literals
+func TestConditionValue_VariableSupport(t *testing.T) {
+	tests := []struct {
+		name        string
+		value       string
+		shouldPass  bool
+	}{
+		{
+			name:       "literal number",
+			value:      "30",
+			shouldPass: true,
+		},
+		{
+			name:       "literal string",
+			value:      `"active"`,
+			shouldPass: true,
+		},
+		{
+			name:       "literal boolean",
+			value:      "true",
+			shouldPass: true,
+		},
+		{
+			name:       "variable - message field",
+			value:      `"{threshold}"`,
+			shouldPass: true,
+		},
+		{
+			name:       "variable - nested field",
+			value:      `"{config.max_value}"`,
+			shouldPass: true,
+		},
+		{
+			name:       "variable - KV lookup",
+			value:      `"{@kv.device_config.{device_id}:max_temp}"`,
+			shouldPass: true,
+		},
+		{
+			name:       "variable - system time",
+			value:      `"{@time.hour}"`,
+			shouldPass: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			loader := newTestLoader()
+			ruleContent := `- trigger: { nats: { subject: a } }
+  conditions: { operator: "and", items: [{field: "{temperature}", operator: "gt", value: ` + tt.value + `}] }
+  action: { nats: { subject: b, payload: "" } }`
+			
+			tempDir := t.TempDir()
+			createTempRuleFile(t, tempDir, "test.yaml", ruleContent)
+
+			_, err := loader.LoadFromDirectory(tempDir)
+
+			if tt.shouldPass {
+				if err != nil {
+					t.Errorf("Expected rule to pass validation, but got error: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("Expected validation error, but got nil")
+				}
+			}
+		})
+	}
+}
+
+// TestForEach_TemplateSyntaxValidation tests forEach field validation with new syntax
+func TestForEach_TemplateSyntaxValidation(t *testing.T) {
+	tests := []struct {
+		name        string
+		forEachField string
+		shouldPass  bool
+		errMsg      string
+	}{
+		{
+			name:         "valid simple array field",
+			forEachField: "{notifications}",
+			shouldPass:   true,
+		},
+		{
+			name:         "valid nested array field",
+			forEachField: "{data.items}",
+			shouldPass:   true,
+		},
+		{
+			name:         "valid deeply nested field",
+			forEachField: "{response.data.events.items}",
+			shouldPass:   true,
+		},
+		{
+			name:         "valid root array",
+			forEachField: "{@items}",
+			shouldPass:   true,
+		},
+		{
+			name:         "invalid - missing braces",
+			forEachField: "notifications",
+			shouldPass:   false,
+			errMsg:       "forEach field must use template syntax {field}",
+		},
+		{
+			name:         "invalid - only opening brace",
+			forEachField: "{notifications",
+			shouldPass:   false,
+			errMsg:       "forEach field must use template syntax {field}",
+		},
+		{
+			name:         "invalid - empty braces",
+			forEachField: "{}",
+			shouldPass:   false,
+			errMsg:       "invalid forEach template syntax",
+		},
+		{
+			name:         "invalid - wildcard in field",
+			forEachField: "{items.*}",
+			shouldPass:   false,
+			errMsg:       "forEach field cannot contain wildcards",
+		},
+		{
+			name:         "invalid - greedy wildcard",
+			forEachField: "{items.>}",
+			shouldPass:   false,
+			errMsg:       "forEach field cannot contain wildcards",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			loader := newTestLoader()
+			ruleContent := `- trigger: { nats: { subject: a } }
+  action: { nats: { forEach: "` + tt.forEachField + `", subject: "out.{id}", payload: "{}" } }`
+			
+			tempDir := t.TempDir()
+			createTempRuleFile(t, tempDir, "test.yaml", ruleContent)
+
+			_, err := loader.LoadFromDirectory(tempDir)
+
+			if tt.shouldPass {
+				if err != nil {
+					t.Errorf("Expected rule to pass validation, but got error: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("Expected validation error containing '%s', but got nil", tt.errMsg)
+				} else if !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("Expected error to contain '%s', but got: %v", tt.errMsg, err)
+				}
+			}
+		})
+	}
+}
+
+// TestVariableComparison_RealWorldScenarios tests realistic variable comparison use cases
+func TestVariableComparison_RealWorldScenarios(t *testing.T) {
+	tests := []struct {
+		name        string
+		ruleContent string
+		shouldPass  bool
+		description string
+	}{
+		{
+			name: "dynamic threshold from message",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: sensors.temperature
+  conditions:
+    operator: and
+    items:
+      - field: "{temperature}"
+        operator: gt
+        value: "{threshold}"
+  action:
+    nats:
+      subject: alerts.temp
+      payload: "{}"`,
+			shouldPass:  true,
+			description: "Compare temperature against dynamic threshold from message",
+		},
+		{
+			name: "cross-field timestamp validation",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: bookings.validate
+  conditions:
+    operator: and
+    items:
+      - field: "{end_time}"
+        operator: gt
+        value: "{start_time}"
+  action:
+    nats:
+      subject: bookings.valid
+      payload: "{}"`,
+			shouldPass:  true,
+			description: "Ensure end_time is after start_time",
+		},
+		{
+			name: "KV-based threshold comparison",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: sensors.data
+  conditions:
+    operator: and
+    items:
+      - field: "{reading}"
+        operator: gt
+        value: "{@kv.device_config.{device_id}:max_reading}"
+  action:
+    nats:
+      subject: alerts.threshold
+      payload: "{}"`,
+			shouldPass:  true,
+			description: "Compare against KV-stored threshold",
+		},
+		{
+			name: "permission level check",
+			ruleContent: `
+- trigger:
+    http:
+      path: /api/resource
+      method: POST
+  conditions:
+    operator: and
+    items:
+      - field: "{user_level}"
+        operator: gte
+        value: "{@kv.permissions.{resource_id}:required_level}"
+  action:
+    http:
+      url: "https://api.example.com/process"
+      method: POST
+      payload: "{}"`,
+			shouldPass:  true,
+			description: "Check if user level meets required permission",
+		},
+		{
+			name: "rate limit validation",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: api.request
+  conditions:
+    operator: and
+    items:
+      - field: "{current_requests}"
+        operator: lt
+        value: "{@kv.rate_limits.{user_id}:max_requests}"
+  action:
+    nats:
+      subject: api.process
+      payload: "{}"`,
+			shouldPass:  true,
+			description: "Ensure current requests below rate limit",
+		},
+		{
+			name: "range validation with multiple comparisons",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: sensors.reading
+  conditions:
+    operator: and
+    items:
+      - field: "{value}"
+        operator: gte
+        value: "{@kv.ranges.{sensor_type}:min}"
+      - field: "{value}"
+        operator: lte
+        value: "{@kv.ranges.{sensor_type}:max}"
+  action:
+    nats:
+      subject: sensors.valid
+      payload: "{}"`,
+			shouldPass:  true,
+			description: "Validate value is within KV-defined range",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			loader := newTestLoader()
+			tempDir := t.TempDir()
+			createTempRuleFile(t, tempDir, "test.yaml", tt.ruleContent)
+
+			_, err := loader.LoadFromDirectory(tempDir)
+
+			if tt.shouldPass {
+				if err != nil {
+					t.Errorf("Expected rule to pass validation (%s), but got error: %v", 
+						tt.description, err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("Expected validation error (%s), but got nil", tt.description)
+				}
 			}
 		})
 	}
@@ -325,7 +778,7 @@ func TestKVField_Validation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			loader := newTestLoader()
 			ruleContent := `- trigger: { nats: { subject: a } }
-  conditions: { operator: "and", items: [{field: "` + tt.field + `", operator: "exists"}] }
+  conditions: { operator: "and", items: [{field: "{` + tt.field + `}", operator: "exists"}] }
   action: { nats: { subject: b, payload: "" } }`
 			
 			tempDir := t.TempDir()
@@ -348,7 +801,6 @@ func TestKVField_Validation(t *testing.T) {
 	}
 }
 
-
 // ========================================
 // ARRAY OPERATOR VALIDATION TESTS
 // ========================================
@@ -370,12 +822,12 @@ func TestArrayOperator_Validation(t *testing.T) {
   conditions:
     operator: and
     items:
-      - field: notifications
+      - field: "{notifications}"
         operator: any
         conditions:
           operator: and
           items:
-            - field: type
+            - field: "{type}"
               operator: eq
               value: CRITICAL
   action:
@@ -393,12 +845,12 @@ func TestArrayOperator_Validation(t *testing.T) {
   conditions:
     operator: and
     items:
-      - field: items
+      - field: "{items}"
         operator: all
         conditions:
           operator: and
           items:
-            - field: status
+            - field: "{status}"
               operator: eq
               value: active
   action:
@@ -416,12 +868,12 @@ func TestArrayOperator_Validation(t *testing.T) {
   conditions:
     operator: and
     items:
-      - field: items
+      - field: "{items}"
         operator: none
         conditions:
           operator: and
           items:
-            - field: status
+            - field: "{status}"
               operator: eq
               value: error
   action:
@@ -439,7 +891,7 @@ func TestArrayOperator_Validation(t *testing.T) {
   conditions:
     operator: and
     items:
-      - field: items
+      - field: "{items}"
         operator: any
         value: something
   action:
@@ -458,7 +910,7 @@ func TestArrayOperator_Validation(t *testing.T) {
   conditions:
     operator: and
     items:
-      - field: items
+      - field: "{items}"
         operator: all
   action:
     nats:
@@ -476,7 +928,7 @@ func TestArrayOperator_Validation(t *testing.T) {
   conditions:
     operator: and
     items:
-      - field: items
+      - field: "{items}"
         operator: none
   action:
     nats:
@@ -494,12 +946,12 @@ func TestArrayOperator_Validation(t *testing.T) {
   conditions:
     operator: and
     items:
-      - field: items
+      - field: "{items}"
         operator: any
         conditions:
           operator: xor
           items:
-            - field: status
+            - field: "{status}"
               operator: eq
               value: active
   action:
@@ -518,12 +970,12 @@ func TestArrayOperator_Validation(t *testing.T) {
   conditions:
     operator: and
     items:
-      - field: items
+      - field: "{items}"
         operator: any
         conditions:
           operator: and
           items:
-            - field: status
+            - field: "{status}"
               operator: equals
               value: active
   action:
@@ -542,17 +994,17 @@ func TestArrayOperator_Validation(t *testing.T) {
   conditions:
     operator: and
     items:
-      - field: outer
+      - field: "{outer}"
         operator: any
         conditions:
           operator: and
           items:
-            - field: inner
+            - field: "{inner}"
               operator: all
               conditions:
                 operator: and
                 items:
-                  - field: status
+                  - field: "{status}"
                     operator: eq
                     value: active
   action:
@@ -606,7 +1058,7 @@ func TestForEach_NATS_Validation(t *testing.T) {
       subject: test.subject
   action:
     nats:
-      forEach: notifications
+      forEach: "{notifications}"
       subject: alerts.{id}
       payload: '{"id": "{id}"}'`,
 			shouldPass: true,
@@ -619,11 +1071,11 @@ func TestForEach_NATS_Validation(t *testing.T) {
       subject: test.subject
   action:
     nats:
-      forEach: notifications
+      forEach: "{notifications}"
       filter:
         operator: and
         items:
-          - field: type
+          - field: "{type}"
             operator: eq
             value: CRITICAL
       subject: alerts.{id}
@@ -638,10 +1090,24 @@ func TestForEach_NATS_Validation(t *testing.T) {
       subject: test.subject
   action:
     nats:
-      forEach: data.items.notifications
+      forEach: "{data.items.notifications}"
       subject: alerts.{id}
       payload: '{"id": "{id}"}'`,
 			shouldPass: true,
+		},
+		{
+			name: "forEach missing braces",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: test.subject
+  action:
+    nats:
+      forEach: "notifications"
+      subject: alerts.{id}
+      payload: '{"id": "{id}"}'`,
+			shouldPass: false,
+			errMsg:     "forEach field must use template syntax {field}",
 		},
 		{
 			name: "forEach with wildcard (should fail)",
@@ -651,7 +1117,7 @@ func TestForEach_NATS_Validation(t *testing.T) {
       subject: test.subject
   action:
     nats:
-      forEach: items.*
+      forEach: "{items.*}"
       subject: alerts.{id}
       payload: '{"id": "{id}"}'`,
 			shouldPass: false,
@@ -665,7 +1131,7 @@ func TestForEach_NATS_Validation(t *testing.T) {
       subject: test.subject
   action:
     nats:
-      forEach: items.>
+      forEach: "{items.>}"
       subject: alerts.{id}
       payload: '{"id": "{id}"}'`,
 			shouldPass: false,
@@ -679,11 +1145,11 @@ func TestForEach_NATS_Validation(t *testing.T) {
       subject: test.subject
   action:
     nats:
-      forEach: items
+      forEach: "{items}"
       filter:
         operator: invalid_op
         items:
-          - field: status
+          - field: "{status}"
             operator: eq
             value: active
       subject: alerts.{id}
@@ -699,17 +1165,37 @@ func TestForEach_NATS_Validation(t *testing.T) {
       subject: test.subject
   action:
     nats:
-      forEach: items
+      forEach: "{items}"
       filter:
         operator: and
         items:
-          - field: status
+          - field: "{status}"
             operator: equals
             value: active
       subject: alerts.{id}
       payload: '{"id": "{id}"}'`,
 			shouldPass: false,
 			errMsg:     "invalid condition operator 'equals'",
+		},
+		{
+			name: "forEach filter with missing braces",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: test.subject
+  action:
+    nats:
+      forEach: "{items}"
+      filter:
+        operator: and
+        items:
+          - field: "status"
+            operator: eq
+            value: active
+      subject: alerts.{id}
+      payload: '{"id": "{id}"}'`,
+			shouldPass: false,
+			errMsg:     "must use template syntax {variable}",
 		},
 	}
 
@@ -752,7 +1238,7 @@ func TestForEach_HTTP_Validation(t *testing.T) {
       subject: test.subject
   action:
     http:
-      forEach: items
+      forEach: "{items}"
       url: https://api.example.com/items/{id}
       method: POST
       payload: '{"id": "{id}"}'`,
@@ -766,17 +1252,32 @@ func TestForEach_HTTP_Validation(t *testing.T) {
       subject: test.subject
   action:
     http:
-      forEach: items
+      forEach: "{items}"
       filter:
         operator: and
         items:
-          - field: status
+          - field: "{status}"
             operator: eq
             value: pending
       url: https://api.example.com/items/{id}
       method: POST
       payload: '{"id": "{id}"}'`,
 			shouldPass: true,
+		},
+		{
+			name: "HTTP forEach missing braces",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: test.subject
+  action:
+    http:
+      forEach: "items"
+      url: https://api.example.com/items/{id}
+      method: POST
+      payload: '{"id": "{id}"}'`,
+			shouldPass: false,
+			errMsg:     "forEach field must use template syntax {field}",
 		},
 		{
 			name: "HTTP forEach with wildcard (should fail)",
@@ -786,7 +1287,7 @@ func TestForEach_HTTP_Validation(t *testing.T) {
       subject: test.subject
   action:
     http:
-      forEach: items.*
+      forEach: "{items.*}"
       url: https://api.example.com/items/{id}
       method: POST
       payload: '{"id": "{id}"}'`,
@@ -801,11 +1302,11 @@ func TestForEach_HTTP_Validation(t *testing.T) {
       subject: test.subject
   action:
     http:
-      forEach: items
+      forEach: "{items}"
       filter:
         operator: and
         items:
-          - field: status
+          - field: "{status}"
             operator: invalid_op
             value: active
       url: https://api.example.com/items/{id}
@@ -855,7 +1356,7 @@ func TestForEach_MutualExclusivity(t *testing.T) {
       subject: test.subject
   action:
     nats:
-      forEach: items
+      forEach: "{items}"
       subject: output.{id}
       passthrough: true`,
 			shouldPass: true,
@@ -868,7 +1369,7 @@ func TestForEach_MutualExclusivity(t *testing.T) {
       subject: test.subject
   action:
     nats:
-      forEach: items
+      forEach: "{items}"
       subject: output.{id}
       payload: '{"id": "{id}"}'`,
 			shouldPass: true,
@@ -933,24 +1434,24 @@ func TestArrayOperator_And_ForEach_Combined(t *testing.T) {
   conditions:
     operator: and
     items:
-      - field: notifications
+      - field: "{notifications}"
         operator: any
         conditions:
           operator: and
           items:
-            - field: type
+            - field: "{type}"
               operator: eq
               value: CRITICAL
   action:
     nats:
-      forEach: notifications
+      forEach: "{notifications}"
       filter:
         operator: and
         items:
-          - field: type
+          - field: "{type}"
             operator: eq
             value: CRITICAL
-      subject: alerts.{id}
+      subject: alerts.critical.{id}
       payload: '{"id": "{id}", "type": "{type}"}'`,
 			shouldPass: true,
 		},
@@ -963,27 +1464,27 @@ func TestArrayOperator_And_ForEach_Combined(t *testing.T) {
   conditions:
     operator: and
     items:
-      - field: events
+      - field: "{events}"
         operator: any
         conditions:
           operator: or
           items:
-            - field: severity
+            - field: "{severity}"
               operator: eq
               value: high
-            - field: priority
+            - field: "{priority}"
               operator: gt
               value: 5
   action:
     nats:
-      forEach: events
+      forEach: "{events}"
       filter:
         operator: and
         items:
-          - field: severity
+          - field: "{severity}"
             operator: eq
             value: high
-          - field: acknowledged
+          - field: "{acknowledged}"
             operator: eq
             value: false
       subject: alerts.{event_id}
@@ -999,11 +1500,11 @@ func TestArrayOperator_And_ForEach_Combined(t *testing.T) {
   conditions:
     operator: and
     items:
-      - field: notifications
+      - field: "{notifications}"
         operator: any
   action:
     nats:
-      forEach: notifications
+      forEach: "{notifications}"
       subject: alerts.{id}
       payload: '{"id": "{id}"}'`,
 			shouldPass: false,
@@ -1018,17 +1519,17 @@ func TestArrayOperator_And_ForEach_Combined(t *testing.T) {
   conditions:
     operator: and
     items:
-      - field: notifications
+      - field: "{notifications}"
         operator: any
         conditions:
           operator: and
           items:
-            - field: type
+            - field: "{type}"
               operator: eq
               value: CRITICAL
   action:
     nats:
-      forEach: notifications.*
+      forEach: "{notifications.*}"
       subject: alerts.{id}
       payload: '{"id": "{id}"}'`,
 			shouldPass: false,
@@ -1064,7 +1565,7 @@ func TestRealWorldScenario_BatchNotifications(t *testing.T) {
 	loader := newTestLoader()
 	tempDir := t.TempDir()
 
-	// Complete real-world rule from implementation plan
+	// Complete real-world rule with new syntax
 	ruleContent := `
 - trigger:
     nats:
@@ -1072,24 +1573,24 @@ func TestRealWorldScenario_BatchNotifications(t *testing.T) {
   conditions:
     operator: and
     items:
-      - field: type
+      - field: "{type}"
         operator: eq
         value: NOTIFICATION
-      - field: notification
+      - field: "{notification}"
         operator: any
         conditions:
           operator: and
           items:
-            - field: type
+            - field: "{type}"
               operator: eq
               value: DEVICE_MOTION_START
   action:
     nats:
-      forEach: notification
+      forEach: "{notification}"
       filter:
         operator: and
         items:
-          - field: type
+          - field: "{type}"
             operator: eq
             value: DEVICE_MOTION_START
       subject: alerts.motion.{originatingServerId}.{event.alarmId}
@@ -1129,8 +1630,8 @@ func TestRealWorldScenario_BatchNotifications(t *testing.T) {
 	if rule.Action.NATS == nil {
 		t.Error("Expected NATS action")
 	}
-	if rule.Action.NATS.ForEach != "notification" {
-		t.Errorf("Expected forEach='notification', got '%s'", rule.Action.NATS.ForEach)
+	if rule.Action.NATS.ForEach != "{notification}" {
+		t.Errorf("Expected forEach='{notification}', got '%s'", rule.Action.NATS.ForEach)
 	}
 	if rule.Action.NATS.Filter == nil {
 		t.Error("Expected forEach filter")

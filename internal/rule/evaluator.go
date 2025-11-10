@@ -139,49 +139,80 @@ func (e *Evaluator) evaluateOR(conditions *Conditions, context *EvaluationContex
 }
 
 func (e *Evaluator) evaluateCondition(cond *Condition, context *EvaluationContext) bool {
-	actualValue, exists := context.ResolveValue(cond.Field)
-
-	if !exists {
-		if cond.Operator == "exists" {
-			return false
-		}
+	// Resolve LEFT side (field) - now supports template syntax: {field} or {@system}
+	leftValue, err := resolveConditionValue(cond.Field, context)
+	if err != nil {
+		e.logger.Warn("failed to resolve condition field",
+			"field", cond.Field,
+			"error", err,
+			"impact", "Condition will evaluate to false")
 		return false
 	}
 
+	// Check existence before proceeding (except for 'exists' operator)
+	if leftValue == nil && cond.Operator != "exists" {
+		e.logger.Debug("condition field resolved to nil",
+			"field", cond.Field,
+			"operator", cond.Operator)
+		return false
+	}
+
+	// Handle 'exists' operator specially
 	if cond.Operator == "exists" {
-		return actualValue != nil
+		result := leftValue != nil
+		e.logger.Debug("exists operator evaluation",
+			"field", cond.Field,
+			"exists", result)
+		return result
 	}
 
-	// Handle array operators (any/all/none)
+	// Handle array operators (any/all/none) - pass through to existing handler
 	if cond.Operator == "any" || cond.Operator == "all" || cond.Operator == "none" {
-		return e.evaluateArrayCondition(actualValue, cond, context)
+		return e.evaluateArrayCondition(leftValue, cond, context)
 	}
 
+	// Resolve RIGHT side (value) - NEW: now supports variables!
+	// This enables variable-to-variable comparisons
+	rightValue, err := resolveConditionValue(cond.Value, context)
+	if err != nil {
+		e.logger.Warn("failed to resolve condition value",
+			"value", cond.Value,
+			"error", err,
+			"impact", "Condition will evaluate to false")
+		return false
+	}
+
+	// Perform comparison with both sides resolved
 	var result bool
 	switch cond.Operator {
 	case "eq":
-		result = e.compareValues(actualValue, cond.Value, "eq")
+		result = e.compareValues(leftValue, rightValue, "eq")
 	case "neq":
-		result = e.compareValues(actualValue, cond.Value, "neq")
+		result = e.compareValues(leftValue, rightValue, "neq")
 	case "gt", "lt", "gte", "lte":
-		result = e.compareNumeric(actualValue, cond.Value, cond.Operator)
+		result = e.compareNumeric(leftValue, rightValue, cond.Operator)
 	case "contains":
-		result = e.compareContains(actualValue, cond.Value)
+		result = e.compareContains(leftValue, rightValue)
 	case "not_contains":
-		result = !e.compareContains(actualValue, cond.Value)
+		result = !e.compareContains(leftValue, rightValue)
 	case "in":
-		result = e.compareIn(actualValue, cond.Value)
+		result = e.compareIn(leftValue, rightValue)
 	case "not_in":
-		result = !e.compareIn(actualValue, cond.Value)
+		result = !e.compareIn(leftValue, rightValue)
 	case "recent":
-		result = e.compareRecent(actualValue, cond.Value, context)
+		result = e.compareRecent(leftValue, rightValue, context)
 	default:
 		e.logger.Error("unknown operator", "operator", cond.Operator)
 		return false
 	}
 
 	e.logger.Debug("condition evaluation result",
-		"field", cond.Field, "operator", cond.Operator, "expectedValue", cond.Value, "actualValue", actualValue, "result", result)
+		"field", cond.Field,
+		"operator", cond.Operator,
+		"expectedValue", cond.Value,
+		"leftResolved", leftValue,
+		"rightResolved", rightValue,
+		"result", result)
 
 	return result
 }
