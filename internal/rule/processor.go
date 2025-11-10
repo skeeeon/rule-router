@@ -412,7 +412,7 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 	p.logger.Debug("processing NATS action with forEach",
 		"forEachField", action.ForEach)
 
-	// NEW: Extract the field path from template braces
+	// Extract the field path from template braces
 	// forEach: "{data.readings}" → "data.readings"
 	fieldPath := extractForEachField(action.ForEach)
 	if fieldPath == "" {
@@ -655,7 +655,7 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 	p.logger.Debug("processing HTTP action with forEach",
 		"forEachField", action.ForEach)
 
-	// NEW: Extract the field path from template braces
+	// Extract the field path from template braces
 	// forEach: "{data.readings}" → "data.readings"
 	fieldPath := extractForEachField(action.ForEach)
 	if fieldPath == "" {

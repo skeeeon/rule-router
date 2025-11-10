@@ -580,7 +580,7 @@ func (l *RulesLoader) validateConditions(conditions *Conditions) error {
 			return fmt.Errorf("condition field cannot be empty at index %d", i)
 		}
 		
-		// NEW: Validate that condition field uses template syntax {field}
+		// Validate that condition field uses template syntax {field}
 		if !IsTemplate(condition.Field) {
 			return fmt.Errorf("condition field must use template syntax {variable} at index %d, got: %s (did you forget the braces?)", 
 				i, condition.Field)
