@@ -357,14 +357,14 @@ If an environment variable is not set, the system will:
       payload: |
         {
           "alert": "Temperature warning - exceeds threshold",
-          "sensor_id": {sensor_id},
-          "location": {location},
+          "sensor_id": "{sensor_id}",
+          "location": "{location}",
           "current_temperature": {temperature},
           "thresholds": {
             "max": "{@kv.sensor_config.{sensor_id}:max_temp}",
             "critical": "{@kv.sensor_config.{sensor_id}:critical_temp}"
           },
-          "triggered_at": "{@timestamp()}",
+          "triggered_at": "{@timestamp.iso}",
           "alert_id": "{@uuid7()}"
         }
 ```

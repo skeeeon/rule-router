@@ -131,8 +131,7 @@ action:
     payload: |
       {
         "value": {value},
-        "threshold": "{@msg.min_value}",
-        "exceeded_by": {value} - {min_value}
+        "threshold": "{@msg.min_value}"
       }
 ```
 
@@ -307,30 +306,3 @@ forEach:
 - Assume all array elements are objects (primitives need `{@value}`)
 - Forget that `{field}` resolves to array element in forEach context
 
-## Migration from Old Syntax
-
-**Before (Old):**
-```yaml
-forEach: "notifications"      # ❌ No braces
-filter:
-  items:
-    - field: severity         # ❌ No braces
-      operator: eq
-      value: "critical"
-```
-
-**After (New):**
-```yaml
-forEach: "{notifications}"    # ✅ Braces required!
-filter:
-  items:
-    - field: "{severity}"     # ✅ Braces required!
-      operator: eq
-      value: "critical"
-```
-
-**Migration Script:**
-```bash
-# Automated migration for forEach fields
-./scripts/migrate-conditions.sh ./rules
-```
