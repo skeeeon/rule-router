@@ -51,7 +51,7 @@ type OutboundSubscription struct {
 
 // ConsumerConfig contains JetStream consumer configuration
 type ConsumerConfig struct {
-	SubscriberCount int
+	WorkerCount int
 	FetchBatchSize  int
 	FetchTimeout    time.Duration
 	MaxAckPending   int

@@ -41,7 +41,7 @@ nats:
   # JetStream Consumer Configuration
   consumers:
     consumerPrefix: "http-gateway" # Unique prefix for this application's consumers
-    subscriberCount: 4      # Number of parallel workers per subscription
+    workerCount: 4          # Number of parallel workers per subscription
     fetchBatchSize: 10      # Messages fetched per batch
     fetchTimeout: 5s        # Fetch timeout
     maxAckPending: 1000     # Max unacknowledged messages

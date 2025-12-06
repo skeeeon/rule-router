@@ -205,7 +205,7 @@ func (app *GatewayApp) setupInboundServer() error {
 // This is gateway-specific logic.
 func (app *GatewayApp) setupOutboundClient() error {
 	consumerConfig := &gateway.ConsumerConfig{
-		SubscriberCount: app.config.NATS.Consumers.SubscriberCount,
+		WorkerCount: app.config.NATS.Consumers.WorkerCount,
 		FetchBatchSize:  app.config.NATS.Consumers.FetchBatchSize,
 		FetchTimeout:    app.config.NATS.Consumers.FetchTimeout,
 		MaxAckPending:   app.config.NATS.Consumers.MaxAckPending,
@@ -244,7 +244,7 @@ func (app *GatewayApp) setupOutboundClient() error {
 			}
 			consumerName := app.broker.GetConsumerName(subject)
 
-			workers := app.config.NATS.Consumers.SubscriberCount
+			workers := app.config.NATS.Consumers.WorkerCount
 			if err := app.outboundClient.AddSubscription(streamName, consumerName, subject, workers); err != nil {
 				return fmt.Errorf("failed to add outbound subscription for '%s': %w", subject, err)
 			}

@@ -85,7 +85,7 @@ type NATSConfig struct {
 // ConsumerConfig contains JetStream consumer configuration
 type ConsumerConfig struct {
 	ConsumerPrefix  string        `json:"consumerPrefix" yaml:"consumerPrefix" mapstructure:"consumerPrefix"`
-	SubscriberCount int           `json:"subscriberCount" yaml:"subscriberCount" mapstructure:"subscriberCount"`
+	WorkerCount int           `json:"workerCount" yaml:"workerCount" mapstructure:"workerCount"`
 	FetchBatchSize  int           `json:"fetchBatchSize" yaml:"fetchBatchSize" mapstructure:"fetchBatchSize"`
 	FetchTimeout    time.Duration `json:"fetchTimeout" yaml:"fetchTimeout" mapstructure:"fetchTimeout"`
 	MaxAckPending   int           `json:"maxAckPending" yaml:"maxAckPending" mapstructure:"maxAckPending"`
@@ -218,8 +218,8 @@ func setDefaults(cfg *Config) {
 	if cfg.NATS.Consumers.ConsumerPrefix == "" {
 		cfg.NATS.Consumers.ConsumerPrefix = "rule-router"
 	}
-	if cfg.NATS.Consumers.SubscriberCount == 0 {
-		cfg.NATS.Consumers.SubscriberCount = 2
+	if cfg.NATS.Consumers.WorkerCount == 0 {
+		cfg.NATS.Consumers.WorkerCount = 2
 	}
 	if cfg.NATS.Consumers.FetchBatchSize == 0 {
 		cfg.NATS.Consumers.FetchBatchSize = 1
@@ -384,7 +384,7 @@ func validateConfig(cfg *Config) error {
 	}
 
 	// Consumer validation
-	if cfg.NATS.Consumers.SubscriberCount < 1 {
+	if cfg.NATS.Consumers.WorkerCount < 1 {
 		return fmt.Errorf("subscriber count must be at least 1")
 	}
 	if cfg.NATS.Consumers.FetchBatchSize < 1 {

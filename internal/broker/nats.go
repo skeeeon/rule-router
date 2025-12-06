@@ -103,7 +103,7 @@ func (b *NATSBroker) InitializeSubscriptionManager(processor *rule.Processor) {
 		&b.config.NATS.Publish,
 	)
 	b.logger.Info("subscription manager initialized",
-		"subscriberCount", b.config.NATS.Consumers.SubscriberCount,
+		"workerCount", b.config.NATS.Consumers.WorkerCount,
 		"fetchBatchSize", b.config.NATS.Consumers.FetchBatchSize,
 		"fetchTimeout", b.config.NATS.Consumers.FetchTimeout,
 		"publishMode", b.config.NATS.Publish.Mode)
@@ -234,7 +234,7 @@ func (b *NATSBroker) AddSubscription(subject string) error {
 	}
 
 	// Add subscription with configured worker count
-	workers := b.config.NATS.Consumers.SubscriberCount
+	workers := b.config.NATS.Consumers.WorkerCount
 	if err := b.subscriptionMgr.AddSubscription(streamName, consumerName, subject, workers); err != nil {
 		return fmt.Errorf("failed to add subscription for '%s': %w", subject, err)
 	}
@@ -424,7 +424,7 @@ func (b *NATSBroker) initializeNATSConnection() error {
 	// Configure JetStream for Async Publishing ---
 	jsOpts := []jetstream.JetStreamOpt{
 		// Set a limit on the number of outstanding async publishes. This is crucial for backpressure.
-		jetstream.WithPublishAsyncMaxPending(1024),
+		jetstream.WithPublishAsyncMaxPending(2048),
 		// Set up a handler to log any errors that occur in the background.
 		jetstream.WithPublishAsyncErrHandler(func(js jetstream.JetStream, msg *nats.Msg, err error) {
 			b.logger.Error("asynchronous publish failed", "subject", msg.Subject, "error", err)
