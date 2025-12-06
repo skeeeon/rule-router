@@ -5,18 +5,12 @@ package rule
 import (
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"rule-router/internal/logger"
-)
-
-// Single regex pattern to capture all variables in one pass
-var (
-	combinedVariablePattern = regexp.MustCompile(`\{(@?)([a-zA-Z0-9_.:()=/-]+)\}`)
 )
 
 // TemplateEngine processes rule template strings.
@@ -30,91 +24,176 @@ func NewTemplateEngine(log *logger.Logger) *TemplateEngine {
 }
 
 // Execute renders a template string using the provided context.
+// Optimized: Uses a single-pass recursive scanner instead of Regex.
 func (te *TemplateEngine) Execute(template string, context *EvaluationContext) (string, error) {
+	// Fast path: no variables
 	if !strings.Contains(template, "{") {
-		// No variables - return as-is
 		return template, nil
 	}
+	return te.parseRecursive(template, context, 0)
+}
 
-	// PASS 1: Resolve all NON-KV variables first
-	result := combinedVariablePattern.ReplaceAllStringFunc(template, func(match string) string {
-		submatches := combinedVariablePattern.FindStringSubmatch(match)
-		if len(submatches) != 3 {
-			te.logger.Debug("unexpected regex match format in pass 1", "match", match)
-			return match
-		}
+// parseRecursive scans the string and resolves variables, handling nesting via recursion.
+// depth prevents infinite recursion (though logical loops shouldn't happen here).
+func (te *TemplateEngine) parseRecursive(input string, context *EvaluationContext, depth int) (string, error) {
+	if depth > 10 { // Grug safety check
+		return input, fmt.Errorf("template nesting too deep")
+	}
 
-		isSystemVar := submatches[1] == "@"
-		varContent := submatches[2]
+	var sb strings.Builder
+	// Heuristic: Allocate slightly more than input to account for expansion
+	sb.Grow(len(input) * 2)
 
-		if isSystemVar && strings.HasPrefix(varContent, "kv.") {
-			return match // Keep KV variables unchanged for pass 2
-		}
+	length := len(input)
+	i := 0
 
-		if isSystemVar {
-			if strings.HasSuffix(varContent, "()") {
-				return te.processSystemFunction(varContent)
+	for i < length {
+		char := input[i]
+
+		if char == '{' {
+			// Start of a variable? Find the BALANCING closing brace.
+			end := -1
+			balance := 1
+			for j := i + 1; j < length; j++ {
+				if input[j] == '{' {
+					balance++
+				} else if input[j] == '}' {
+					balance--
+				}
+
+				if balance == 0 {
+					end = j
+					break
+				}
 			}
-			val, _ := context.ResolveValue("@" + varContent)
-			return te.convertToString(val)
+
+			if end != -1 {
+				// We found a complete token: {content}
+				// Extract "content" (without outer braces)
+				rawContent := input[i+1 : end]
+
+				// CHECK: Is this actually a variable template?
+				// If it contains characters like quotes, spaces (except inside nested braces),
+				// it is likely JSON structure, not a variable.
+				if isValidTemplateStructure(rawContent) {
+					// RECURSION STEP:
+					// If the content itself contains braces (e.g. "@kv.{bucket}:key"),
+					// we must resolve those INNER variables first.
+					var resolvedVarName string
+					if strings.Contains(rawContent, "{") {
+						var err error
+						resolvedVarName, err = te.parseRecursive(rawContent, context, depth+1)
+						if err != nil {
+							return "", err
+						}
+					} else {
+						resolvedVarName = rawContent
+					}
+
+					// Now resolvedVarName is ready (e.g. "@kv.mybucket:key")
+					// Resolve it against the context
+					val, _ := context.ResolveValue(resolvedVarName)
+
+					// System functions check (optimized to avoid regex)
+					if strings.HasSuffix(resolvedVarName, "()") && strings.HasPrefix(resolvedVarName, "@") {
+						sb.WriteString(te.processSystemFunction(resolvedVarName[1:])) // strip @
+					} else {
+						sb.WriteString(te.convertToString(val))
+					}
+
+					// Advance cursor past the closing '}'
+					i = end + 1
+					continue
+				}
+				// If not valid template structure (e.g. contains quotes/spaces), 
+				// treat matching brace as literal and fall through to write char.
+			}
 		}
 
-		val, _ := context.ResolveValue(varContent)
-		return te.convertToString(val)
-	})
+		// Just a normal character (or an unmatched/non-variable {), write it
+		sb.WriteByte(char)
+		i++
+	}
 
-	// PASS 2: Now resolve KV variables
-	result = combinedVariablePattern.ReplaceAllStringFunc(result, func(match string) string {
-		submatches := combinedVariablePattern.FindStringSubmatch(match)
-		if len(submatches) != 3 {
-			return ""
+	return sb.String(), nil
+}
+
+// isValidTemplateStructure checks if the string inside braces looks like a valid variable.
+// It allows nested braces {...} but enforces valid variable characters elsewhere.
+// Valid chars: alphanumeric, _, ., :, (, ), =, /, -, @
+// Invalid chars: space, ", ', newline, etc.
+func isValidTemplateStructure(s string) bool {
+	length := len(s)
+	if length == 0 {
+		return false
+	}
+
+	for i := 0; i < length; i++ {
+		c := s[i]
+		if c == '{' {
+			// Skip nested block - we assume inner blocks will be validated during recursion
+			balance := 1
+			for j := i + 1; j < length; j++ {
+				if s[j] == '{' {
+					balance++
+				} else if s[j] == '}' {
+					balance--
+				}
+				if balance == 0 {
+					i = j // Advance i to the closing brace
+					break
+				}
+			}
+			if balance != 0 {
+				return false // Unbalanced nested block
+			}
+		} else if c == '}' {
+			return false // Should have been skipped by the loop above
+		} else {
+			if !isValidVariableChar(c) {
+				return false
+			}
 		}
+	}
+	return true
+}
 
-		isSystemVar := submatches[1] == "@"
-		varContent := submatches[2]
-
-		if isSystemVar && strings.HasPrefix(varContent, "kv.") {
-			val, _ := context.ResolveValue("@" + varContent)
-			return te.convertToString(val)
-		}
-
-		// This should not happen if pass 1 worked, but as a fallback, return empty.
-		if strings.Contains(match, "{") {
-			return ""
-		}
-		return match // Return literals that were not variables
-	})
-
-	return result, nil
+func isValidVariableChar(c byte) bool {
+	// [a-zA-Z0-9_.:()=/-] + @
+	if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+		return true
+	}
+	switch c {
+	case '_', '.', ':', '(', ')', '=', '/', '-', '@':
+		return true
+	}
+	return false
 }
 
 // processSystemFunction handles system functions: uuid7(), timestamp()
+// Note: Input 'function' string should not have the leading '@'
 func (te *TemplateEngine) processSystemFunction(function string) string {
 	switch function {
 	case "uuid4()":
-		id := uuid.New()
-		te.logger.Debug("generated UUIDv4", "uuid", id.String())
-		return id.String()
+		return uuid.New().String()
 	case "uuid7()":
 		id, err := uuid.NewV7()
 		if err != nil {
-			te.logger.Error("failed to generate UUIDv7", "error", err)
 			return ""
 		}
-		te.logger.Debug("generated UUIDv7", "uuid", id.String())
 		return id.String()
 	case "timestamp()":
-		timestamp := time.Now().UTC().Format(time.RFC3339)
-		te.logger.Debug("generated timestamp", "timestamp", timestamp)
-		return timestamp
+		return time.Now().UTC().Format(time.RFC3339)
 	default:
-		te.logger.Debug("unknown system function", "function", function)
 		return ""
 	}
 }
 
 // convertToString converts an interface to its string representation for templating.
 func (te *TemplateEngine) convertToString(value interface{}) string {
+	if value == nil {
+		return ""
+	}
 	switch v := value.(type) {
 	case string:
 		return v
@@ -126,12 +205,9 @@ func (te *TemplateEngine) convertToString(value interface{}) string {
 		return strconv.FormatInt(v, 10)
 	case bool:
 		return strconv.FormatBool(v)
-	case nil:
-		return ""
 	case map[string]interface{}, []interface{}:
 		jsonBytes, err := json.Marshal(v)
 		if err != nil {
-			te.logger.Debug("failed to marshal complex value to JSON", "error", err)
 			return ""
 		}
 		return string(jsonBytes)
