@@ -1,0 +1,84 @@
+?   	rule-router/cmd/http-gateway	[no test files]
+?   	rule-router/cmd/nats-auth-manager	[no test files]
+?   	rule-router/cmd/rule-cli	[no test files]
+?   	rule-router/cmd/rule-cli/cmd	[no test files]
+?   	rule-router/cmd/rule-cli/templates	[no test files]
+?   	rule-router/cmd/rule-router	[no test files]
+?   	rule-router/config	[no test files]
+?   	rule-router/internal/app	[no test files]
+?   	rule-router/internal/authmgr	[no test files]
+?   	rule-router/internal/authmgr/providers	[no test files]
+?   	rule-router/internal/broker	[no test files]
+?   	rule-router/internal/cli	[no test files]
+?   	rule-router/internal/gateway	[no test files]
+?   	rule-router/internal/lifecycle	[no test files]
+?   	rule-router/internal/logger	[no test files]
+?   	rule-router/internal/metrics	[no test files]
+goos: linux
+goarch: amd64
+pkg: rule-router/internal/rule
+cpu: Intel(R) Xeon(R) CPU E5-2690 v4 @ 2.60GHz
+BenchmarkEvaluateCondition_Simple-4                   	 1000000	      1089 ns/op
+BenchmarkEvaluateConditions_Complex-4                 	  183514	      5960 ns/op
+BenchmarkEvaluateCondition_VariableComparison-4       	  923158	      1273 ns/op
+BenchmarkArrayOperator_Any-4                          	    5524	    189680 ns/op
+BenchmarkArrayOperator_All-4                          	    3774	    308603 ns/op
+BenchmarkArrayOperator_None-4                         	    3242	    360654 ns/op
+BenchmarkArrayOperator_ShortCircuit-4                 	  199186	      5563 ns/op
+BenchmarkArrayOperator_MixedArray-4                   	   70564	     17181 ns/op
+BenchmarkUnmarshal_Small_StdLib-4                     	  342249	      3390 ns/op
+BenchmarkUnmarshal_Small_GoccyJSON-4                  	  766976	      1609 ns/op
+BenchmarkUnmarshal_Medium_StdLib-4                    	  113260	     10424 ns/op
+BenchmarkUnmarshal_Medium_GoccyJSON-4                 	  138694	      8471 ns/op
+BenchmarkUnmarshal_Large_StdLib-4                     	   38312	     30472 ns/op
+BenchmarkUnmarshal_Large_GoccyJSON-4                  	   46447	     25907 ns/op
+BenchmarkUnmarshal_Array_StdLib-4                     	   88101	     13698 ns/op
+BenchmarkUnmarshal_Array_GoccyJSON-4                  	  106480	     10983 ns/op
+BenchmarkMarshal_Small_StdLib-4                       	  529340	      2149 ns/op
+BenchmarkMarshal_Small_GoccyJSON-4                    	 1000000	      1083 ns/op
+BenchmarkMarshal_Medium_StdLib-4                      	  197084	      6059 ns/op
+BenchmarkMarshal_Medium_GoccyJSON-4                   	  342477	      3402 ns/op
+BenchmarkNestedAccess_TwoLevel-4                      	56697069	        21.12 ns/op
+BenchmarkNestedAccess_ThreeLevel-4                    	31758877	        37.70 ns/op
+BenchmarkNestedAccess_FourLevel-4                     	15780078	        75.53 ns/op
+BenchmarkFullPipeline_Small-4                         	 1000000	      1131 ns/op
+BenchmarkFullPipeline_Medium-4                        	  620595	      1865 ns/op
+BenchmarkFullPipeline_Large-4                         	  565417	      1937 ns/op
+BenchmarkUnmarshal_Invalid_StdLib-4                   	 1765770	       689.0 ns/op
+BenchmarkUnmarshal_Invalid_GoccyJSON-4                	 1591551	       763.2 ns/op
+BenchmarkRealWorld_IoTSensorBurst-4                   	   10000	    108681 ns/op
+BenchmarkRealWorld_MixedWorkload-4                    	     852	   1401775 ns/op
+BenchmarkLocalKVCache_Get-4                           	 2814289	       427.8 ns/op
+BenchmarkLocalKVCache_Set-4                           	 2368094	       495.6 ns/op
+BenchmarkLocalKVCache_GetComplex-4                    	 2761432	       429.3 ns/op
+BenchmarkLocalKVCache_GetStats-4                      	  542598	      2256 ns/op
+BenchmarkLocalKVCache_ConcurrentReads-4               	 3070045	       355.2 ns/op
+BenchmarkLocalKVCache_ConcurrentWrites-4              	 1716628	       695.3 ns/op
+BenchmarkLocalKVCache_MixedOperations-4               	 2158340	       555.7 ns/op
+BenchmarkPatternMatcher_ExactMatch-4                  	245775222	         4.875 ns/op
+BenchmarkPatternMatcher_SingleWildcard-4              	 6662593	       178.4 ns/op
+BenchmarkPatternMatcher_GreedyWildcard-4              	 5272082	       222.3 ns/op
+BenchmarkPatternMatcher_MixedWildcards-4              	 3565774	       324.3 ns/op
+BenchmarkNewPatternMatcher-4                          	 1806538	       669.4 ns/op
+BenchmarkTemplateEngine_Simple-4                      	 1384285	       859.0 ns/op
+BenchmarkTemplateEngine_MixedTypes-4                  	   84781	     14425 ns/op
+BenchmarkTemplateEngine_NestedKV-4                    	   92644	     13111 ns/op
+BenchmarkProcessor_Heavy_KV-4                         	   41682	     28610 ns/op
+BenchmarkProcessor_ComplexIntegration_DeepContext-4   	   28411	     42865 ns/op
+BenchmarkProcessForEach_Small-4                       	   39255	     30482 ns/op
+BenchmarkProcessForEach_Large-4                       	    5090	    235945 ns/op
+BenchmarkProcessForEach_WithFilter-4                  	    2731	    456067 ns/op
+BenchmarkProcessForEach_MixedArray-4                  	    3410	    363244 ns/op
+BenchmarkExtractForEachField-4                        	58867312	        20.35 ns/op
+BenchmarkSubjectContext_Creation-4                    	 5189730	       236.2 ns/op
+BenchmarkSubjectContext_GetToken-4                    	1000000000	         0.4064 ns/op
+BenchmarkSubjectContext_GetField-4                    	16068688	        74.87 ns/op
+BenchmarkSubjectContext_MultipleFields-4              	 7511157	       159.1 ns/op
+BenchmarkSubjectContext_LongSubject-4                 	 2042827	       595.2 ns/op
+BenchmarkTimeContext_GetField-4                       	87219906	        13.68 ns/op
+BenchmarkTimeContext_MultipleFields-4                 	13995410	        81.27 ns/op
+BenchmarkTimeContext_Creation-4                       	   74713	     15917 ns/op
+BenchmarkTimeContext_GetAllFieldNames-4               	 2837131	       418.2 ns/op
+PASS
+ok  	rule-router/internal/rule	84.475s
+?   	rule-router/internal/tester	[no test files]

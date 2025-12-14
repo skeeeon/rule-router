@@ -17,7 +17,7 @@ func newTestTemplateEngine() *TemplateEngine {
 	return NewTemplateEngine(logger.NewNopLogger())
 }
 
-// Helper to create a context for template tests.
+// Helper to create a context for template tests (No KV).
 func newTemplateTestContext(data map[string]interface{}, subject string, t time.Time) *EvaluationContext {
 	timeProvider := NewMockTimeProvider(t)
 	subjectCtx := NewSubjectContext(subject)
@@ -43,9 +43,164 @@ func newTemplateTestContext(data map[string]interface{}, subject string, t time.
 	return ctx
 }
 
+// Helper to create a context WITH KV support for benchmarking complex templates
+func newKVTemplateTestContext(data map[string]interface{}, kvData map[string]map[string]interface{}) *EvaluationContext {
+	log := logger.NewNopLogger()
+
+	// Setup Local Cache with pre-populated data
+	cache := NewLocalKVCache(log)
+	for bucket, keys := range kvData {
+		for key, val := range keys {
+			cache.Set(bucket, key, val)
+		}
+	}
+	// Create KV context with the cache
+	kvCtx := NewKVContext(nil, log, cache)
+
+	// Setup Context
+	payload, _ := json.Marshal(data)
+	ctx, _ := NewEvaluationContext(
+		payload,
+		nil,
+		NewSubjectContext("test.subject"),
+		nil,
+		NewSystemTimeProvider().GetCurrentContext(),
+		kvCtx,
+		nil,
+		log,
+	)
+	return ctx
+}
+
 // Helper to create a processor for testing
 func newTestProcessor() *Processor {
 	return NewProcessor(logger.NewNopLogger(), nil, nil, nil)
+}
+
+// Helper to create a processor with pre-populated KV cache for testing
+func setupTestProcessorWithKV(kvData map[string]map[string]interface{}) *Processor {
+	log := logger.NewNopLogger()
+	cache := NewLocalKVCache(log)
+
+	// Populate cache
+	for bucket, keys := range kvData {
+		for key, val := range keys {
+			cache.Set(bucket, key, val)
+		}
+	}
+
+	// Create KV context with the cache
+	kvCtx := NewKVContext(nil, log, cache)
+
+	return NewProcessor(log, nil, kvCtx, nil)
+}
+
+// TestProcessor_ComplexIntegration_DeepContext tests a highly complex scenario involving:
+// 1. 3-level deep nested JSON field access from message ({data.device.config_id})
+// 2. Header validation ({header.X-Tenant-ID})
+// 3. Dynamic KV lookup using the nested message field
+// 4. Subject context injection in output (@subject.1)
+// 5. Timestamp context injection in output (@timestamp.iso)
+func TestProcessor_ComplexIntegration_DeepContext(t *testing.T) {
+	// Setup KV Data
+	kvData := map[string]map[string]interface{}{
+		"configurations": {
+			"cfg_alpha": map[string]interface{}{
+				"threshold": 90,
+				"region":    "us-east-1",
+				"settings": map[string]interface{}{
+					"retry": true,
+				},
+			},
+		},
+	}
+
+	processor := setupTestProcessorWithKV(kvData)
+
+	// Define the Rule
+	rule := Rule{
+		Trigger: Trigger{
+			NATS: &NATSTrigger{Subject: "iot.sensors.telemetry"},
+		},
+		Conditions: &Conditions{
+			Operator: "and",
+			Items: []Condition{
+				// Condition 1: Check Header
+				{
+					Field:    "{@header.X-Tenant-ID}",
+					Operator: "eq",
+					Value:    "tenant-a",
+				},
+				// Condition 2: Deep nested variable used in KV lookup key
+				// Message field: data.device.config_id -> "cfg_alpha"
+				// KV Lookup: configurations.cfg_alpha:threshold -> 90
+				{
+					Field:    "{@kv.configurations.{data.device.config_id}:threshold}",
+					Operator: "gt",
+					Value:    80,
+				},
+			},
+		},
+		Action: Action{
+			NATS: &NATSAction{
+				// Use subject token 'sensors' (index 1)
+				Subject: "alerts.{@subject.1}.processed", 
+				// Complex payload with timestamp and another KV lookup
+				Payload: `{
+					"region": "{@kv.configurations.{data.device.config_id}:region}", 
+					"processed_at": "{@timestamp.iso}",
+					"source": "{@subject}"
+				}`,
+			},
+		},
+	}
+
+	if err := processor.LoadRules([]Rule{rule}); err != nil {
+		t.Fatalf("Failed to load rule: %v", err)
+	}
+
+	// Prepare Input Message (3 levels deep)
+	msgBytes := []byte(`{
+		"data": {
+			"device": {
+				"id": "sensor-001",
+				"config_id": "cfg_alpha"
+			}
+		}
+	}`)
+
+	headers := map[string]string{
+		"X-Tenant-ID": "tenant-a",
+	}
+
+	// Execute
+	actions, err := processor.ProcessNATS("iot.sensors.telemetry", msgBytes, headers)
+	if err != nil {
+		t.Fatalf("ProcessNATS failed: %v", err)
+	}
+
+	if len(actions) != 1 {
+		t.Fatalf("Expected 1 action, got %d", len(actions))
+	}
+
+	// Verify Action Subject
+	expectedSubject := "alerts.sensors.processed"
+	if actions[0].NATS.Subject != expectedSubject {
+		t.Errorf("Subject mismatch. Got: %s, Want: %s", actions[0].NATS.Subject, expectedSubject)
+	}
+
+	// Verify Payload content (contains resolved values)
+	payload := actions[0].NATS.Payload
+	if !strings.Contains(payload, `"region": "us-east-1"`) {
+		t.Errorf("Payload missing resolved KV region. Got: %s", payload)
+	}
+	if !strings.Contains(payload, `"source": "iot.sensors.telemetry"`) {
+		t.Errorf("Payload missing subject source. Got: %s", payload)
+	}
+	// Basic check for timestamp format
+	if !strings.Contains(payload, `"processed_at": "20`) {
+		t.Errorf("Payload missing valid timestamp. Got: %s", payload)
+	}
 }
 
 // TestProcessor_Orchestration verifies the processor correctly calls evaluator and templater.
@@ -99,6 +254,83 @@ func TestProcessor_Orchestration(t *testing.T) {
 	}
 }
 
+// TestProcessor_ComplexKVOrchestration tests nested variables inside KV lookups
+func TestProcessor_ComplexKVOrchestration(t *testing.T) {
+	// Setup KV data
+	kvData := map[string]map[string]interface{}{
+		"device_configs": {
+			"sensor-type-a": map[string]interface{}{
+				"threshold": 50,
+				"owner_ref": "group_1",
+			},
+			"sensor-type-b": map[string]interface{}{
+				"threshold": 80,
+				"owner_ref": "group_2",
+			},
+		},
+		"groups": {
+			"group_1": map[string]interface{}{"email": "team_a@example.com"},
+			"group_2": map[string]interface{}{"email": "team_b@example.com"},
+		},
+	}
+
+	processor := setupTestProcessorWithKV(kvData)
+
+	// Define a rule that uses dynamic KV lookup based on message content
+	rules := []Rule{
+		{
+			Trigger: Trigger{
+				NATS: &NATSTrigger{Subject: "sensors.reading"},
+			},
+			Conditions: &Conditions{
+				Operator: "and",
+				Items: []Condition{
+					{
+						Field:    "{value}",
+						Operator: "gt",
+						Value:    "{@kv.device_configs.{type}:threshold}",
+					},
+				},
+			},
+			Action: Action{
+				NATS: &NATSAction{
+					Subject: "alerts.{type}",
+					Payload: `{"id": "{id}", "contact": "{@kv.groups.{@kv.device_configs.{type}:owner_ref}:email}"}`,
+				},
+			},
+		},
+	}
+	processor.LoadRules(rules)
+
+	// Test Case 1: Should Match
+	payloadMatch := []byte(`{"id": "dev1", "type": "sensor-type-a", "value": 60}`)
+	actions, err := processor.ProcessWithSubject("sensors.reading", payloadMatch, nil)
+	if err != nil {
+		t.Fatalf("ProcessWithSubject error: %v", err)
+	}
+
+	if len(actions) != 1 {
+		t.Fatalf("Expected 1 action, got %d", len(actions))
+	}
+
+	expectedPayload := `{"id": "dev1", "contact": "team_a@example.com"}`
+	if actions[0].NATS.Payload != expectedPayload {
+		t.Errorf("Payload mismatch.\nGot:  %s\nWant: %s", actions[0].NATS.Payload, expectedPayload)
+	}
+
+	// Test Case 2: Should NOT Match
+	payloadNoMatch := []byte(`{"id": "dev2", "type": "sensor-type-b", "value": 60}`)
+	actions, err = processor.ProcessWithSubject("sensors.reading", payloadNoMatch, nil)
+	if err != nil {
+		t.Fatalf("ProcessWithSubject error: %v", err)
+	}
+	if len(actions) != 0 {
+		t.Errorf("Expected 0 actions, got %d", len(actions))
+	}
+}
+
+// ... [Keep existing TemplateEngine unit tests: BasicVariables, NestedFields, SystemFunctions, TimeFields, SubjectFields, ComplexTemplates] ...
+
 // TestTemplateEngine_BasicVariables tests simple message field substitution
 func TestTemplateEngine_BasicVariables(t *testing.T) {
 	engine := newTestTemplateEngine()
@@ -142,7 +374,6 @@ func TestTemplateEngine_BasicVariables(t *testing.T) {
 	}
 }
 
-// TestTemplateEngine_NestedFields tests dot-notation field access
 func TestTemplateEngine_NestedFields(t *testing.T) {
 	engine := newTestTemplateEngine()
 	template := "Email: {user.profile.email}"
@@ -165,7 +396,6 @@ func TestTemplateEngine_NestedFields(t *testing.T) {
 	}
 }
 
-// TestTemplateEngine_SystemFunctions tests system function calls
 func TestTemplateEngine_SystemFunctions(t *testing.T) {
 	engine := newTestTemplateEngine()
 	template := "{@uuid4()}"
@@ -180,7 +410,6 @@ func TestTemplateEngine_SystemFunctions(t *testing.T) {
 	}
 }
 
-// TestTemplateEngine_TimeFields tests time system fields
 func TestTemplateEngine_TimeFields(t *testing.T) {
 	engine := newTestTemplateEngine()
 	fixedTime := time.Date(2024, 3, 15, 14, 30, 45, 0, time.UTC)
@@ -197,7 +426,6 @@ func TestTemplateEngine_TimeFields(t *testing.T) {
 	}
 }
 
-// TestTemplateEngine_SubjectFields tests subject token access
 func TestTemplateEngine_SubjectFields(t *testing.T) {
 	engine := newTestTemplateEngine()
 	template := "Location: {@subject.2}"
@@ -213,7 +441,6 @@ func TestTemplateEngine_SubjectFields(t *testing.T) {
 	}
 }
 
-// TestTemplateEngine_ComplexTemplates tests realistic complex templates
 func TestTemplateEngine_ComplexTemplates(t *testing.T) {
 	engine := newTestTemplateEngine()
 	fixedTime := time.Date(2024, 3, 15, 14, 30, 0, 0, time.UTC)
@@ -233,11 +460,8 @@ func TestTemplateEngine_ComplexTemplates(t *testing.T) {
 	}
 }
 
-// ========================================
-// EXTRACT FOREACH FIELD TESTS (NEW)
-// ========================================
+// ... [Keep ExtractForEachField and ForEach Tests] ...
 
-// TestExtractForEachField tests the new forEach field extraction with brace syntax
 func TestExtractForEachField(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -311,11 +535,7 @@ func TestExtractForEachField(t *testing.T) {
 	}
 }
 
-// ========================================
-// FOREACH TESTS - NATS ACTIONS
-// ========================================
-
-// TestProcessNATSActionWithForEach_Basic tests basic forEach functionality
+// ... [Keep all ForEach Tests (NATS and HTTP)] ...
 func TestProcessNATSActionWithForEach_Basic(t *testing.T) {
 	processor := newTestProcessor()
 
@@ -363,7 +583,6 @@ func TestProcessNATSActionWithForEach_Basic(t *testing.T) {
 	}
 }
 
-// TestProcessNATSActionWithForEach_InvalidSyntax tests forEach with old syntax (should fail)
 func TestProcessNATSActionWithForEach_InvalidSyntax(t *testing.T) {
 	processor := newTestProcessor()
 
@@ -431,7 +650,6 @@ func TestProcessNATSActionWithForEach_InvalidSyntax(t *testing.T) {
 	}
 }
 
-// TestProcessNATSActionWithForEach_WithFilter tests forEach with filter conditions
 func TestProcessNATSActionWithForEach_WithFilter(t *testing.T) {
 	processor := newTestProcessor()
 
@@ -476,7 +694,6 @@ func TestProcessNATSActionWithForEach_WithFilter(t *testing.T) {
 	}
 }
 
-// TestProcessNATSActionWithForEach_EmptyArray tests forEach with empty array
 func TestProcessNATSActionWithForEach_EmptyArray(t *testing.T) {
 	processor := newTestProcessor()
 
@@ -502,12 +719,10 @@ func TestProcessNATSActionWithForEach_EmptyArray(t *testing.T) {
 	}
 }
 
-// TestProcessNATSActionWithForEach_MixedArray tests forEach with mixed type array
 func TestProcessNATSActionWithForEach_MixedArray(t *testing.T) {
 	processor := newTestProcessor()
 
 	// MODIFICATION: Add a filter to explicitly process only elements that have an 'id' field.
-	// This is the correct way to handle mixed arrays.
 	action := &NATSAction{
 		ForEach: "{items}",
 		Filter: &Conditions{
@@ -553,7 +768,6 @@ func TestProcessNATSActionWithForEach_MixedArray(t *testing.T) {
 	}
 }
 
-// TestProcessNATSActionWithForEach_RootMessageAccess tests @msg prefix
 func TestProcessNATSActionWithForEach_RootMessageAccess(t *testing.T) {
 	processor := newTestProcessor()
 
@@ -602,7 +816,6 @@ func TestProcessNATSActionWithForEach_RootMessageAccess(t *testing.T) {
 	}
 }
 
-// TestProcessNATSActionWithForEach_Passthrough tests passthrough mode
 func TestProcessNATSActionWithForEach_Passthrough(t *testing.T) {
 	processor := newTestProcessor()
 
@@ -646,7 +859,6 @@ func TestProcessNATSActionWithForEach_Passthrough(t *testing.T) {
 	}
 }
 
-// TestProcessNATSActionWithForEach_IterationLimit tests max iteration enforcement
 func TestProcessNATSActionWithForEach_IterationLimit(t *testing.T) {
 	processor := newTestProcessor()
 	processor.SetMaxForEachIterations(5) // Set low limit for testing
@@ -679,7 +891,6 @@ func TestProcessNATSActionWithForEach_IterationLimit(t *testing.T) {
 	}
 }
 
-// TestProcessNATSActionWithForEach_NestedFields tests nested field access in forEach
 func TestProcessNATSActionWithForEach_NestedFields(t *testing.T) {
 	processor := newTestProcessor()
 
@@ -726,7 +937,6 @@ func TestProcessNATSActionWithForEach_NestedFields(t *testing.T) {
 	}
 }
 
-// TestProcessNATSActionWithForEach_Headers tests header templating
 func TestProcessNATSActionWithForEach_Headers(t *testing.T) {
 	processor := newTestProcessor()
 
@@ -1004,7 +1214,6 @@ func TestProcessForEach_RealWorldBatchNotification(t *testing.T) {
 		}`,
 	}
 
-	// Real-world batch notification payload from implementation plan
 	data := map[string]interface{}{
 		"siteId": "site-123",
 		"type":   "NOTIFICATION",
@@ -1087,7 +1296,8 @@ func BenchmarkTemplateEngine_Simple(b *testing.B) {
 	}
 }
 
-func BenchmarkTemplateEngine_Complex(b *testing.B) {
+// Renamed from Complex to Mixed
+func BenchmarkTemplateEngine_MixedTypes(b *testing.B) {
 	engine := newTestTemplateEngine()
 	template := `{ "id": "{device_id}", "type": "{@subject.1}", "ts": "{@timestamp()}" }`
 	data := map[string]interface{}{"device_id": "sensor001"}
@@ -1099,7 +1309,136 @@ func BenchmarkTemplateEngine_Complex(b *testing.B) {
 	}
 }
 
-// BenchmarkProcessForEach_Small benchmarks forEach with small array
+// BenchmarkTemplateEngine_NestedKV benchmarks true recursive template parsing with KV lookups
+func BenchmarkTemplateEngine_NestedKV(b *testing.B) {
+	engine := newTestTemplateEngine()
+
+	// Setup chained KV data for deep recursion
+	// Message ID -> Config Key -> Region -> Endpoint
+	kvData := make(map[string]map[string]interface{})
+	kvData["devices"] = map[string]interface{}{
+		"sensor-001": map[string]interface{}{"config_id": "cfg-alpha"},
+	}
+	kvData["configs"] = map[string]interface{}{
+		"cfg-alpha": map[string]interface{}{"region": "us-west"},
+	}
+	kvData["regions"] = map[string]interface{}{
+		"us-west": map[string]interface{}{"url": "api.west.internal"},
+	}
+
+	// 3 levels of nesting + 1 base variable
+	template := `{"target": "https://{@kv.regions.{@kv.configs.{@kv.devices.{id}:config_id}:region}:url}/ingest"}`
+
+	data := map[string]interface{}{"id": "sensor-001"}
+	context := newKVTemplateTestContext(data, kvData)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		engine.Execute(template, context)
+	}
+}
+
+// BenchmarkProcessor_Heavy_KV tests a realistic scenario with extensive KV usage
+func BenchmarkProcessor_Heavy_KV(b *testing.B) {
+	kvData := make(map[string]map[string]interface{})
+	kvData["configs"] = make(map[string]interface{})
+	kvData["limits"] = make(map[string]interface{})
+	kvData["enrichment"] = make(map[string]interface{})
+
+	for i := 0; i < 1000; i++ {
+		id := fmt.Sprintf("dev-%d", i)
+		kvData["configs"][id] = map[string]interface{}{
+			"type":   "sensor-type-x",
+			"region": "us-east",
+		}
+		kvData["limits"]["sensor-type-x"] = map[string]interface{}{
+			"max_temp": 100,
+		}
+		kvData["enrichment"]["us-east"] = map[string]interface{}{
+			"datacenter": "virginia",
+			"support":    "team-a",
+		}
+	}
+
+	processor := setupTestProcessorWithKV(kvData)
+
+	rules := []Rule{
+		{
+			Trigger: Trigger{NATS: &NATSTrigger{Subject: "data"}},
+			Conditions: &Conditions{
+				Operator: "and",
+				Items: []Condition{
+					{
+						Field:    "{val}",
+						Operator: "gt",
+						Value:    "{@kv.limits.{@kv.configs.{id}:type}:max_temp}",
+					},
+				},
+			},
+			Action: Action{
+				NATS: &NATSAction{
+					Subject: "alert.{id}",
+					Payload: `{"dc": "{@kv.enrichment.{@kv.configs.{id}:region}:datacenter}"}`,
+				},
+			},
+		},
+	}
+	processor.LoadRules(rules)
+
+	msg := []byte(`{"id": "dev-500", "val": 150}`)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		processor.ProcessNATS("data", msg, nil)
+	}
+}
+
+// BenchmarkProcessor_ComplexIntegration_DeepContext measures performance of a heavy rule
+// involving deep JSON traversal, header checks, dynamic KV lookup, and context injection
+func BenchmarkProcessor_ComplexIntegration_DeepContext(b *testing.B) {
+	// Setup KV Data
+	kvData := map[string]map[string]interface{}{
+		"configurations": {
+			"cfg_alpha": map[string]interface{}{
+				"threshold": 90,
+				"region":    "us-east-1",
+			},
+		},
+	}
+
+	processor := setupTestProcessorWithKV(kvData)
+
+	// Define the Rule (same as test case)
+	rule := Rule{
+		Trigger: Trigger{NATS: &NATSTrigger{Subject: "iot.sensors.telemetry"}},
+		Conditions: &Conditions{
+			Operator: "and",
+			Items: []Condition{
+				{Field: "{@header.X-Tenant-ID}", Operator: "eq", Value: "tenant-a"},
+				{Field: "{@kv.configurations.{data.device.config_id}:threshold}", Operator: "gt", Value: 80},
+			},
+		},
+		Action: Action{
+			NATS: &NATSAction{
+				Subject: "alerts.{@subject.1}.processed",
+				Payload: `{"region": "{@kv.configurations.{data.device.config_id}:region}", "ts": "{@timestamp.iso}"}`,
+			},
+		},
+	}
+	processor.LoadRules([]Rule{rule})
+
+	// Input
+	msgBytes := []byte(`{"data": {"device": {"id": "sensor-001", "config_id": "cfg_alpha"}}}`)
+	headers := map[string]string{"X-Tenant-ID": "tenant-a"}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		processor.ProcessNATS("iot.sensors.telemetry", msgBytes, headers)
+	}
+}
+
+// ... [Keep ProcessForEach benchmarks] ...
+
 func BenchmarkProcessForEach_Small(b *testing.B) {
 	processor := newTestProcessor()
 
@@ -1125,7 +1464,6 @@ func BenchmarkProcessForEach_Small(b *testing.B) {
 	}
 }
 
-// BenchmarkProcessForEach_Large benchmarks forEach with larger array
 func BenchmarkProcessForEach_Large(b *testing.B) {
 	processor := newTestProcessor()
 
@@ -1135,7 +1473,6 @@ func BenchmarkProcessForEach_Large(b *testing.B) {
 		Payload: `{"id": "{id}", "value": {value}}`,
 	}
 
-	// 100-element array
 	items := make([]interface{}, 100)
 	for i := 0; i < 100; i++ {
 		items[i] = map[string]interface{}{"id": fmt.Sprintf("item%d", i), "value": i * 10}
@@ -1153,7 +1490,6 @@ func BenchmarkProcessForEach_Large(b *testing.B) {
 	}
 }
 
-// BenchmarkProcessForEach_WithFilter benchmarks forEach with filter
 func BenchmarkProcessForEach_WithFilter(b *testing.B) {
 	processor := newTestProcessor()
 
@@ -1169,7 +1505,6 @@ func BenchmarkProcessForEach_WithFilter(b *testing.B) {
 		Payload: `{"id": "{id}", "value": {value}}`,
 	}
 
-	// 100-element array, ~50% will match filter
 	items := make([]interface{}, 100)
 	for i := 0; i < 100; i++ {
 		items[i] = map[string]interface{}{"id": fmt.Sprintf("item%d", i), "value": i}
@@ -1187,7 +1522,6 @@ func BenchmarkProcessForEach_WithFilter(b *testing.B) {
 	}
 }
 
-// BenchmarkProcessForEach_MixedArray benchmarks forEach with mixed type array
 func BenchmarkProcessForEach_MixedArray(b *testing.B) {
 	processor := newTestProcessor()
 
@@ -1197,7 +1531,6 @@ func BenchmarkProcessForEach_MixedArray(b *testing.B) {
 		Payload: `{"id": "{id}"}`,
 	}
 
-	// 90-element mixed array (30 objects, 60 non-objects)
 	items := make([]interface{}, 90)
 	for i := 0; i < 90; i++ {
 		if i%3 == 0 {
@@ -1221,7 +1554,6 @@ func BenchmarkProcessForEach_MixedArray(b *testing.B) {
 	}
 }
 
-// BenchmarkExtractForEachField benchmarks the forEach field extraction
 func BenchmarkExtractForEachField(b *testing.B) {
 	testCases := []string{
 		"{notifications}",
