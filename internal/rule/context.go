@@ -3,14 +3,23 @@
 package rule
 
 import (
-	json "github.com/goccy/go-json"
 	"encoding/base64"
 	"strings"
 	"sync"
 	"unicode/utf8"
 
+	json "github.com/goccy/go-json"
 	"github.com/nats-io/nkeys"
+
 	"rule-router/internal/logger"
+)
+
+// System field prefixes for @ variables
+const (
+	prefixMsg       = "@msg."
+	prefixHeader    = "@header."
+	prefixKV        = "@kv."
+	prefixSignature = "@signature."
 )
 
 // wrapIfNeeded wraps primitives and arrays to ensure root message is always an object.
@@ -161,8 +170,8 @@ func (c *EvaluationContext) ResolveValue(path string) (interface{}, bool) {
 func (c *EvaluationContext) resolveSystemField(path string) (interface{}, bool) {
 	// @msg prefix - explicitly access root message
 	// This is critical during forEach to access fields outside the current array element
-	if strings.HasPrefix(path, "@msg.") {
-		fieldPath := path[5:] // Remove "@msg."
+	if strings.HasPrefix(path, prefixMsg) {
+		fieldPath := path[len(prefixMsg):]
 		value, err := c.traverser.TraversePathString(c.OriginalMsg, fieldPath)
 		if err != nil {
 			return nil, false
@@ -195,8 +204,8 @@ func (c *EvaluationContext) resolveSystemField(path string) (interface{}, bool) 
 	}
 
 	// Header fields (both contexts)
-	if strings.HasPrefix(path, "@header.") {
-		headerName := path[8:] // Remove "@header."
+	if strings.HasPrefix(path, prefixHeader) {
+		headerName := path[len(prefixHeader):]
 		if c.Headers != nil {
 			if value, ok := c.Headers[headerName]; ok {
 				return value, true
@@ -214,7 +223,7 @@ func (c *EvaluationContext) resolveSystemField(path string) (interface{}, bool) 
 	}
 
 	// KV fields (both contexts)
-	if strings.HasPrefix(path, "@kv.") {
+	if strings.HasPrefix(path, prefixKV) {
 		if c.KV != nil {
 			return c.KV.GetFieldWithContext(path, c.Msg, c.Time, c.Subject)
 		}
@@ -222,7 +231,7 @@ func (c *EvaluationContext) resolveSystemField(path string) (interface{}, bool) 
 	}
 
 	// Signature fields (both contexts)
-	if strings.HasPrefix(path, "@signature.") {
+	if strings.HasPrefix(path, prefixSignature) {
 		if c.sigVerification != nil && c.sigVerification.Enabled {
 			c.verifySignature() // Lazy verification
 			switch path {
@@ -358,3 +367,4 @@ func (c *EvaluationContext) verifySignature() {
 		}
 	}
 }
+

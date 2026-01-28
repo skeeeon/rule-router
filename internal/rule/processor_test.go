@@ -460,82 +460,10 @@ func TestTemplateEngine_ComplexTemplates(t *testing.T) {
 	}
 }
 
-// ... [Keep ExtractForEachField and ForEach Tests] ...
+// Note: ExtractVariable is tested in condition_resolver_test.go
+// The forEach template extraction uses ExtractVariable from condition_resolver.go
 
-func TestExtractForEachField(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "simple field with braces",
-			input:    "{notifications}",
-			expected: "notifications",
-		},
-		{
-			name:     "nested field with braces",
-			input:    "{data.items}",
-			expected: "data.items",
-		},
-		{
-			name:     "deeply nested field",
-			input:    "{response.data.events.items}",
-			expected: "response.data.events.items",
-		},
-		{
-			name:     "root array accessor",
-			input:    "{@items}",
-			expected: "@items",
-		},
-		{
-			name:     "field with whitespace",
-			input:    "  {notifications}  ",
-			expected: "notifications",
-		},
-		{
-			name:     "invalid - missing braces",
-			input:    "notifications",
-			expected: "",
-		},
-		{
-			name:     "invalid - only opening brace",
-			input:    "{notifications",
-			expected: "",
-		},
-		{
-			name:     "invalid - only closing brace",
-			input:    "notifications}",
-			expected: "",
-		},
-		{
-			name:     "invalid - empty braces",
-			input:    "{}",
-			expected: "",
-		},
-		{
-			name:     "invalid - whitespace only in braces",
-			input:    "{  }",
-			expected: "",
-		},
-		{
-			name:     "complex nested path",
-			input:    "{nested.path.with.many.levels}",
-			expected: "nested.path.with.many.levels",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := extractForEachField(tt.input)
-			if result != tt.expected {
-				t.Errorf("extractForEachField(%q) = %q, expected %q", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
-
-// ... [Keep all ForEach Tests (NATS and HTTP)] ...
+// ... [ForEach Tests (NATS and HTTP)] ...
 func TestProcessNATSActionWithForEach_Basic(t *testing.T) {
 	processor := newTestProcessor()
 
@@ -1554,7 +1482,7 @@ func BenchmarkProcessForEach_MixedArray(b *testing.B) {
 	}
 }
 
-func BenchmarkExtractForEachField(b *testing.B) {
+func BenchmarkExtractVariable(b *testing.B) {
 	testCases := []string{
 		"{notifications}",
 		"{data.items}",
@@ -1564,6 +1492,7 @@ func BenchmarkExtractForEachField(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		extractForEachField(testCases[i%len(testCases)])
+		ExtractVariable(testCases[i%len(testCases)])
 	}
 }
+

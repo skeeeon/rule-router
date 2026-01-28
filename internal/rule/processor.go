@@ -3,14 +3,20 @@
 package rule
 
 import (
-	json "github.com/goccy/go-json"
 	"fmt"
-	"strings"
 	"sync/atomic"
 	"time"
 
+	json "github.com/goccy/go-json"
+
 	"rule-router/internal/logger"
 	"rule-router/internal/metrics"
+)
+
+const (
+	// DefaultMaxForEachIterations is the default limit for forEach array processing.
+	// Prevents runaway iteration on large arrays. Can be overridden via configuration.
+	DefaultMaxForEachIterations = 100
 )
 
 type Processor struct {
@@ -50,35 +56,57 @@ type ElementError struct {
 	Error     error
 }
 
-// extractForEachField unwraps the forEach field from template syntax to get the actual path.
-// This is critical for the new brace-everywhere syntax.
-//
-// Examples:
-//   "{notifications}"        → "notifications"
-//   "{data.readings}"        → "data.readings"
-//   "{nested.path.array}"    → "nested.path.array"
-//   "{@items}"               → "@items"
-//   "notifications"          → "" (invalid - missing braces)
-//   "{}"                     → "" (invalid - empty)
-//
-// Returns empty string if the template is invalid (missing braces or empty content).
-func extractForEachField(forEachTemplate string) string {
-	template := strings.TrimSpace(forEachTemplate)
-	
-	// Must have both opening and closing braces
-	if !strings.HasPrefix(template, "{") || !strings.HasSuffix(template, "}") {
-		return ""
+// forEachArrayData holds the extracted array and metadata for forEach processing
+type forEachArrayData struct {
+	items     []interface{}
+	fieldPath string
+}
+
+// extractForEachArray extracts and validates the array for forEach processing.
+// This is shared logic between NATS and HTTP forEach handlers.
+func (p *Processor) extractForEachArray(forEachTemplate string, context *EvaluationContext) (*forEachArrayData, error) {
+	// Extract the field path from template braces using shared utility
+	// forEach: "{data.readings}" → "data.readings"
+	fieldPath := ExtractVariable(forEachTemplate)
+	if fieldPath == "" {
+		return nil, fmt.Errorf("invalid forEach template syntax (must be {field}): %s", forEachTemplate)
 	}
-	
-	// Extract content between braces
-	fieldPath := template[1 : len(template)-1]
-	
-	// Content cannot be empty
-	if strings.TrimSpace(fieldPath) == "" {
-		return ""
+
+	p.logger.Debug("extracted forEach field path",
+		"template", forEachTemplate,
+		"extractedPath", fieldPath)
+
+	// Use brace-aware path splitting on the extracted path
+	arrayPath, err := SplitPathRespectingBraces(fieldPath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid forEach path '%s': %w", fieldPath, err)
 	}
-	
-	return fieldPath
+
+	arrayValue, err := context.traverser.TraversePath(context.Msg, arrayPath)
+	if err != nil {
+		return nil, fmt.Errorf("forEach field not found: %s: %w", forEachTemplate, err)
+	}
+
+	arrayItems, ok := arrayValue.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("forEach field is not an array: %s (type: %T)", forEachTemplate, arrayValue)
+	}
+
+	// Enforce iteration limit
+	if p.maxForEachIters > 0 && len(arrayItems) > p.maxForEachIters {
+		return nil, fmt.Errorf("forEach array exceeds limit: %d elements > %d max iterations (configure maxForEachIterations to increase)",
+			len(arrayItems), p.maxForEachIters)
+	}
+
+	p.logger.Debug("forEach array extracted",
+		"field", forEachTemplate,
+		"arrayLength", len(arrayItems),
+		"maxIterations", p.maxForEachIters)
+
+	return &forEachArrayData{
+		items:     arrayItems,
+		fieldPath: fieldPath,
+	}, nil
 }
 
 // NewProcessor creates a new processor with optional signature verification
@@ -94,7 +122,7 @@ func NewProcessor(log *logger.Logger, metrics *metrics.Metrics, kvCtx *KVContext
 		evaluator:       NewEvaluator(log),
 		templater:       NewTemplateEngine(log),
 		sigVerification: sigVerification,
-		maxForEachIters: 100, // Default safe limit
+		maxForEachIters: DefaultMaxForEachIterations,
 	}
 
 	if kvCtx != nil {
@@ -408,57 +436,25 @@ func ensureObject(item interface{}) map[string]interface{} {
 // Reuses element context for both filter and templating
 func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *EvaluationContext) ([]*Action, error) {
 	start := time.Now()
-	
+
 	p.logger.Debug("processing NATS action with forEach",
 		"forEachField", action.ForEach)
 
-	// Extract the field path from template braces
-	// forEach: "{data.readings}" → "data.readings"
-	fieldPath := extractForEachField(action.ForEach)
-	if fieldPath == "" {
-		return nil, fmt.Errorf("invalid forEach template syntax (must be {field}): %s", action.ForEach)
-	}
-	
-	p.logger.Debug("extracted forEach field path",
-		"template", action.ForEach,
-		"extractedPath", fieldPath)
-
-	// Use brace-aware path splitting on the EXTRACTED path
-	arrayPath, err := SplitPathRespectingBraces(fieldPath)
+	// Extract and validate the forEach array
+	arrayData, err := p.extractForEachArray(action.ForEach, context)
 	if err != nil {
-		return nil, fmt.Errorf("invalid forEach path '%s': %w", fieldPath, err)
+		return nil, err
 	}
-
-	arrayValue, err := context.traverser.TraversePath(context.Msg, arrayPath)
-	if err != nil {
-		return nil, fmt.Errorf("forEach field not found: %s: %w", action.ForEach, err)
-	}
-
-	arrayItems, ok := arrayValue.([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("forEach field is not an array: %s (type: %T)", action.ForEach, arrayValue)
-	}
-
-	// Enforce iteration limit
-	if p.maxForEachIters > 0 && len(arrayItems) > p.maxForEachIters {
-		return nil, fmt.Errorf("forEach array exceeds limit: %d elements > %d max iterations (configure maxForEachIterations to increase)",
-			len(arrayItems), p.maxForEachIters)
-	}
-
-	p.logger.Debug("forEach array extracted",
-		"field", action.ForEach,
-		"arrayLength", len(arrayItems),
-		"maxIterations", p.maxForEachIters)
 
 	// Track detailed results
 	result := &ForEachResult{
-		TotalElements: len(arrayItems),
+		TotalElements: len(arrayData.items),
 		Errors:        make([]ElementError, 0),
 	}
-	
+
 	var actions []*Action
 
-	for i, item := range arrayItems {
+	for i, item := range arrayData.items {
 		// Wrap primitives, pass objects through
 		itemMap := ensureObject(item)
 		
@@ -651,57 +647,25 @@ func (p *Processor) processHTTPAction(action *HTTPAction, context *EvaluationCon
 // Reuses element context for both filter and templating
 func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *EvaluationContext) ([]*Action, error) {
 	start := time.Now()
-	
+
 	p.logger.Debug("processing HTTP action with forEach",
 		"forEachField", action.ForEach)
 
-	// Extract the field path from template braces
-	// forEach: "{data.readings}" → "data.readings"
-	fieldPath := extractForEachField(action.ForEach)
-	if fieldPath == "" {
-		return nil, fmt.Errorf("invalid forEach template syntax (must be {field}): %s", action.ForEach)
-	}
-	
-	p.logger.Debug("extracted forEach field path",
-		"template", action.ForEach,
-		"extractedPath", fieldPath)
-
-	// Use brace-aware path splitting on the EXTRACTED path
-	arrayPath, err := SplitPathRespectingBraces(fieldPath)
+	// Extract and validate the forEach array
+	arrayData, err := p.extractForEachArray(action.ForEach, context)
 	if err != nil {
-		return nil, fmt.Errorf("invalid forEach path '%s': %w", fieldPath, err)
+		return nil, err
 	}
-
-	arrayValue, err := context.traverser.TraversePath(context.Msg, arrayPath)
-	if err != nil {
-		return nil, fmt.Errorf("forEach field not found: %s: %w", action.ForEach, err)
-	}
-
-	arrayItems, ok := arrayValue.([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("forEach field is not an array: %s (type: %T)", action.ForEach, arrayValue)
-	}
-
-	// Enforce iteration limit
-	if p.maxForEachIters > 0 && len(arrayItems) > p.maxForEachIters {
-		return nil, fmt.Errorf("forEach array exceeds limit: %d elements > %d max iterations (configure maxForEachIterations to increase)",
-			len(arrayItems), p.maxForEachIters)
-	}
-
-	p.logger.Debug("forEach array extracted",
-		"field", action.ForEach,
-		"arrayLength", len(arrayItems),
-		"maxIterations", p.maxForEachIters)
 
 	// Track detailed results
 	result := &ForEachResult{
-		TotalElements: len(arrayItems),
+		TotalElements: len(arrayData.items),
 		Errors:        make([]ElementError, 0),
 	}
-	
+
 	var actions []*Action
 
-	for i, item := range arrayItems {
+	for i, item := range arrayData.items {
 		// Wrap primitives, pass objects through
 		itemMap := ensureObject(item)
 		
@@ -917,14 +881,10 @@ func safeMarshal(v interface{}) ([]byte, error) {
 	return b, nil
 }
 
-// ProcessWithSubject is kept for backward compatibility
+// ProcessWithSubject is kept for backward compatibility.
+// Used by internal/broker/subscription.go.
 func (p *Processor) ProcessWithSubject(subject string, payload []byte, headers map[string]string) ([]*Action, error) {
 	return p.ProcessNATS(subject, payload, headers)
-}
-
-// Process is kept for backward compatibility
-func (p *Processor) Process(subject string, payload []byte) ([]*Action, error) {
-	return p.ProcessNATS(subject, payload, nil)
 }
 
 // SetTimeProvider allows injecting a mock time provider for testing
@@ -940,3 +900,4 @@ func (p *Processor) GetStats() ProcessorStats {
 		Errors:    atomic.LoadUint64(&p.stats.Errors),
 	}
 }
+

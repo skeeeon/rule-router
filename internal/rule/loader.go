@@ -106,6 +106,11 @@ func (l *RulesLoader) LoadFromFile(filePath string) ([]Rule, error) {
 		return nil, fmt.Errorf("failed to parse YAML: %w", err)
 	}
 
+	if len(rules) == 0 {
+		l.logger.Warn("rule file contains no rules", "file", filePath)
+		return rules, nil
+	}
+
 	l.logger.Debug("parsed rules from file",
 		"file", filePath,
 		"ruleCount", len(rules))
@@ -824,3 +829,4 @@ func (l *RulesLoader) isValidOperator(op string) bool {
 	}
 	return validOps[op]
 }
+
