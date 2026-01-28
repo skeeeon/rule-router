@@ -468,20 +468,7 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 		}
 
 		// Create context once and reuse for both filter and templating
-		elementContext, err := p.createElementContextOptimized(itemMap, context)
-		if err != nil {
-			p.logger.Error("failed to create element context",
-				"field", action.ForEach,
-				"index", i,
-				"error", err)
-			result.FailedElements++
-			result.Errors = append(result.Errors, ElementError{
-				Index:     i,
-				ErrorType: "context_creation_failed",
-				Error:     err,
-			})
-			continue
-		}
+		elementContext := p.createElementContext(itemMap, context)
 
 		// Apply filter if present (using the same context)
 		if action.Filter != nil {
@@ -679,20 +666,7 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 		}
 
 		// Create context once and reuse for both filter and templating
-		elementContext, err := p.createElementContextOptimized(itemMap, context)
-		if err != nil {
-			p.logger.Error("failed to create element context",
-				"field", action.ForEach,
-				"index", i,
-				"error", err)
-			result.FailedElements++
-			result.Errors = append(result.Errors, ElementError{
-				Index:     i,
-				ErrorType: "context_creation_failed",
-				Error:     err,
-			})
-			continue
-		}
+		elementContext := p.createElementContext(itemMap, context)
 
 		// Apply filter if present (using the same context)
 		if action.Filter != nil {
@@ -829,28 +803,10 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 	return actions, nil
 }
 
-// createElementContextOptimized creates a context for array element WITHOUT marshal/unmarshal
-// Avoids JSON serialization roundtrip (5-10x faster)
-func (p *Processor) createElementContextOptimized(element map[string]interface{}, originalContext *EvaluationContext) (*EvaluationContext, error) {
-	// Direct assignment without marshal/unmarshal cycle
-	elementContext := &EvaluationContext{
-		Msg:             element,                      // Current element
-		OriginalMsg:     originalContext.OriginalMsg,  // CRITICAL: Preserve root for @msg
-		RawPayload:      originalContext.RawPayload,   // Not used in forEach, but keep for consistency
-		Headers:         originalContext.Headers,
-		Subject:         originalContext.Subject,
-		HTTP:            originalContext.HTTP,
-		Time:            originalContext.Time,
-		KV:              originalContext.KV,
-		traverser:       originalContext.traverser,
-		sigVerification: originalContext.sigVerification,
-		sigChecked:      originalContext.sigChecked,
-		sigValid:        originalContext.sigValid,
-		signerPublicKey: originalContext.signerPublicKey,
-		logger:          p.logger,
-	}
-
-	return elementContext, nil
+// createElementContext creates a context for array element processing.
+// Uses EvaluationContext.WithElement to avoid duplication.
+func (p *Processor) createElementContext(element map[string]interface{}, originalContext *EvaluationContext) *EvaluationContext {
+	return originalContext.WithElement(element)
 }
 
 // templateHeaders templates all header values

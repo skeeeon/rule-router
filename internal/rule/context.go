@@ -145,6 +145,28 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
+// WithElement creates a child context for processing an array element.
+// The new context has Msg set to the element while preserving OriginalMsg
+// for @msg access to the root message. All other fields are inherited.
+func (c *EvaluationContext) WithElement(element map[string]interface{}) *EvaluationContext {
+	return &EvaluationContext{
+		Msg:             element,
+		OriginalMsg:     c.OriginalMsg, // Preserve root for @msg access
+		RawPayload:      c.RawPayload,
+		Headers:         c.Headers,
+		Subject:         c.Subject,
+		HTTP:            c.HTTP,
+		Time:            c.Time,
+		KV:              c.KV,
+		traverser:       c.traverser,
+		sigVerification: c.sigVerification,
+		sigChecked:      c.sigChecked,
+		sigValid:        c.sigValid,
+		signerPublicKey: c.signerPublicKey,
+		logger:          c.logger,
+	}
+}
+
 // ResolveValue resolves a field value from the context
 // Supports message fields, system fields (@subject, @path, @header, @time, @kv, @signature)
 // Also supports @msg prefix for explicit root message access during forEach

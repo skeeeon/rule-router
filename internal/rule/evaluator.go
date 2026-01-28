@@ -270,23 +270,8 @@ func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Conditi
 				"accessVia", "@value")
 		}
 
-		// Create element context directly without marshal/unmarshal
-		elementContext := &EvaluationContext{
-			Msg:             elementMap,
-			OriginalMsg:     context.OriginalMsg, // CRITICAL: Preserve root
-			RawPayload:      context.RawPayload,
-			Headers:         context.Headers,
-			Subject:         context.Subject,
-			HTTP:            context.HTTP,
-			Time:            context.Time,
-			KV:              context.KV,
-			traverser:       context.traverser,
-			sigVerification: context.sigVerification,
-			sigChecked:      context.sigChecked,
-			sigValid:        context.sigValid,
-			signerPublicKey: context.signerPublicKey,
-			logger:          e.logger,
-		}
+		// Create element context for array element processing
+		elementContext := context.WithElement(elementMap)
 
 		elementMatches := e.Evaluate(cond.Conditions, elementContext)
 		
@@ -569,3 +554,4 @@ func (e *Evaluator) convertToString(value interface{}) string {
 	}
 	return fmt.Sprintf("%v", value)
 }
+

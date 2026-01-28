@@ -17,10 +17,17 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
+
 	"rule-router/config"
 	"rule-router/internal/logger"
 	"rule-router/internal/metrics"
 	"rule-router/internal/rule"
+)
+
+// Client limits
+const (
+	// MaxOutboundResponseSize is the maximum size of an HTTP response body to read for logging (1MB).
+	MaxOutboundResponseSize = 1024 * 1024
 )
 
 // OutboundClient handles NATS messages and makes HTTP requests
@@ -496,8 +503,8 @@ func (c *OutboundClient) makeHTTPRequest(ctx context.Context, action *rule.HTTPA
 	}
 	defer resp.Body.Close()
 
-	// Read response body (for logging)
-	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024)) // 1MB limit
+	// Read response body for logging (ignore errors - best effort)
+	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, MaxOutboundResponseSize))
 
 	// Record metrics
 	duration := time.Since(start).Seconds()
@@ -557,4 +564,5 @@ func (c *OutboundClient) Stop() error {
 	c.logger.Info("outbound client stopped successfully")
 	return nil
 }
+
 

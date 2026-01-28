@@ -12,9 +12,26 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+
 	"rule-router/internal/logger"
 	"rule-router/internal/metrics"
 	"rule-router/internal/rule"
+)
+
+// Server defaults and limits
+const (
+	// DefaultInboundWorkerCount is the default number of workers processing inbound webhooks.
+	DefaultInboundWorkerCount = 10
+	// DefaultInboundQueueSize is the default size of the inbound work queue.
+	DefaultInboundQueueSize = 100
+	// MaxInboundBodySize is the maximum size of an inbound HTTP request body (10MB).
+	MaxInboundBodySize = 10 * 1024 * 1024
+)
+
+// Standard JSON responses
+const (
+	responseAccepted = `{"status":"accepted"}`
+	responseHealthy  = `{"status":"healthy"}`
 )
 
 // webhookJob represents a unit of work to be processed by a worker.
@@ -82,11 +99,11 @@ func NewInboundServer(
 ) *InboundServer {
 	// Grug brain: Use good defaults if not set.
 	if serverCfg.InboundWorkerCount <= 0 {
-		serverCfg.InboundWorkerCount = 10 // Default to 10 workers
+		serverCfg.InboundWorkerCount = DefaultInboundWorkerCount
 		logger.Info("InboundWorkerCount not set, using default", "count", serverCfg.InboundWorkerCount)
 	}
 	if serverCfg.InboundQueueSize <= 0 {
-		serverCfg.InboundQueueSize = 100 // Default to a queue size of 100
+		serverCfg.InboundQueueSize = DefaultInboundQueueSize
 		logger.Info("InboundQueueSize not set, using default", "size", serverCfg.InboundQueueSize)
 	}
 
@@ -217,7 +234,7 @@ func (s *InboundServer) webhookHandler(path string) http.HandlerFunc {
 		defer r.Body.Close()
 
 		// Read request body (with size limit)
-		body, err := io.ReadAll(io.LimitReader(r.Body, 10*1024*1024)) // 10MB limit
+		body, err := io.ReadAll(io.LimitReader(r.Body, MaxInboundBodySize))
 		if err != nil {
 			s.logger.Error("failed to read request body", "error", err)
 			http.Error(w, "Bad Request", http.StatusBadRequest)
@@ -249,7 +266,7 @@ func (s *InboundServer) webhookHandler(path string) http.HandlerFunc {
 			// Job successfully enqueued. Return 200 OK.
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"status":"accepted"}`))
+			w.Write([]byte(responseAccepted))
 			if s.metrics != nil {
 				s.metrics.IncHTTPInboundRequestsTotal(path, r.Method, "200")
 			}
@@ -364,6 +381,7 @@ func (s *InboundServer) publishToNATS(action *rule.NATSAction) error {
 func (s *InboundServer) healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"healthy"}`))
+	w.Write([]byte(responseHealthy))
 }
+
 
