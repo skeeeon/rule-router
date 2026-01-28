@@ -3,8 +3,10 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -24,6 +26,9 @@ type BaseApp struct {
 	Processor     *rule.Processor
 	MetricsServer *http.Server
 	Collector     *metrics.MetricsCollector
+
+	// metricsServerWg tracks the metrics server goroutine for graceful shutdown
+	metricsServerWg sync.WaitGroup
 }
 
 // AppBuilder constructs the BaseApp components fluently.
@@ -94,7 +99,10 @@ func (b *AppBuilder) WithMetrics() *AppBuilder {
 		Handler: mux,
 	}
 
+	// Track the metrics server goroutine with WaitGroup for graceful shutdown
+	b.base.metricsServerWg.Add(1)
 	go func() {
+		defer b.base.metricsServerWg.Done()
 		b.base.Logger.Info("starting metrics server",
 			"address", b.cfg.Metrics.Address,
 			"path", b.cfg.Metrics.Path)
@@ -200,3 +208,30 @@ func (b *AppBuilder) Build() (*BaseApp, error) {
 	}
 	return b.base, nil
 }
+
+// ShutdownMetricsServer gracefully shuts down the metrics server and waits for the goroutine to exit.
+func (base *BaseApp) ShutdownMetricsServer(ctx context.Context) error {
+	if base.MetricsServer == nil {
+		return nil
+	}
+
+	// Shutdown the HTTP server (this causes ListenAndServe to return)
+	if err := base.MetricsServer.Shutdown(ctx); err != nil {
+		return fmt.Errorf("failed to shutdown metrics server: %w", err)
+	}
+
+	// Wait for the server goroutine to finish
+	done := make(chan struct{})
+	go func() {
+		base.metricsServerWg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("timeout waiting for metrics server goroutine: %w", ctx.Err())
+	}
+}
+

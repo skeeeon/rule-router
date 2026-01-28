@@ -5,10 +5,6 @@ package app
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"rule-router/config"
@@ -32,7 +28,7 @@ type GatewayApp struct {
 	broker           *broker.NATSBroker
 	inboundServer    *gateway.InboundServer
 	outboundClient   *gateway.OutboundClient
-	metricsServer    *http.Server
+	base             *BaseApp // Reference to BaseApp for proper shutdown
 	metricsCollector *metrics.MetricsCollector
 }
 
@@ -44,7 +40,7 @@ func NewGatewayApp(base *BaseApp, cfg *config.Config) (*GatewayApp, error) {
 		metrics:          base.Metrics,
 		processor:        base.Processor,
 		broker:           base.Broker,
-		metricsServer:    base.MetricsServer,
+		base:             base,
 		metricsCollector: base.Collector,
 	}
 
@@ -66,12 +62,10 @@ func NewGatewayApp(base *BaseApp, cfg *config.Config) (*GatewayApp, error) {
 	return app, nil
 }
 
-// Run starts the application and waits for shutdown signal
+// Run starts the application and waits for shutdown signal.
+// Note: Signal handling is managed by lifecycle.RunWithReload() - do not add signal handling here
+// to avoid double registration which causes unpredictable behavior.
 func (app *GatewayApp) Run(ctx context.Context) error {
-	// Setup signal handling (lifecycle package will handle SIGHUP)
-	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	defer cancel()
-
 	// Get HTTP paths and outbound subscription count
 	httpPaths := app.processor.GetHTTPPaths()
 	outboundSubCount := len(app.outboundClient.GetSubscriptions())
@@ -137,12 +131,12 @@ func (app *GatewayApp) Close() error {
 		app.metricsCollector.Stop()
 	}
 
-	// Shutdown metrics server
-	if app.metricsServer != nil {
+	// Shutdown metrics server and wait for goroutine to exit
+	if app.base != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := app.metricsServer.Shutdown(shutdownCtx); err != nil {
-			errors = append(errors, fmt.Errorf("failed to shutdown metrics server: %w", err))
+		if err := app.base.ShutdownMetricsServer(shutdownCtx); err != nil {
+			errors = append(errors, err)
 		}
 	}
 
@@ -205,12 +199,12 @@ func (app *GatewayApp) setupInboundServer() error {
 // This is gateway-specific logic.
 func (app *GatewayApp) setupOutboundClient() error {
 	consumerConfig := &gateway.ConsumerConfig{
-		WorkerCount: app.config.NATS.Consumers.WorkerCount,
-		FetchBatchSize:  app.config.NATS.Consumers.FetchBatchSize,
-		FetchTimeout:    app.config.NATS.Consumers.FetchTimeout,
-		MaxAckPending:   app.config.NATS.Consumers.MaxAckPending,
-		AckWaitTimeout:  app.config.NATS.Consumers.AckWaitTimeout,
-		MaxDeliver:      app.config.NATS.Consumers.MaxDeliver,
+		WorkerCount:    app.config.NATS.Consumers.WorkerCount,
+		FetchBatchSize: app.config.NATS.Consumers.FetchBatchSize,
+		FetchTimeout:   app.config.NATS.Consumers.FetchTimeout,
+		MaxAckPending:  app.config.NATS.Consumers.MaxAckPending,
+		AckWaitTimeout: app.config.NATS.Consumers.AckWaitTimeout,
+		MaxDeliver:     app.config.NATS.Consumers.MaxDeliver,
 	}
 
 	app.outboundClient = gateway.NewOutboundClient(
@@ -226,6 +220,10 @@ func (app *GatewayApp) setupOutboundClient() error {
 	allRules := app.processor.GetAllRules()
 	outboundSubjects := make(map[string]bool)
 
+	// Create a context with timeout for subscription setup
+	setupCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
 	for _, r := range allRules {
 		if r.Trigger.NATS != nil && r.Action.HTTP != nil {
 			subject := r.Trigger.NATS.Subject
@@ -238,14 +236,14 @@ func (app *GatewayApp) setupOutboundClient() error {
 				return fmt.Errorf("failed to create consumer for subject '%s': %w", subject, err)
 			}
 
-			streamName, err := app.broker.GetStreamResolver().FindStreamForSubject(subject)
+			streamName, err := app.broker.FindStreamForSubject(subject)
 			if err != nil {
 				return fmt.Errorf("failed to find stream for subject '%s': %w", subject, err)
 			}
 			consumerName := app.broker.GetConsumerName(subject)
 
 			workers := app.config.NATS.Consumers.WorkerCount
-			if err := app.outboundClient.AddSubscription(streamName, consumerName, subject, workers); err != nil {
+			if err := app.outboundClient.AddSubscription(setupCtx, streamName, consumerName, subject, workers); err != nil {
 				return fmt.Errorf("failed to add outbound subscription for '%s': %w", subject, err)
 			}
 		}
@@ -254,3 +252,4 @@ func (app *GatewayApp) setupOutboundClient() error {
 	app.logger.Info("outbound client configured", "subscriptions", len(outboundSubjects))
 	return nil
 }
+

@@ -4,11 +4,11 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
 	"runtime/debug"
-	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +18,17 @@ import (
 	"rule-router/internal/logger"
 	"rule-router/internal/metrics"
 	"rule-router/internal/rule"
+)
+
+// Terminal error types - these errors indicate the message is permanently invalid
+// and should not be retried.
+var (
+	// ErrMalformedJSON indicates the message payload contains invalid JSON that cannot be parsed.
+	ErrMalformedJSON = errors.New("malformed JSON payload")
+
+	// ErrInvalidPayload indicates the message payload is structurally invalid
+	// (e.g., missing required fields, wrong types).
+	ErrInvalidPayload = errors.New("invalid message payload")
 )
 
 // SubscriptionManager manages JetStream pull subscriptions for rule subjects
@@ -77,16 +88,19 @@ func NewSubscriptionManager(
 }
 
 // AddSubscription creates a consumer handle for a subject.
-func (sm *SubscriptionManager) AddSubscription(streamName, consumerName, subject string, workers int) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+// It accepts a context for cancellation and timeout control.
+func (sm *SubscriptionManager) AddSubscription(ctx context.Context, streamName, consumerName, subject string, workers int) error {
+	// Use a timeout context for JetStream operations to prevent indefinite blocking
+	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 
-	stream, err := sm.jetStream.Stream(context.Background(), streamName)
+	// Perform network calls OUTSIDE the lock to avoid blocking other goroutines
+	stream, err := sm.jetStream.Stream(opCtx, streamName)
 	if err != nil {
 		return fmt.Errorf("failed to get stream '%s': %w", streamName, err)
 	}
 
-	consumer, err := stream.Consumer(context.Background(), consumerName)
+	consumer, err := stream.Consumer(opCtx, consumerName)
 	if err != nil {
 		return fmt.Errorf("failed to get consumer '%s': %w", consumerName, err)
 	}
@@ -101,7 +115,10 @@ func (sm *SubscriptionManager) AddSubscription(streamName, consumerName, subject
 		consumerCfg:  sm.consumerCfg,
 	}
 
+	// Only hold the lock for the actual slice append
+	sm.mu.Lock()
 	sm.subscriptions = append(sm.subscriptions, sub)
+	sm.mu.Unlock()
 
 	sm.logger.Info("subscription added",
 		"stream", streamName,
@@ -546,14 +563,27 @@ func (sm *SubscriptionManager) GetSubscriptionCount() int {
 
 // isTerminalError checks if an error is permanent and should not be retried.
 // This is used to decide whether to Terminate or Nak a message.
+//
+// Terminal errors are those where retrying the message would never succeed,
+// such as malformed JSON or structurally invalid payloads.
 func isTerminalError(err error) bool {
-	// A JSON unmarshalling error is a classic terminal error, as the message
-	// payload is fundamentally invalid and will never be successfully processed.
-	if strings.Contains(err.Error(), "invalid character") ||
-		strings.Contains(err.Error(), "unexpected end of JSON") {
+	// Check for our custom terminal error types
+	if errors.Is(err, ErrMalformedJSON) || errors.Is(err, ErrInvalidPayload) {
 		return true
 	}
 
-	// Add more terminal error patterns as needed based on production experience.
+	// Check for standard library JSON syntax errors
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) {
+		return true
+	}
+
+	// Check for JSON unmarshalling type errors (wrong type in payload)
+	var unmarshalTypeErr *json.UnmarshalTypeError
+	if errors.As(err, &unmarshalTypeErr) {
+		return true
+	}
+
 	return false
 }
+

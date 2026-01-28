@@ -383,18 +383,27 @@ func validateConfig(cfg *Config) error {
 		}
 	}
 
-	// Consumer validation
+	// Consumer validation with bounds checking
 	if cfg.NATS.Consumers.WorkerCount < 1 {
-		return fmt.Errorf("subscriber count must be at least 1")
+		return fmt.Errorf("worker count must be at least 1")
+	}
+	if cfg.NATS.Consumers.WorkerCount > 1000 {
+		return fmt.Errorf("worker count too high (%d), maximum is 1000", cfg.NATS.Consumers.WorkerCount)
 	}
 	if cfg.NATS.Consumers.FetchBatchSize < 1 {
 		return fmt.Errorf("fetch batch size must be at least 1")
+	}
+	if cfg.NATS.Consumers.FetchBatchSize > 10000 {
+		return fmt.Errorf("fetch batch size too high (%d), maximum is 10000", cfg.NATS.Consumers.FetchBatchSize)
 	}
 	if cfg.NATS.Consumers.FetchTimeout <= 0 {
 		return fmt.Errorf("fetch timeout must be positive")
 	}
 	if cfg.NATS.Consumers.MaxAckPending < 1 {
 		return fmt.Errorf("max ack pending must be at least 1")
+	}
+	if cfg.NATS.Consumers.MaxAckPending > 100000 {
+		return fmt.Errorf("max ack pending too high (%d), maximum is 100000", cfg.NATS.Consumers.MaxAckPending)
 	}
 	if cfg.NATS.Consumers.MaxDeliver < 1 {
 		return fmt.Errorf("max deliver must be at least 1")
@@ -422,13 +431,43 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("invalid log level: %s", cfg.Logging.Level)
 	}
 
-	// HTTP-specific validation
+	// Metrics validation
+	if cfg.Metrics.Enabled {
+		if cfg.Metrics.UpdateInterval != "" {
+			if _, err := time.ParseDuration(cfg.Metrics.UpdateInterval); err != nil {
+				return fmt.Errorf("invalid metrics update interval '%s': %w", cfg.Metrics.UpdateInterval, err)
+			}
+		}
+	}
+
+	// HTTP-specific validation with bounds checking
 	if cfg.HTTP.Server.Address != "" {
 		if cfg.HTTP.Server.ReadTimeout < 0 {
 			return fmt.Errorf("HTTP server read timeout cannot be negative")
 		}
+		if cfg.HTTP.Server.WriteTimeout < 0 {
+			return fmt.Errorf("HTTP server write timeout cannot be negative")
+		}
+		if cfg.HTTP.Server.InboundWorkerCount < 1 {
+			return fmt.Errorf("inbound worker count must be at least 1")
+		}
+		if cfg.HTTP.Server.InboundWorkerCount > 1000 {
+			return fmt.Errorf("inbound worker count too high (%d), maximum is 1000", cfg.HTTP.Server.InboundWorkerCount)
+		}
+		if cfg.HTTP.Server.InboundQueueSize < 1 {
+			return fmt.Errorf("inbound queue size must be at least 1")
+		}
+		if cfg.HTTP.Server.InboundQueueSize > 100000 {
+			return fmt.Errorf("inbound queue size too high (%d), maximum is 100000", cfg.HTTP.Server.InboundQueueSize)
+		}
 		if cfg.HTTP.Client.Timeout < 0 {
 			return fmt.Errorf("HTTP client timeout cannot be negative")
+		}
+		if cfg.HTTP.Client.MaxIdleConns < 0 {
+			return fmt.Errorf("HTTP client max idle connections cannot be negative")
+		}
+		if cfg.HTTP.Client.MaxIdleConnsPerHost < 0 {
+			return fmt.Errorf("HTTP client max idle connections per host cannot be negative")
 		}
 	}
 
@@ -442,3 +481,4 @@ func validateConfig(cfg *Config) error {
 
 	return nil
 }
+

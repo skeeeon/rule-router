@@ -5,10 +5,6 @@ package app
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"rule-router/config"
@@ -29,7 +25,7 @@ type RouterApp struct {
 	metrics          *metrics.Metrics
 	processor        *rule.Processor
 	broker           *broker.NATSBroker
-	httpServer       *http.Server // This is the metrics server from the BaseApp
+	base             *BaseApp // Reference to BaseApp for proper shutdown
 	metricsCollector *metrics.MetricsCollector
 }
 
@@ -41,7 +37,7 @@ func NewRouterApp(base *BaseApp, cfg *config.Config) (*RouterApp, error) {
 		metrics:          base.Metrics,
 		processor:        base.Processor,
 		broker:           base.Broker,
-		httpServer:       base.MetricsServer,
+		base:             base,
 		metricsCollector: base.Collector,
 	}
 
@@ -56,12 +52,10 @@ func NewRouterApp(base *BaseApp, cfg *config.Config) (*RouterApp, error) {
 	return app, nil
 }
 
-// Run starts the application and waits for shutdown signal
+// Run starts the application and waits for shutdown signal.
+// Note: Signal handling is managed by lifecycle.RunWithReload() - do not add signal handling here
+// to avoid double registration which causes unpredictable behavior.
 func (app *RouterApp) Run(ctx context.Context) error {
-	// Setup signal handling (lifecycle package will handle SIGHUP)
-	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	defer cancel()
-
 	// Get subscription count
 	subMgr := app.broker.GetSubscriptionManager()
 	subCount := subMgr.GetSubscriptionCount()
@@ -111,12 +105,12 @@ func (app *RouterApp) Close() error {
 		app.metricsCollector.Stop()
 	}
 
-	// Shutdown HTTP server
-	if app.httpServer != nil {
+	// Shutdown metrics server and wait for goroutine to exit
+	if app.base != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := app.httpServer.Shutdown(shutdownCtx); err != nil {
-			errors = append(errors, fmt.Errorf("failed to shutdown metrics server: %w", err))
+		if err := app.base.ShutdownMetricsServer(shutdownCtx); err != nil {
+			errors = append(errors, err)
 		}
 	}
 
@@ -177,3 +171,4 @@ func (app *RouterApp) setupSubscriptions() error {
 	app.logger.Info("all subscriptions configured successfully", "subscriptionCount", len(subjects))
 	return nil
 }
+

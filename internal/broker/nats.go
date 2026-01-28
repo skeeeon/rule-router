@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	json "github.com/goccy/go-json"
@@ -20,9 +21,9 @@ import (
 
 // NATSBroker connects to external NATS JetStream servers with KV support and local caching
 type NATSBroker struct {
-	logger          *logger.Logger
-	metrics         *metrics.Metrics
-	config          *config.Config
+	logger  *logger.Logger
+	metrics *metrics.Metrics
+	config  *config.Config
 
 	// NATS connection and JetStream interface
 	natsConn  *nats.Conn
@@ -32,6 +33,7 @@ type NATSBroker struct {
 	// Local KV cache for performance optimization
 	localKVCache *rule.LocalKVCache
 	kvWatchers   []jetstream.KeyWatcher
+	kvWatcherWg  sync.WaitGroup // Tracks KV watcher goroutines for graceful shutdown
 
 	// Stream resolver for JetStream stream discovery
 	streamResolver *StreamResolver
@@ -215,7 +217,8 @@ func (b *NATSBroker) parseReplayPolicy(policy string) (jetstream.ReplayPolicy, e
 	}
 }
 
-// AddSubscription creates a pull subscription for a subject
+// AddSubscription creates a pull subscription for a subject.
+// It uses the broker's internal context for cancellation.
 func (b *NATSBroker) AddSubscription(subject string) error {
 	if b.subscriptionMgr == nil {
 		return fmt.Errorf("subscription manager not initialized")
@@ -233,9 +236,9 @@ func (b *NATSBroker) AddSubscription(subject string) error {
 		return fmt.Errorf("cannot find stream for subject '%s': %w", subject, err)
 	}
 
-	// Add subscription with configured worker count
+	// Add subscription with configured worker count, using broker's context
 	workers := b.config.NATS.Consumers.WorkerCount
-	if err := b.subscriptionMgr.AddSubscription(streamName, consumerName, subject, workers); err != nil {
+	if err := b.subscriptionMgr.AddSubscription(b.ctx, streamName, consumerName, subject, workers); err != nil {
 		return fmt.Errorf("failed to add subscription for '%s': %w", subject, err)
 	}
 
@@ -262,6 +265,12 @@ func (b *NATSBroker) ValidateSubjects(subjects []string) error {
 // GetStreamResolver returns the stream resolver
 func (b *NATSBroker) GetStreamResolver() *StreamResolver {
 	return b.streamResolver
+}
+
+// FindStreamForSubject finds the stream name that handles the given subject.
+// This is a convenience method that wraps GetStreamResolver().FindStreamForSubject().
+func (b *NATSBroker) FindStreamForSubject(subject string) (string, error) {
+	return b.streamResolver.FindStreamForSubject(subject)
 }
 
 // GetSubscriptionManager returns the subscription manager
@@ -328,8 +337,12 @@ func (b *NATSBroker) watchKVBucket(bucketName string) error {
 
 	b.kvWatchers = append(b.kvWatchers, watcher)
 
-	// Start goroutine to process watch updates
-	go b.processKVWatchUpdates(bucketName, watcher)
+	// Start goroutine to process watch updates with WaitGroup tracking
+	b.kvWatcherWg.Add(1)
+	go func() {
+		defer b.kvWatcherWg.Done()
+		b.processKVWatchUpdates(bucketName, watcher)
+	}()
 
 	b.logger.Info("created KV watcher",
 		"bucket", bucketName)
@@ -593,11 +606,25 @@ func (b *NATSBroker) Close() error {
 		}
 	}
 
-	// Stop all KV watchers (they should stop via context, but ensure cleanup)
+	// Stop all KV watchers explicitly (belt and suspenders with context cancellation)
 	for i, watcher := range b.kvWatchers {
 		if err := watcher.Stop(); err != nil {
 			errors = append(errors, fmt.Errorf("failed to stop KV watcher %d: %w", i, err))
 		}
+	}
+
+	// Wait for all KV watcher goroutines to finish with a timeout
+	kvWatcherDone := make(chan struct{})
+	go func() {
+		b.kvWatcherWg.Wait()
+		close(kvWatcherDone)
+	}()
+
+	select {
+	case <-kvWatcherDone:
+		b.logger.Debug("all KV watcher goroutines stopped")
+	case <-time.After(5 * time.Second):
+		b.logger.Warn("timeout waiting for KV watcher goroutines to stop")
 	}
 
 	b.logger.Info("durable consumers remain in NATS for next startup", "consumerCount", len(b.consumers))
@@ -618,3 +645,4 @@ func (b *NATSBroker) Close() error {
 	b.logger.Info("successfully closed all NATS broker connections")
 	return nil
 }
+

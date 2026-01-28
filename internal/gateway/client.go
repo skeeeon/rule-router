@@ -98,17 +98,20 @@ func (c *OutboundClient) GetSubscriptions() []*OutboundSubscription {
 	return subs
 }
 
-// AddSubscription adds a NATS subscription for outbound HTTP
-func (c *OutboundClient) AddSubscription(streamName, consumerName, subject string, workers int) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// AddSubscription adds a NATS subscription for outbound HTTP.
+// It accepts a context for cancellation and timeout control.
+func (c *OutboundClient) AddSubscription(ctx context.Context, streamName, consumerName, subject string, workers int) error {
+	// Use a timeout context for JetStream operations to prevent indefinite blocking
+	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 
-	stream, err := c.jetstream.Stream(context.Background(), streamName)
+	// Perform network calls OUTSIDE the lock to avoid blocking other goroutines
+	stream, err := c.jetstream.Stream(opCtx, streamName)
 	if err != nil {
 		return fmt.Errorf("failed to get stream '%s': %w", streamName, err)
 	}
 
-	consumer, err := stream.Consumer(context.Background(), consumerName)
+	consumer, err := stream.Consumer(opCtx, consumerName)
 	if err != nil {
 		return fmt.Errorf("failed to get consumer '%s': %w", consumerName, err)
 	}
@@ -122,7 +125,10 @@ func (c *OutboundClient) AddSubscription(streamName, consumerName, subject strin
 		logger:       c.logger,
 	}
 
+	// Only hold the lock for the actual slice append
+	c.mu.Lock()
 	c.subscriptions = append(c.subscriptions, sub)
+	c.mu.Unlock()
 
 	c.logger.Info("outbound subscription added",
 		"stream", streamName,
@@ -551,3 +557,4 @@ func (c *OutboundClient) Stop() error {
 	c.logger.Info("outbound client stopped successfully")
 	return nil
 }
+

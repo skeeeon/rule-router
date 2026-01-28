@@ -157,12 +157,22 @@ func (s *InboundServer) startWorkers(ctx context.Context) {
 		go func() {
 			defer s.wg.Done()
 			s.logger.Info("starting inbound worker", "workerID", workerID)
-			// This loop will block on the channel until a job is available
-			// or the channel is closed.
-			for job := range s.workQueue {
-				s.processWebhook(job.path, job.method, job.body, job.headers)
+			// Loop checks both context cancellation and channel closure
+			for {
+				select {
+				case <-ctx.Done():
+					// Context cancelled - exit immediately
+					s.logger.Debug("inbound worker context cancelled", "workerID", workerID)
+					return
+				case job, ok := <-s.workQueue:
+					if !ok {
+						// Channel closed - no more jobs will arrive
+						s.logger.Info("inbound worker stopped", "workerID", workerID)
+						return
+					}
+					s.processWebhook(job.path, job.method, job.body, job.headers)
+				}
 			}
-			s.logger.Info("inbound worker stopped", "workerID", workerID)
 		}()
 	}
 }
@@ -203,6 +213,9 @@ func (s *InboundServer) webhookHandler(path string) http.HandlerFunc {
 			"method", r.Method,
 			"remoteAddr", r.RemoteAddr)
 
+		// Ensure body is closed regardless of read success/failure
+		defer r.Body.Close()
+
 		// Read request body (with size limit)
 		body, err := io.ReadAll(io.LimitReader(r.Body, 10*1024*1024)) // 10MB limit
 		if err != nil {
@@ -213,7 +226,6 @@ func (s *InboundServer) webhookHandler(path string) http.HandlerFunc {
 			}
 			return
 		}
-		defer r.Body.Close()
 
 		// Extract headers
 		headers := make(map[string]string)
@@ -354,3 +366,4 @@ func (s *InboundServer) healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"healthy"}`))
 }
+
