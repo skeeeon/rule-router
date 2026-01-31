@@ -16,6 +16,15 @@ import (
 	"rule-router/internal/rule"
 )
 
+// Timeout constants for GatewayApp operations
+const (
+	// gatewayMetricsShutdownTimeout is the maximum time to wait for the metrics server to shutdown
+	gatewayMetricsShutdownTimeout = 5 * time.Second
+
+	// outboundSetupTimeout is the maximum time to wait for outbound subscriptions to be configured
+	outboundSetupTimeout = 60 * time.Second
+)
+
 // Verify GatewayApp implements lifecycle.Application interface at compile time
 var _ lifecycle.Application = (*GatewayApp)(nil)
 
@@ -133,7 +142,7 @@ func (app *GatewayApp) Close() error {
 
 	// Shutdown metrics server and wait for goroutine to exit
 	if app.base != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), gatewayMetricsShutdownTimeout)
 		defer cancel()
 		if err := app.base.ShutdownMetricsServer(shutdownCtx); err != nil {
 			errors = append(errors, err)
@@ -221,7 +230,7 @@ func (app *GatewayApp) setupOutboundClient() error {
 	outboundSubjects := make(map[string]bool)
 
 	// Create a context with timeout for subscription setup
-	setupCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	setupCtx, cancel := context.WithTimeout(context.Background(), outboundSetupTimeout)
 	defer cancel()
 
 	for _, r := range allRules {
@@ -252,4 +261,5 @@ func (app *GatewayApp) setupOutboundClient() error {
 	app.logger.Info("outbound client configured", "subscriptions", len(outboundSubjects))
 	return nil
 }
+
 

@@ -20,6 +20,21 @@ import (
 	"rule-router/internal/rule"
 )
 
+// Timeout and retry constants for subscription operations
+const (
+	// subscriptionOperationTimeout is the maximum time for JetStream operations like getting streams/consumers
+	subscriptionOperationTimeout = 30 * time.Second
+
+	// minHeartbeatInterval is the minimum heartbeat duration for consumer health checks
+	minHeartbeatInterval = 1 * time.Second
+
+	// errorBackoffDelay is the delay after encountering errors to avoid tight retry loops
+	errorBackoffDelay = 100 * time.Millisecond
+
+	// maxRetryJitter is the maximum jitter added to retry delays to prevent thundering herd
+	maxRetryJitter = 25 * time.Millisecond
+)
+
 // Terminal error types - these errors indicate the message is permanently invalid
 // and should not be retried.
 var (
@@ -91,7 +106,7 @@ func NewSubscriptionManager(
 // It accepts a context for cancellation and timeout control.
 func (sm *SubscriptionManager) AddSubscription(ctx context.Context, streamName, consumerName, subject string, workers int) error {
 	// Use a timeout context for JetStream operations to prevent indefinite blocking
-	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	opCtx, cancel := context.WithTimeout(ctx, subscriptionOperationTimeout)
 	defer cancel()
 
 	// Perform network calls OUTSIDE the lock to avoid blocking other goroutines
@@ -161,8 +176,8 @@ func (sm *SubscriptionManager) startSubscription(ctx context.Context, sub *Subsc
 	// Calculate heartbeat duration: half of fetch timeout, minimum 1 second
 	// This ensures we detect stalled connections before the fetch timeout expires
 	heartbeatDuration := sm.consumerCfg.FetchTimeout / 2
-	if heartbeatDuration < 1*time.Second {
-		heartbeatDuration = 1 * time.Second
+	if heartbeatDuration < minHeartbeatInterval {
+		heartbeatDuration = minHeartbeatInterval
 	}
 
 	sm.logger.Debug("creating Messages() iterator",
@@ -258,7 +273,7 @@ func (sm *SubscriptionManager) messageWorker(ctx context.Context, sub *Subscript
 				"errorType", fmt.Sprintf("%T", err))
 
 			// Brief sleep on persistent errors to avoid tight loop
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(errorBackoffDelay)
 			continue
 		}
 
@@ -430,7 +445,7 @@ func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, actio
 
 		// Exponential backoff with jitter
 		delay := baseDelay * time.Duration(1<<attempt)
-		jitter := time.Duration(rand.Intn(25)) * time.Millisecond
+		jitter := time.Duration(rand.Intn(int(maxRetryJitter.Milliseconds()))) * time.Millisecond
 
 		select {
 		case <-ctx.Done():
@@ -586,4 +601,5 @@ func isTerminalError(err error) bool {
 
 	return false
 }
+
 

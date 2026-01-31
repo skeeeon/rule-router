@@ -19,6 +19,21 @@ import (
 	"rule-router/internal/rule"
 )
 
+// Timeout and retry constants for NATS broker operations
+const (
+	// kvOperationTimeout is the maximum time for KV store operations
+	kvOperationTimeout = 10 * time.Second
+
+	// reconnectJitterMin is the minimum jitter for NATS reconnection attempts
+	reconnectJitterMin = 100 * time.Millisecond
+
+	// reconnectJitterMax is the maximum jitter for NATS reconnection attempts
+	reconnectJitterMax = 1 * time.Second
+
+	// watcherShutdownTimeout is the maximum time to wait for KV watchers to stop
+	watcherShutdownTimeout = 5 * time.Second
+)
+
 // NATSBroker connects to external NATS JetStream servers with KV support and local caching
 type NATSBroker struct {
 	logger  *logger.Logger
@@ -157,7 +172,7 @@ func (b *NATSBroker) CreateConsumerForSubject(subject string) error {
 	}
 
 	// Use CreateOrUpdateConsumer for idempotent behavior
-	ctx, cancel := context.WithTimeout(b.ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(b.ctx, kvOperationTimeout)
 	defer cancel()
 
 	consumer, err := b.jetStream.CreateOrUpdateConsumer(ctx, streamName, consumerConfig)
@@ -465,7 +480,7 @@ func (b *NATSBroker) initializeKVStores(ctx context.Context) error {
 	for _, bucketName := range b.config.KV.Buckets {
 		b.logger.Debug("connecting to KV bucket", "bucket", bucketName)
 
-		kvCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		kvCtx, cancel := context.WithTimeout(ctx, kvOperationTimeout)
 		kv, err := b.jetStream.KeyValue(kvCtx, bucketName)
 		cancel() 
 
@@ -518,7 +533,7 @@ func (b *NATSBroker) buildNATSOptions() ([]nats.Option, error) {
 				b.metrics.SetNATSConnectionStatus(false)
 			}
 		}),
-		nats.ReconnectJitter(100*time.Millisecond, 1*time.Second),
+		nats.ReconnectJitter(reconnectJitterMin, reconnectJitterMax),
 	)
 
 	if b.config.NATS.CredsFile != "" {
@@ -623,7 +638,7 @@ func (b *NATSBroker) Close() error {
 	select {
 	case <-kvWatcherDone:
 		b.logger.Debug("all KV watcher goroutines stopped")
-	case <-time.After(5 * time.Second):
+	case <-time.After(watcherShutdownTimeout):
 		b.logger.Warn("timeout waiting for KV watcher goroutines to stop")
 	}
 
@@ -645,4 +660,5 @@ func (b *NATSBroker) Close() error {
 	b.logger.Info("successfully closed all NATS broker connections")
 	return nil
 }
+
 

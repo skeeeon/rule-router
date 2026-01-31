@@ -24,10 +24,28 @@ import (
 	"rule-router/internal/rule"
 )
 
-// Client limits
+// Client limits and timeout constants
 const (
 	// MaxOutboundResponseSize is the maximum size of an HTTP response body to read for logging (1MB).
 	MaxOutboundResponseSize = 1024 * 1024
+
+	// clientOperationTimeout is the maximum time for JetStream operations like getting streams/consumers
+	clientOperationTimeout = 30 * time.Second
+
+	// clientMinHeartbeatInterval is the minimum heartbeat duration for consumer health checks
+	clientMinHeartbeatInterval = 1 * time.Second
+
+	// clientErrorBackoffDelay is the delay after encountering errors to avoid tight retry loops
+	clientErrorBackoffDelay = 100 * time.Millisecond
+
+	// httpRetryInitialDelay is the initial delay for HTTP request retries
+	httpRetryInitialDelay = 1 * time.Second
+
+	// httpRetryMaxDelay is the maximum delay for HTTP request retries
+	httpRetryMaxDelay = 30 * time.Second
+
+	// httpRetryMaxJitter is the maximum jitter added to HTTP retry delays
+	httpRetryMaxJitter = 100 * time.Millisecond
 )
 
 // OutboundClient handles NATS messages and makes HTTP requests
@@ -109,7 +127,7 @@ func (c *OutboundClient) GetSubscriptions() []*OutboundSubscription {
 // It accepts a context for cancellation and timeout control.
 func (c *OutboundClient) AddSubscription(ctx context.Context, streamName, consumerName, subject string, workers int) error {
 	// Use a timeout context for JetStream operations to prevent indefinite blocking
-	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	opCtx, cancel := context.WithTimeout(ctx, clientOperationTimeout)
 	defer cancel()
 
 	// Perform network calls OUTSIDE the lock to avoid blocking other goroutines
@@ -178,8 +196,8 @@ func (c *OutboundClient) startSubscription(ctx context.Context, sub *OutboundSub
 
 	// Calculate heartbeat duration: half of fetch timeout, minimum 1 second
 	heartbeatDuration := c.consumerCfg.FetchTimeout / 2
-	if heartbeatDuration < 1*time.Second {
-		heartbeatDuration = 1 * time.Second
+	if heartbeatDuration < clientMinHeartbeatInterval {
+		heartbeatDuration = clientMinHeartbeatInterval
 	}
 
 	c.logger.Debug("creating Messages() iterator for outbound subscription",
@@ -272,7 +290,7 @@ func (c *OutboundClient) messageWorker(ctx context.Context, sub *OutboundSubscri
 				"errorType", fmt.Sprintf("%T", err))
 
 			// Brief sleep on persistent errors to avoid tight loop
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(clientErrorBackoffDelay)
 			continue
 		}
 
@@ -403,8 +421,8 @@ func (c *OutboundClient) processMessage(ctx context.Context, msg jetstream.Msg) 
 func (c *OutboundClient) executeHTTPAction(ctx context.Context, action *rule.HTTPAction) error {
 	// Get retry config (use defaults if not specified)
 	maxAttempts := 3
-	initialDelay := 1 * time.Second
-	maxDelay := 30 * time.Second
+	initialDelay := httpRetryInitialDelay
+	maxDelay := httpRetryMaxDelay
 
 	if action.Retry != nil {
 		if action.Retry.MaxAttempts > 0 {
@@ -442,7 +460,7 @@ func (c *OutboundClient) executeHTTPAction(ctx context.Context, action *rule.HTT
 		if delay > maxDelay {
 			delay = maxDelay
 		}
-		jitter := time.Duration(rand.Intn(100)) * time.Millisecond
+		jitter := time.Duration(rand.Intn(int(httpRetryMaxJitter.Milliseconds()))) * time.Millisecond
 		delay += jitter
 
 		c.logger.Warn("HTTP request failed, retrying",
@@ -564,5 +582,6 @@ func (c *OutboundClient) Stop() error {
 	c.logger.Info("outbound client stopped successfully")
 	return nil
 }
+
 
 

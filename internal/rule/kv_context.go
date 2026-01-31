@@ -15,6 +15,12 @@ import (
 	"rule-router/internal/logger"
 )
 
+// Timeout constants for KV operations
+const (
+	// kvLookupTimeout is the maximum time to wait for a KV store lookup
+	kvLookupTimeout = 5 * time.Second
+)
+
 // Pre-compiled regex for variable substitution in KV fields
 var (
 	kvVariablePattern = regexp.MustCompile(`\{([^}]+)\}`)
@@ -160,7 +166,7 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
 	}
 
 	// Create context with timeout for KV operations
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), kvLookupTimeout)
 	defer cancel()
 
 	// Perform the KV lookup
@@ -429,3 +435,4 @@ func (kv *KVContext) GetStats() map[string]interface{} {
 
 	return stats
 }
+

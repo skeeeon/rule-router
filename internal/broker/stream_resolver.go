@@ -13,6 +13,12 @@ import (
 	"rule-router/internal/logger"
 )
 
+// Timeout constants for stream resolver operations
+const (
+	// streamDiscoveryTimeout is the maximum time to wait for JetStream stream discovery
+	streamDiscoveryTimeout = 30 * time.Second
+)
+
 // StreamResolver discovers JetStream streams and maps subjects to streams
 // Now supports mirrors and sourced streams with intelligent storage-aware selection
 type StreamResolver struct {
@@ -61,7 +67,7 @@ func (sr *StreamResolver) Discover(ctx context.Context) error {
 	sr.logger.Info("discovering JetStream streams with mirror/source support")
 
 	// Use context with timeout for discovery
-	discoverCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	discoverCtx, cancel := context.WithTimeout(ctx, streamDiscoveryTimeout)
 	defer cancel()
 
 	// Get stream lister using the new API
@@ -634,3 +640,4 @@ func (sr *StreamResolver) countSources() int {
 	}
 	return count
 }
+

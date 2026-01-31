@@ -14,6 +14,15 @@ import (
 	"rule-router/internal/logger"
 )
 
+// Timeout and retry constants for NATS client operations
+const (
+	// natsKVOperationTimeout is the maximum time for KV store operations
+	natsKVOperationTimeout = 10 * time.Second
+
+	// natsReconnectWait is the delay between NATS reconnection attempts
+	natsReconnectWait = 50 * time.Millisecond
+)
+
 // NATSClient provides minimal NATS KV write functionality
 // No subscriptions, no consumers, no streams - just connect and write to KV bucket
 type NATSClient struct {
@@ -52,7 +61,7 @@ func NewNATSClient(cfg *NATSConfig, storageConfig *StorageConfig, log *logger.Lo
 	}
 
 	// Open KV bucket (must exist - fail fast if not)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), natsKVOperationTimeout)
 	defer cancel()
 
 	kv, err := js.KeyValue(ctx, storageConfig.Bucket)
@@ -118,7 +127,7 @@ func buildNATSOptions(cfg *NATSConfig, log *logger.Logger) ([]nats.Option, error
 			log.Error("NATS connection closed", "error", nc.LastError())
 		}),
 		nats.MaxReconnects(-1), // Unlimited reconnects
-		nats.ReconnectWait(50*time.Millisecond),
+		nats.ReconnectWait(natsReconnectWait),
 	)
 
 	// Authentication (choose one method)
@@ -163,3 +172,4 @@ func buildNATSOptions(cfg *NATSConfig, log *logger.Logger) ([]nats.Option, error
 
 	return opts, nil
 }
+

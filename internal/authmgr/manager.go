@@ -13,6 +13,15 @@ import (
 	"rule-router/internal/logger"
 )
 
+// Timeout and jitter constants for auth manager operations
+const (
+	// startupJitterMax is the maximum random delay on startup to prevent thundering herd
+	startupJitterMax = 5000 // milliseconds
+
+	// tokenStoreTimeout is the maximum time to wait for token storage operations
+	tokenStoreTimeout = 30 * time.Second
+)
+
 // Manager orchestrates authentication providers and token storage
 type Manager struct {
 	nats      *NATSClient
@@ -54,7 +63,7 @@ func (m *Manager) Start() error {
 		go func() {
 			// Introduce a random startup delay (jitter) of 0-5 seconds
 			// to prevent a "thundering herd" of auth requests on startup.
-			jitter := time.Duration(rand.Intn(5000)) * time.Millisecond
+			jitter := time.Duration(rand.Intn(startupJitterMax)) * time.Millisecond
 			time.Sleep(jitter)
 
 			// Call the refresh loop which will call wg.Done() on exit.
@@ -126,7 +135,7 @@ func (m *Manager) authenticate(p providers.Provider) error {
 	m.logger.Debug("authenticating", "provider", providerID)
 
 	// Create context with timeout
-	ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(m.ctx, tokenStoreTimeout)
 	defer cancel()
 
 	// Get token from provider
@@ -172,3 +181,4 @@ func (m *Manager) Stop() error {
 	m.logger.Info("authentication manager stopped")
 	return nil
 }
+

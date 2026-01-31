@@ -12,6 +12,132 @@ import (
 	"github.com/spf13/viper"
 )
 
+// Default timeout and configuration constants
+const (
+	// DefaultNATSURL is the default NATS server URL
+	DefaultNATSURL = "nats://localhost:4222"
+
+	// DefaultReconnectWait is the default delay between NATS reconnection attempts
+	DefaultReconnectWait = 50 * time.Millisecond
+
+	// DefaultFetchTimeout is the default timeout for JetStream fetch operations
+	DefaultFetchTimeout = 5 * time.Second
+
+	// DefaultAckWaitTimeout is the default timeout for message acknowledgement
+	DefaultAckWaitTimeout = 30 * time.Second
+
+	// DefaultPublishAckTimeout is the default timeout for publish acknowledgement
+	DefaultPublishAckTimeout = 5 * time.Second
+
+	// DefaultRetryBaseDelay is the default base delay for publish retries
+	DefaultRetryBaseDelay = 50 * time.Millisecond
+
+	// DefaultHTTPReadTimeout is the default read timeout for HTTP server
+	DefaultHTTPReadTimeout = 30 * time.Second
+
+	// DefaultHTTPWriteTimeout is the default write timeout for HTTP server
+	DefaultHTTPWriteTimeout = 30 * time.Second
+
+	// DefaultHTTPIdleTimeout is the default idle timeout for HTTP server
+	DefaultHTTPIdleTimeout = 120 * time.Second
+
+	// DefaultHTTPShutdownGracePeriod is the default graceful shutdown period for HTTP server
+	DefaultHTTPShutdownGracePeriod = 30 * time.Second
+
+	// DefaultHTTPClientTimeout is the default timeout for HTTP client requests
+	DefaultHTTPClientTimeout = 30 * time.Second
+
+	// DefaultHTTPIdleConnTimeout is the default idle connection timeout for HTTP client
+	DefaultHTTPIdleConnTimeout = 90 * time.Second
+
+	// DefaultMaxHeaderBytes is the default maximum header size (1MB)
+	DefaultMaxHeaderBytes = 1 << 20
+)
+
+// Default numeric configuration values
+const (
+	// DefaultWorkerCount is the default number of consumer workers
+	DefaultWorkerCount = 2
+
+	// DefaultFetchBatchSize is the default number of messages to fetch per batch
+	DefaultFetchBatchSize = 1
+
+	// DefaultMaxDeliver is the default maximum delivery attempts per message
+	DefaultMaxDeliver = 3
+
+	// DefaultMaxAckPending is the default maximum pending acknowledgements
+	DefaultMaxAckPending = 1000
+
+	// DefaultPublishMaxRetries is the default maximum publish retry attempts
+	DefaultPublishMaxRetries = 3
+
+	// DefaultMaxIdleConns is the default maximum idle HTTP connections
+	DefaultMaxIdleConns = 100
+
+	// DefaultMaxIdleConnsPerHost is the default maximum idle connections per host
+	DefaultMaxIdleConnsPerHost = 10
+
+	// DefaultForEachMaxIterations is the default maximum forEach iterations
+	DefaultForEachMaxIterations = 100
+)
+
+// Validation limits
+const (
+	// MaxWorkerCount is the maximum allowed worker count
+	MaxWorkerCount = 1000
+
+	// MaxFetchBatchSize is the maximum allowed fetch batch size
+	MaxFetchBatchSize = 10000
+
+	// MaxAckPending is the maximum allowed pending acknowledgements
+	MaxAckPending = 100000
+
+	// MaxForEachIterations is the maximum allowed forEach iterations
+	MaxForEachIterations = 10000
+
+	// MaxInboundQueueSize is the maximum allowed inbound queue size
+	MaxInboundQueueSize = 100000
+)
+
+// Default string configuration values
+const (
+	// DefaultConsumerPrefix is the default prefix for consumer names
+	DefaultConsumerPrefix = "rule-router"
+
+	// DefaultPublishMode is the default NATS publish mode
+	DefaultPublishMode = "jetstream"
+
+	// DefaultDeliverPolicy is the default consumer deliver policy
+	DefaultDeliverPolicy = "new"
+
+	// DefaultReplayPolicy is the default consumer replay policy
+	DefaultReplayPolicy = "instant"
+
+	// DefaultLogLevel is the default logging level
+	DefaultLogLevel = "info"
+
+	// DefaultLogEncoding is the default log encoding format
+	DefaultLogEncoding = "json"
+
+	// DefaultLogOutput is the default log output destination
+	DefaultLogOutput = "stdout"
+
+	// DefaultMetricsAddress is the default metrics server address
+	DefaultMetricsAddress = ":2112"
+
+	// DefaultMetricsPath is the default metrics endpoint path
+	DefaultMetricsPath = "/metrics"
+
+	// DefaultHTTPServerAddress is the default HTTP server address
+	DefaultHTTPServerAddress = ":8080"
+
+	// DefaultPublicKeyHeader is the default header for NKey public key
+	DefaultPublicKeyHeader = "Nats-Public-Key"
+
+	// DefaultSignatureHeader is the default header for NKey signature
+	DefaultSignatureHeader = "Nats-Signature"
+)
+
 // Config represents the unified configuration for both rule-router and http-gateway
 type Config struct {
 	NATS     NATSConfig     `json:"nats" yaml:"nats" mapstructure:"nats"`
@@ -20,7 +146,7 @@ type Config struct {
 	Metrics  MetricsConfig  `json:"metrics" yaml:"metrics" mapstructure:"metrics"`
 	KV       KVConfig       `json:"kv" yaml:"kv" mapstructure:"kv"`
 	Security SecurityConfig `json:"security" yaml:"security" mapstructure:"security"`
-	ForEach  ForEachConfig  `json:"forEach" yaml:"forEach" mapstructure:"forEach"` // NEW
+	ForEach  ForEachConfig  `json:"forEach" yaml:"forEach" mapstructure:"forEach"`
 }
 
 // ForEachConfig contains configuration for array iteration operations
@@ -205,107 +331,107 @@ func LoadHTTPConfig(path string) (*Config, error) {
 func setDefaults(cfg *Config) {
 	// NATS defaults
 	if len(cfg.NATS.URLs) == 0 {
-		cfg.NATS.URLs = []string{"nats://localhost:4222"}
+		cfg.NATS.URLs = []string{DefaultNATSURL}
 	}
 	if cfg.NATS.Connection.MaxReconnects == 0 {
 		cfg.NATS.Connection.MaxReconnects = -1
 	}
 	if cfg.NATS.Connection.ReconnectWait == 0 {
-		cfg.NATS.Connection.ReconnectWait = 50 * time.Millisecond
+		cfg.NATS.Connection.ReconnectWait = DefaultReconnectWait
 	}
 
 	// Consumer defaults
 	if cfg.NATS.Consumers.ConsumerPrefix == "" {
-		cfg.NATS.Consumers.ConsumerPrefix = "rule-router"
+		cfg.NATS.Consumers.ConsumerPrefix = DefaultConsumerPrefix
 	}
 	if cfg.NATS.Consumers.WorkerCount == 0 {
-		cfg.NATS.Consumers.WorkerCount = 2
+		cfg.NATS.Consumers.WorkerCount = DefaultWorkerCount
 	}
 	if cfg.NATS.Consumers.FetchBatchSize == 0 {
-		cfg.NATS.Consumers.FetchBatchSize = 1
+		cfg.NATS.Consumers.FetchBatchSize = DefaultFetchBatchSize
 	}
 	if cfg.NATS.Consumers.FetchTimeout == 0 {
-		cfg.NATS.Consumers.FetchTimeout = 5 * time.Second
+		cfg.NATS.Consumers.FetchTimeout = DefaultFetchTimeout
 	}
 	if cfg.NATS.Consumers.AckWaitTimeout == 0 {
-		cfg.NATS.Consumers.AckWaitTimeout = 30 * time.Second
+		cfg.NATS.Consumers.AckWaitTimeout = DefaultAckWaitTimeout
 	}
 	if cfg.NATS.Consumers.MaxDeliver == 0 {
-		cfg.NATS.Consumers.MaxDeliver = 3
+		cfg.NATS.Consumers.MaxDeliver = DefaultMaxDeliver
 	}
 	if cfg.NATS.Consumers.MaxAckPending == 0 {
-		cfg.NATS.Consumers.MaxAckPending = 1000
+		cfg.NATS.Consumers.MaxAckPending = DefaultMaxAckPending
 	}
 	if cfg.NATS.Consumers.DeliverPolicy == "" {
-		cfg.NATS.Consumers.DeliverPolicy = "new"
+		cfg.NATS.Consumers.DeliverPolicy = DefaultDeliverPolicy
 	}
 	if cfg.NATS.Consumers.ReplayPolicy == "" {
-		cfg.NATS.Consumers.ReplayPolicy = "instant"
+		cfg.NATS.Consumers.ReplayPolicy = DefaultReplayPolicy
 	}
 
 	// Publish defaults
 	if cfg.NATS.Publish.Mode == "" {
-		cfg.NATS.Publish.Mode = "jetstream"
+		cfg.NATS.Publish.Mode = DefaultPublishMode
 	}
 	if cfg.NATS.Publish.AckTimeout == 0 {
-		cfg.NATS.Publish.AckTimeout = 5 * time.Second
+		cfg.NATS.Publish.AckTimeout = DefaultPublishAckTimeout
 	}
 	if cfg.NATS.Publish.MaxRetries == 0 {
-		cfg.NATS.Publish.MaxRetries = 3
+		cfg.NATS.Publish.MaxRetries = DefaultPublishMaxRetries
 	}
 	if cfg.NATS.Publish.RetryBaseDelay == 0 {
-		cfg.NATS.Publish.RetryBaseDelay = 50 * time.Millisecond
+		cfg.NATS.Publish.RetryBaseDelay = DefaultRetryBaseDelay
 	}
 
 	// HTTP Server defaults
 	if cfg.HTTP.Server.Address == "" {
-		cfg.HTTP.Server.Address = ":8080"
+		cfg.HTTP.Server.Address = DefaultHTTPServerAddress
 	}
 	if cfg.HTTP.Server.ReadTimeout == 0 {
-		cfg.HTTP.Server.ReadTimeout = 30 * time.Second
+		cfg.HTTP.Server.ReadTimeout = DefaultHTTPReadTimeout
 	}
 	if cfg.HTTP.Server.WriteTimeout == 0 {
-		cfg.HTTP.Server.WriteTimeout = 30 * time.Second
+		cfg.HTTP.Server.WriteTimeout = DefaultHTTPWriteTimeout
 	}
 	if cfg.HTTP.Server.IdleTimeout == 0 {
-		cfg.HTTP.Server.IdleTimeout = 120 * time.Second
+		cfg.HTTP.Server.IdleTimeout = DefaultHTTPIdleTimeout
 	}
 	if cfg.HTTP.Server.MaxHeaderBytes == 0 {
-		cfg.HTTP.Server.MaxHeaderBytes = 1 << 20 // 1MB
+		cfg.HTTP.Server.MaxHeaderBytes = DefaultMaxHeaderBytes
 	}
 	if cfg.HTTP.Server.ShutdownGracePeriod == 0 {
-		cfg.HTTP.Server.ShutdownGracePeriod = 30 * time.Second
+		cfg.HTTP.Server.ShutdownGracePeriod = DefaultHTTPShutdownGracePeriod
 	}
 
 	// HTTP Client defaults
 	if cfg.HTTP.Client.Timeout == 0 {
-		cfg.HTTP.Client.Timeout = 30 * time.Second
+		cfg.HTTP.Client.Timeout = DefaultHTTPClientTimeout
 	}
 	if cfg.HTTP.Client.MaxIdleConns == 0 {
-		cfg.HTTP.Client.MaxIdleConns = 100
+		cfg.HTTP.Client.MaxIdleConns = DefaultMaxIdleConns
 	}
 	if cfg.HTTP.Client.MaxIdleConnsPerHost == 0 {
-		cfg.HTTP.Client.MaxIdleConnsPerHost = 10
+		cfg.HTTP.Client.MaxIdleConnsPerHost = DefaultMaxIdleConnsPerHost
 	}
 	if cfg.HTTP.Client.IdleConnTimeout == 0 {
-		cfg.HTTP.Client.IdleConnTimeout = 90 * time.Second
+		cfg.HTTP.Client.IdleConnTimeout = DefaultHTTPIdleConnTimeout
 	}
 	if cfg.HTTP.Server.InboundWorkerCount == 0 {
 		cfg.HTTP.Server.InboundWorkerCount = 10
 	}
 	if cfg.HTTP.Server.InboundQueueSize == 0 {
-		cfg.HTTP.Server.InboundQueueSize = 100
+		cfg.HTTP.Server.InboundQueueSize = DefaultForEachMaxIterations
 	}
 
 	// Logging defaults
 	if cfg.Logging.Level == "" {
-		cfg.Logging.Level = "info"
+		cfg.Logging.Level = DefaultLogLevel
 	}
 	if cfg.Logging.Encoding == "" {
-		cfg.Logging.Encoding = "json"
+		cfg.Logging.Encoding = DefaultLogEncoding
 	}
 	if cfg.Logging.OutputPath == "" {
-		cfg.Logging.OutputPath = "stdout"
+		cfg.Logging.OutputPath = DefaultLogOutput
 	}
 
 	// Metrics defaults
@@ -313,10 +439,10 @@ func setDefaults(cfg *Config) {
 		// If metrics are disabled, don't set address/path defaults
 	} else {
 		if cfg.Metrics.Address == "" {
-			cfg.Metrics.Address = ":2112"
+			cfg.Metrics.Address = DefaultMetricsAddress
 		}
 		if cfg.Metrics.Path == "" {
-			cfg.Metrics.Path = "/metrics"
+			cfg.Metrics.Path = DefaultMetricsPath
 		}
 		if cfg.Metrics.UpdateInterval == "" {
 			cfg.Metrics.UpdateInterval = "15s"
@@ -330,15 +456,15 @@ func setDefaults(cfg *Config) {
 
 	// Security defaults
 	if cfg.Security.Verification.PublicKeyHeader == "" {
-		cfg.Security.Verification.PublicKeyHeader = "Nats-Public-Key"
+		cfg.Security.Verification.PublicKeyHeader = DefaultPublicKeyHeader
 	}
 	if cfg.Security.Verification.SignatureHeader == "" {
-		cfg.Security.Verification.SignatureHeader = "Nats-Signature"
+		cfg.Security.Verification.SignatureHeader = DefaultSignatureHeader
 	}
 
 	// ForEach defaults
 	if cfg.ForEach.MaxIterations == 0 {
-		cfg.ForEach.MaxIterations = 100 // Safe default: 100 iterations max
+		cfg.ForEach.MaxIterations = DefaultForEachMaxIterations
 	}
 }
 
@@ -387,14 +513,14 @@ func validateConfig(cfg *Config) error {
 	if cfg.NATS.Consumers.WorkerCount < 1 {
 		return fmt.Errorf("worker count must be at least 1")
 	}
-	if cfg.NATS.Consumers.WorkerCount > 1000 {
-		return fmt.Errorf("worker count too high (%d), maximum is 1000", cfg.NATS.Consumers.WorkerCount)
+	if cfg.NATS.Consumers.WorkerCount > MaxWorkerCount {
+		return fmt.Errorf("worker count too high (%d), maximum is %d", cfg.NATS.Consumers.WorkerCount, MaxWorkerCount)
 	}
 	if cfg.NATS.Consumers.FetchBatchSize < 1 {
 		return fmt.Errorf("fetch batch size must be at least 1")
 	}
-	if cfg.NATS.Consumers.FetchBatchSize > 10000 {
-		return fmt.Errorf("fetch batch size too high (%d), maximum is 10000", cfg.NATS.Consumers.FetchBatchSize)
+	if cfg.NATS.Consumers.FetchBatchSize > MaxFetchBatchSize {
+		return fmt.Errorf("fetch batch size too high (%d), maximum is %d", cfg.NATS.Consumers.FetchBatchSize, MaxFetchBatchSize)
 	}
 	if cfg.NATS.Consumers.FetchTimeout <= 0 {
 		return fmt.Errorf("fetch timeout must be positive")
@@ -402,8 +528,8 @@ func validateConfig(cfg *Config) error {
 	if cfg.NATS.Consumers.MaxAckPending < 1 {
 		return fmt.Errorf("max ack pending must be at least 1")
 	}
-	if cfg.NATS.Consumers.MaxAckPending > 100000 {
-		return fmt.Errorf("max ack pending too high (%d), maximum is 100000", cfg.NATS.Consumers.MaxAckPending)
+	if cfg.NATS.Consumers.MaxAckPending > MaxAckPending {
+		return fmt.Errorf("max ack pending too high (%d), maximum is %d", cfg.NATS.Consumers.MaxAckPending, MaxAckPending)
 	}
 	if cfg.NATS.Consumers.MaxDeliver < 1 {
 		return fmt.Errorf("max deliver must be at least 1")
@@ -451,14 +577,14 @@ func validateConfig(cfg *Config) error {
 		if cfg.HTTP.Server.InboundWorkerCount < 1 {
 			return fmt.Errorf("inbound worker count must be at least 1")
 		}
-		if cfg.HTTP.Server.InboundWorkerCount > 1000 {
-			return fmt.Errorf("inbound worker count too high (%d), maximum is 1000", cfg.HTTP.Server.InboundWorkerCount)
+		if cfg.HTTP.Server.InboundWorkerCount > MaxWorkerCount {
+			return fmt.Errorf("inbound worker count too high (%d), maximum is %d", cfg.HTTP.Server.InboundWorkerCount, MaxWorkerCount)
 		}
 		if cfg.HTTP.Server.InboundQueueSize < 1 {
 			return fmt.Errorf("inbound queue size must be at least 1")
 		}
-		if cfg.HTTP.Server.InboundQueueSize > 100000 {
-			return fmt.Errorf("inbound queue size too high (%d), maximum is 100000", cfg.HTTP.Server.InboundQueueSize)
+		if cfg.HTTP.Server.InboundQueueSize > MaxInboundQueueSize {
+			return fmt.Errorf("inbound queue size too high (%d), maximum is %d", cfg.HTTP.Server.InboundQueueSize, MaxInboundQueueSize)
 		}
 		if cfg.HTTP.Client.Timeout < 0 {
 			return fmt.Errorf("HTTP client timeout cannot be negative")
@@ -475,10 +601,11 @@ func validateConfig(cfg *Config) error {
 	if cfg.ForEach.MaxIterations < 0 {
 		return fmt.Errorf("forEach maxIterations cannot be negative (use 0 for unlimited)")
 	}
-	if cfg.ForEach.MaxIterations > 10000 {
-		return fmt.Errorf("forEach maxIterations too high (%d), maximum is 10000", cfg.ForEach.MaxIterations)
+	if cfg.ForEach.MaxIterations > MaxForEachIterations {
+		return fmt.Errorf("forEach maxIterations too high (%d), maximum is %d", cfg.ForEach.MaxIterations, MaxForEachIterations)
 	}
 
 	return nil
 }
+
 

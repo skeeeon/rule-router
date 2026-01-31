@@ -15,6 +15,15 @@ import (
 	"rule-router/internal/rule"
 )
 
+// Timeout constants for RouterApp operations
+const (
+	// metricsShutdownTimeout is the maximum time to wait for the metrics server to shutdown
+	metricsShutdownTimeout = 5 * time.Second
+
+	// subscriptionSetupTimeout is the maximum time to wait for all subscriptions to be configured
+	subscriptionSetupTimeout = 60 * time.Second
+)
+
 // Verify RouterApp implements lifecycle.Application interface at compile time
 var _ lifecycle.Application = (*RouterApp)(nil)
 
@@ -107,7 +116,7 @@ func (app *RouterApp) Close() error {
 
 	// Shutdown metrics server and wait for goroutine to exit
 	if app.base != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), metricsShutdownTimeout)
 		defer cancel()
 		if err := app.base.ShutdownMetricsServer(shutdownCtx); err != nil {
 			errors = append(errors, err)
@@ -145,7 +154,7 @@ func (app *RouterApp) setupSubscriptions() error {
 		return fmt.Errorf("stream validation failed: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), subscriptionSetupTimeout)
 	defer cancel()
 
 	for _, subject := range subjects {
@@ -171,4 +180,5 @@ func (app *RouterApp) setupSubscriptions() error {
 	app.logger.Info("all subscriptions configured successfully", "subscriptionCount", len(subjects))
 	return nil
 }
+
 

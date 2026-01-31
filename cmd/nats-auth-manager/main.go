@@ -20,6 +20,12 @@ import (
 	"rule-router/internal/logger"
 )
 
+// Timeout constants for auth-manager shutdown
+const (
+	// shutdownTimeout is the maximum time to wait for graceful shutdown
+	shutdownTimeout = 10 * time.Second
+)
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatal(err)
@@ -103,7 +109,7 @@ func run() error {
 	appLogger.Info("shutdown signal received, stopping...")
 
 	// Graceful shutdown
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
 	if err := manager.Stop(); err != nil {
@@ -164,3 +170,4 @@ func createProviders(configs []authmgr.ProviderConfig, log *logger.Logger) ([]pr
 
 	return providerList, nil
 }
+

@@ -11,6 +11,12 @@ import (
 	"golang.org/x/oauth2/clientcredentials"
 )
 
+// Timeout constants for OAuth2 provider
+const (
+	// minRefreshInterval is the minimum interval between token refresh attempts
+	minRefreshInterval = 1 * time.Minute
+)
+
 // OAuth2Provider implements OAuth2 client credentials authentication
 type OAuth2Provider struct {
 	id            string
@@ -78,9 +84,9 @@ func (p *OAuth2Provider) RefreshInterval() time.Duration {
 		// Refresh before expiry by the buffer amount
 		refreshInterval := timeUntilExpiry - p.refreshBuffer
 
-		// Ensure minimum refresh interval of 1 minute
-		if refreshInterval < 1*time.Minute {
-			refreshInterval = 1 * time.Minute
+		// Ensure minimum refresh interval
+		if refreshInterval < minRefreshInterval {
+			refreshInterval = minRefreshInterval
 		}
 
 		return refreshInterval
@@ -91,3 +97,4 @@ func (p *OAuth2Provider) RefreshInterval() time.Duration {
 	// This will be updated after the first authentication
 	return p.refreshBuffer
 }
+

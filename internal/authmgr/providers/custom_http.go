@@ -13,6 +13,12 @@ import (
 	"time"
 )
 
+// Timeout constants for custom HTTP provider
+const (
+	// customHTTPTimeout is the default timeout for custom HTTP authentication requests
+	customHTTPTimeout = 30 * time.Second
+)
+
 // CustomHTTPProvider implements authentication via custom HTTP endpoints
 type CustomHTTPProvider struct {
 	id           string
@@ -41,7 +47,7 @@ func NewCustomHTTPProvider(
 		tokenPath:    tokenPath,
 		refreshEvery: refreshEvery,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: customHTTPTimeout,
 		},
 	}
 }
@@ -139,3 +145,4 @@ func (p *CustomHTTPProvider) extractJSONPath(data interface{}, path string) (str
 		return "", fmt.Errorf("final value is not a string, got %T", current)
 	}
 }
+
