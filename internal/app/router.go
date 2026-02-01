@@ -95,7 +95,7 @@ func (app *RouterApp) Run(ctx context.Context) error {
 
 	// Update metrics
 	if app.metrics != nil {
-		subjects := app.processor.GetSubjects()
+		subjects := app.processor.GetAllRules()
 		app.metrics.SetRulesActive(float64(len(subjects)))
 	}
 
