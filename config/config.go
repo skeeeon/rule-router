@@ -79,6 +79,9 @@ const (
 
 	// DefaultForEachMaxIterations is the default maximum forEach iterations
 	DefaultForEachMaxIterations = 100
+
+	// DefaultInboundQueueSize is the default HTTP inbound queue size
+	DefaultInboundQueueSize = 1000
 )
 
 // Validation limits
@@ -420,7 +423,7 @@ func setDefaults(cfg *Config) {
 		cfg.HTTP.Server.InboundWorkerCount = 10
 	}
 	if cfg.HTTP.Server.InboundQueueSize == 0 {
-		cfg.HTTP.Server.InboundQueueSize = DefaultForEachMaxIterations
+		cfg.HTTP.Server.InboundQueueSize = DefaultInboundQueueSize
 	}
 
 	// Logging defaults

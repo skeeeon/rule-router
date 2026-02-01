@@ -352,9 +352,15 @@ func (kv *KVContext) resolveVariable(varName string, msgData map[string]interfac
 	if strings.HasPrefix(varName, "@") {
 		// System field resolution
 		if strings.HasPrefix(varName, "@subject") {
+			if subjectCtx == nil {
+				return nil, false
+			}
 			return subjectCtx.GetField(varName)
 		}
 		if strings.HasPrefix(varName, "@time") || strings.HasPrefix(varName, "@date") || strings.HasPrefix(varName, "@timestamp") {
+			if timeCtx == nil {
+				return nil, false
+			}
 			return timeCtx.GetField(varName)
 		}
 		return nil, false

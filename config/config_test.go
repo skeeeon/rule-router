@@ -78,8 +78,8 @@ func TestSetDefaults(t *testing.T) {
 				if cfg.HTTP.Server.InboundWorkerCount != 10 {
 					t.Errorf("HTTP.Server.InboundWorkerCount = %d, want 10", cfg.HTTP.Server.InboundWorkerCount)
 				}
-				if cfg.HTTP.Server.InboundQueueSize != 100 {
-					t.Errorf("HTTP.Server.InboundQueueSize = %d, want 100", cfg.HTTP.Server.InboundQueueSize)
+				if cfg.HTTP.Server.InboundQueueSize != 1000 {
+					t.Errorf("HTTP.Server.InboundQueueSize = %d, want 1000", cfg.HTTP.Server.InboundQueueSize)
 				}
 
 				// HTTP Client defaults
