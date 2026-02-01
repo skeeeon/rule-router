@@ -79,13 +79,21 @@ func (app *GatewayApp) Run(ctx context.Context) error {
 	httpPaths := app.processor.GetHTTPPaths()
 	outboundSubCount := len(app.outboundClient.GetSubscriptions())
 
+	// Log configuration summary for transparency
+	allRules := app.processor.GetAllRules()
+	app.logger.Info("configuration summary",
+		"totalRules", len(allRules),
+		"inboundHttpPaths", httpPaths,
+		"outboundSubscriptions", outboundSubCount,
+		"inboundWorkers", app.config.HTTP.Server.InboundWorkerCount,
+		"inboundQueueSize", app.config.HTTP.Server.InboundQueueSize,
+		"kvEnabled", app.config.KV.Enabled,
+		"kvBuckets", app.config.KV.Buckets)
+
 	app.logger.Info("starting http-gateway",
 		"natsUrls", app.config.NATS.URLs,
 		"httpAddress", app.config.HTTP.Server.Address,
-		"httpPaths", len(httpPaths),
-		"outboundSubscriptions", outboundSubCount,
-		"metricsEnabled", app.config.Metrics.Enabled,
-		"kvEnabled", app.config.KV.Enabled)
+		"metricsEnabled", app.config.Metrics.Enabled)
 
 	// Start inbound HTTP server
 	if err := app.inboundServer.Start(ctx); err != nil {

@@ -703,11 +703,10 @@ func (l *RulesLoader) validateKVFieldsInTemplate(template string) error {
 
 		bucket := l.extractBucketFromKVField(field)
 		if bucket != "" && !l.isBucketConfigured(bucket) {
-			l.logger.Debug("KV field references unconfigured bucket",
+			l.logger.Warn("KV field references unconfigured bucket - lookup will fail at runtime",
 				"field", field,
 				"bucket", bucket,
-				"configuredBuckets", l.configuredKVBuckets,
-				"impact", "This KV lookup will fail at runtime if KV is enabled")
+				"configuredBuckets", l.configuredKVBuckets)
 		}
 	}
 

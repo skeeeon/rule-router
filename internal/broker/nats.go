@@ -441,7 +441,12 @@ func (b *NATSBroker) initializeNATSConnection() error {
 
 	b.natsConn, err = nats.Connect(urlString, natsOptions...)
 	if err != nil {
-		return fmt.Errorf("failed to connect to NATS (tried %d URLs): %w", len(b.config.NATS.URLs), err)
+		return fmt.Errorf("failed to connect to NATS: urls=%v, authMethod=%s, tlsEnabled=%v, reconnectWait=%v: %w",
+			b.config.NATS.URLs,
+			b.getAuthMethod(),
+			b.config.NATS.TLS.Enable,
+			b.config.NATS.Connection.ReconnectWait,
+			err)
 	}
 
 	connectedURL := b.natsConn.ConnectedUrl()
@@ -575,6 +580,23 @@ func (b *NATSBroker) buildNATSOptions() ([]nats.Option, error) {
 	}
 
 	return natsOptions, nil
+}
+
+// getAuthMethod returns a human-readable string describing the configured auth method
+func (b *NATSBroker) getAuthMethod() string {
+	if b.config.NATS.CredsFile != "" {
+		return "creds_file"
+	}
+	if b.config.NATS.NKey != "" {
+		return "nkey"
+	}
+	if b.config.NATS.Token != "" {
+		return "token"
+	}
+	if b.config.NATS.Username != "" {
+		return "username/password"
+	}
+	return "none"
 }
 
 // GetKVStores returns a copy of the KV stores map

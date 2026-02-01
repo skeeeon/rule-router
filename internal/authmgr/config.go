@@ -114,13 +114,27 @@ func Load(configPath string) (*Config, error) {
 	return &cfg, nil
 }
 
+// unsetEnvVars tracks environment variables that were referenced but not set
+var unsetEnvVars []string
+
 // expandEnvVars recursively expands ${VAR} placeholders in the config struct.
 func expandEnvVars(cfg interface{}) error {
+	// Reset tracking for each expansion
+	unsetEnvVars = nil
+
 	v := reflect.ValueOf(cfg)
 	if v.Kind() != reflect.Ptr || v.IsNil() {
 		return fmt.Errorf("config must be a non-nil pointer")
 	}
-	return expandRecursive(v)
+	if err := expandRecursive(v); err != nil {
+		return err
+	}
+
+	// Report any unset environment variables
+	if len(unsetEnvVars) > 0 {
+		return fmt.Errorf("missing environment variables: %v (set them or remove ${} references from config)", unsetEnvVars)
+	}
+	return nil
 }
 
 // expandRecursive is the helper that uses reflection to walk the config struct.
@@ -170,14 +184,28 @@ func expandRecursive(v reflect.Value) error {
 }
 
 // expandString performs the actual replacement for a single string.
+// Tracks unset variables for later reporting.
 func expandString(s string) string {
 	if !strings.Contains(s, "${") {
 		return s
 	}
 	return envVarPattern.ReplaceAllStringFunc(s, func(match string) string {
 		varName := match[2 : len(match)-1]
-		// os.Getenv returns an empty string for unset variables, which is the desired behavior.
-		return os.Getenv(varName)
+		value := os.Getenv(varName)
+		if value == "" {
+			// Track unset variables (avoid duplicates)
+			found := false
+			for _, v := range unsetEnvVars {
+				if v == varName {
+					found = true
+					break
+				}
+			}
+			if !found {
+				unsetEnvVars = append(unsetEnvVars, varName)
+			}
+		}
+		return value
 	})
 }
 

@@ -272,10 +272,12 @@ func (s *InboundServer) webhookHandler(path string) http.HandlerFunc {
 			}
 		default:
 			// The queue is full. This is our backpressure mechanism.
-			s.logger.Warn("inbound work queue is full, rejecting request",
+			s.logger.Warn("inbound work queue full, rejecting request",
 				"path", path,
-				"queueSize", s.serverCfg.InboundQueueSize)
-			http.Error(w, "Service Unavailable: server is busy, please try again later.", http.StatusServiceUnavailable)
+				"queueCapacity", s.serverCfg.InboundQueueSize,
+				"hint", "increase http.server.inboundQueueSize in config or add more workers")
+			http.Error(w, fmt.Sprintf("Service Unavailable: webhook queue full (%d/%d). Increase http.server.inboundQueueSize in config.",
+				s.serverCfg.InboundQueueSize, s.serverCfg.InboundQueueSize), http.StatusServiceUnavailable)
 			if s.metrics != nil {
 				s.metrics.IncHTTPInboundRequestsTotal(path, r.Method, "503")
 			}

@@ -69,12 +69,22 @@ func (app *RouterApp) Run(ctx context.Context) error {
 	subMgr := app.broker.GetSubscriptionManager()
 	subCount := subMgr.GetSubscriptionCount()
 
+	// Log configuration summary for transparency
+	allRules := app.processor.GetAllRules()
+	natsSubjects := app.processor.GetSubjects()
+	app.logger.Info("configuration summary",
+		"totalRules", len(allRules),
+		"natsSubjects", len(natsSubjects),
+		"subjectList", natsSubjects,
+		"kvEnabled", app.config.KV.Enabled,
+		"kvBuckets", app.config.KV.Buckets,
+		"publishMode", app.config.NATS.Publish.Mode,
+		"workerCount", app.config.NATS.Consumers.WorkerCount)
+
 	app.logger.Info("starting rule-router with NATS JetStream",
 		"natsUrls", app.config.NATS.URLs,
 		"subscriptionCount", subCount,
-		"metricsEnabled", app.config.Metrics.Enabled,
-		"kvEnabled", app.config.KV.Enabled,
-		"kvBuckets", app.config.KV.Buckets)
+		"metricsEnabled", app.config.Metrics.Enabled)
 
 	// Start subscription manager
 	if err := subMgr.Start(ctx); err != nil {

@@ -158,11 +158,29 @@ func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 		t.generateMockKVData(testDir, features.KVBuckets)
 	}
 
-	fmt.Printf("✓ Scaffolded test directory at: %s\n", testDir)
-	
+	// Show directory structure
+	fmt.Printf("\n✓ Scaffolded test directory at: %s\n\n", testDir)
+	fmt.Println("Generated files:")
+	fmt.Println("  ├── _test_config.json        (mock trigger, time, headers)")
+	fmt.Println("  ├── match_1.json             (example matching input)")
+	fmt.Println("  ├── not_match_1.json         (example non-matching input)")
+	if features.UsesForEach {
+		fmt.Println("  ├── not_match_2_empty_array.json  (empty array edge case)")
+	}
+	fmt.Println("  ├── match_1_output.json      (expected action output - EDIT THIS!)")
+	if features.HasKVLookups {
+		fmt.Println("  ├── mock_kv_data.json        (mock KV store data)")
+	}
+	fmt.Println("  └── README.md                (test instructions)")
+	fmt.Println()
+	fmt.Println("Next steps:")
+	fmt.Println("  1. Edit the JSON files with your actual test data")
+	fmt.Println("  2. Update match_1_output.json with expected actions")
+	fmt.Println("  3. Run: rule-cli test --rules ./rules")
+
 	// Provide helpful tips based on features
 	t.printScaffoldTips(features)
-	
+
 	return nil
 }
 
