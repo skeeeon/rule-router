@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0] - 2026-02-24
+- Added `merge: true` action payload mode for NATS and HTTP actions
+- Deep-merges a templated overlay onto the original message, preserving all existing fields
+- Supports nested object recursion (nested maps merge rather than replace)
+- Works with `forEach` (array element is the merge base)
+- New `"merge"` action type metric for Prometheus observability
+
 ## [0.4.0] - 2025-11-09
 - BREAKING CHANGE
 - Variable syntax updated to require {} in all invocations
@@ -35,3 +42,4 @@
 [0.2.2]: https://github.com/skeeeon/rule-router/releases/tag/v0.2.2
 [0.3.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.3.0
 [0.4.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.4.0
+[0.5.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.5.0

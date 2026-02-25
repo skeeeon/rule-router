@@ -1,0 +1,37 @@
+# Merge enrichment: add fields to the original message without rebuilding it
+# Sample message: {"customer_id": "c100", "order_value": 250.00, "items": ["widget", "gadget"]}
+- trigger:
+    nats:
+      subject: orders.incoming
+  conditions:
+    operator: and
+    items:
+      - field: "{order_value}"
+        operator: gt
+        value: 100
+  action:
+    nats:
+      subject: orders.enriched.{customer_id}
+      merge: true
+      payload: |
+        {
+          "customer_tier": "{@kv.customer_data.{customer_id}:tier}",
+          "processed_at": "{@timestamp()}",
+          "trace_id": "{@uuid7()}"
+        }
+
+# Merge with forEach: enrich each array element individually
+# Sample message: {"batchId": "b1", "events": [{"id": "e1", "type": "click"}, {"id": "e2", "type": "view"}]}
+- trigger:
+    nats:
+      subject: analytics.batch
+  action:
+    nats:
+      forEach: "{events}"
+      subject: analytics.enriched.{id}
+      merge: true
+      payload: |
+        {
+          "batch_id": "{@msg.batchId}",
+          "enriched_at": "{@timestamp()}"
+        }

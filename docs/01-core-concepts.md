@@ -230,6 +230,40 @@ action:
       initialDelay: "1s"
 ```
 
+### Action Payload Modes
+
+Every action supports three payload modes:
+
+| Mode | Field | Behavior |
+|------|-------|----------|
+| **Templated** (default) | `payload: "..."` | You define the complete output message. All `{variables}` are resolved. |
+| **Passthrough** | `passthrough: true` | Forwards the original message unchanged. No payload field needed. |
+| **Merge** | `merge: true` + `payload: "..."` | Deep-merges your payload overlay onto the original message. Original fields are preserved; overlay fields are added or overwritten. |
+
+**Merge** is ideal for enrichment workflows where you want to add a few fields (e.g., a KV-derived tier, a UUID, a timestamp) without re-specifying every existing field:
+
+```yaml
+action:
+  nats:
+    subject: "enriched.orders"
+    merge: true
+    payload: |
+      {
+        "customer_tier": "{@kv.customers.{customer_id}:tier}",
+        "processed_at": "{@timestamp()}",
+        "trace_id": "{@uuid7()}"
+      }
+```
+
+Given an input message `{"customer_id": "c1", "amount": 99.50, "items": [...]}`, the output would contain all original fields plus the three overlay fields.
+
+**Merge semantics:**
+- Overlay values overwrite base values for matching keys
+- Nested objects are merged recursively (not replaced wholesale)
+- Arrays in the overlay replace arrays in the base entirely
+- If both `passthrough` and `merge` are set, `passthrough` wins
+- In `forEach` context, the merge base is the current array element (use `{@msg.field}` to pull root fields into the overlay)
+
 ## Environment Variables
 
 The rule engine supports environment variable expansion for static configuration values using `${VAR_NAME}` syntax. This enables secure secret management and environment-specific configuration without hardcoding values in rule files.

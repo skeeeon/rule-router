@@ -131,6 +131,28 @@ This rule processes a batch of events, generating one new message for each "crit
         }
 ```
 
+### Example: Message Enrichment with `merge`
+
+This rule enriches incoming orders with customer data from a KV store, preserving all original fields:
+
+```yaml
+- trigger:
+    nats:
+      subject: "orders.incoming"
+  action:
+    nats:
+      subject: "orders.enriched.{customer_id}"
+      merge: true
+      payload: |
+        {
+          "customer_tier": "{@kv.customers.{customer_id}:tier}",
+          "processed_at": "{@timestamp()}",
+          "trace_id": "{@uuid7()}"
+        }
+```
+
+With `merge: true`, the original message fields are preserved and the overlay fields are added or overwritten. See [Core Concepts](./../../docs/01-core-concepts.md) for full merge semantics.
+
 ## Testing Rules
 
 Use the standalone `rule-cli` utility for offline validation of your rules.

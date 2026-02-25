@@ -1496,3 +1496,567 @@ func BenchmarkExtractVariable(b *testing.B) {
 	}
 }
 
+// --- Deep Merge Tests ---
+
+func TestDeepMerge_BasicOverwrite(t *testing.T) {
+	base := map[string]interface{}{"a": "old", "b": 1}
+	overlay := map[string]interface{}{"a": "new"}
+	result := deepMerge(base, overlay)
+
+	if result["a"] != "new" {
+		t.Errorf("expected overlay to overwrite base: got %v", result["a"])
+	}
+	if result["b"] != 1 {
+		t.Errorf("expected base key preserved: got %v", result["b"])
+	}
+}
+
+func TestDeepMerge_NewKeys(t *testing.T) {
+	base := map[string]interface{}{"a": 1}
+	overlay := map[string]interface{}{"b": 2, "c": 3}
+	result := deepMerge(base, overlay)
+
+	if result["a"] != 1 {
+		t.Errorf("base key missing: got %v", result["a"])
+	}
+	if result["b"] != 2 {
+		t.Errorf("overlay key b missing: got %v", result["b"])
+	}
+	if result["c"] != 3 {
+		t.Errorf("overlay key c missing: got %v", result["c"])
+	}
+}
+
+func TestDeepMerge_NestedObjectsRecursed(t *testing.T) {
+	base := map[string]interface{}{
+		"nested": map[string]interface{}{
+			"keep": "yes",
+			"overwrite": "old",
+		},
+	}
+	overlay := map[string]interface{}{
+		"nested": map[string]interface{}{
+			"overwrite": "new",
+			"added": "extra",
+		},
+	}
+	result := deepMerge(base, overlay)
+
+	nested, ok := result["nested"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("nested should be map, got %T", result["nested"])
+	}
+	if nested["keep"] != "yes" {
+		t.Errorf("nested.keep should be preserved: got %v", nested["keep"])
+	}
+	if nested["overwrite"] != "new" {
+		t.Errorf("nested.overwrite should be updated: got %v", nested["overwrite"])
+	}
+	if nested["added"] != "extra" {
+		t.Errorf("nested.added should be added: got %v", nested["added"])
+	}
+}
+
+func TestDeepMerge_ArraysReplacedWholesale(t *testing.T) {
+	base := map[string]interface{}{"arr": []interface{}{1, 2, 3}}
+	overlay := map[string]interface{}{"arr": []interface{}{4, 5}}
+	result := deepMerge(base, overlay)
+
+	arr, ok := result["arr"].([]interface{})
+	if !ok {
+		t.Fatalf("arr should be slice, got %T", result["arr"])
+	}
+	if len(arr) != 2 || arr[0] != 4 || arr[1] != 5 {
+		t.Errorf("overlay array should replace base: got %v", arr)
+	}
+}
+
+func TestDeepMerge_EmptyOverlay(t *testing.T) {
+	base := map[string]interface{}{"a": 1, "b": 2}
+	overlay := map[string]interface{}{}
+	result := deepMerge(base, overlay)
+
+	if len(result) != 2 || result["a"] != 1 || result["b"] != 2 {
+		t.Errorf("empty overlay should return copy of base: got %v", result)
+	}
+}
+
+func TestDeepMerge_EmptyBase(t *testing.T) {
+	base := map[string]interface{}{}
+	overlay := map[string]interface{}{"a": 1}
+	result := deepMerge(base, overlay)
+
+	if len(result) != 1 || result["a"] != 1 {
+		t.Errorf("empty base should return overlay: got %v", result)
+	}
+}
+
+func TestDeepMerge_BaseNotMutated(t *testing.T) {
+	base := map[string]interface{}{"a": "original"}
+	overlay := map[string]interface{}{"a": "changed", "b": "new"}
+	deepMerge(base, overlay)
+
+	if base["a"] != "original" {
+		t.Errorf("base was mutated: a = %v", base["a"])
+	}
+	if _, exists := base["b"]; exists {
+		t.Error("base was mutated: key b should not exist")
+	}
+}
+
+// --- Merge Benchmarks ---
+
+func BenchmarkNATSAction_Templated(b *testing.B) {
+	processor := newTestProcessor()
+	action := &NATSAction{
+		Subject: "output.{device_id}",
+		Payload: `{"device_id": "{device_id}", "reading": {reading}, "status": "{status}"}`,
+	}
+	data := map[string]interface{}{
+		"device_id": "sensor-001",
+		"reading":   98.6,
+		"status":    "active",
+		"extra1":    "preserved1",
+		"extra2":    "preserved2",
+	}
+	context := newTemplateTestContext(data, "test.subject", time.Now())
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		processor.processNATSAction(action, context)
+	}
+}
+
+func BenchmarkNATSAction_Passthrough(b *testing.B) {
+	processor := newTestProcessor()
+	action := &NATSAction{
+		Subject:     "output.passthrough",
+		Passthrough: true,
+	}
+	data := map[string]interface{}{
+		"device_id": "sensor-001",
+		"reading":   98.6,
+		"status":    "active",
+		"extra1":    "preserved1",
+		"extra2":    "preserved2",
+	}
+	context := newTemplateTestContext(data, "test.subject", time.Now())
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		processor.processNATSAction(action, context)
+	}
+}
+
+func BenchmarkNATSAction_Merge(b *testing.B) {
+	processor := newTestProcessor()
+	action := &NATSAction{
+		Subject: "output.{device_id}",
+		Merge:   true,
+		Payload: `{"processed": true, "tier": "premium"}`,
+	}
+	data := map[string]interface{}{
+		"device_id": "sensor-001",
+		"reading":   98.6,
+		"status":    "active",
+		"extra1":    "preserved1",
+		"extra2":    "preserved2",
+	}
+	context := newTemplateTestContext(data, "test.subject", time.Now())
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		processor.processNATSAction(action, context)
+	}
+}
+
+func BenchmarkNATSAction_Merge_LargePayload(b *testing.B) {
+	processor := newTestProcessor()
+	action := &NATSAction{
+		Subject: "output.{id}",
+		Merge:   true,
+		Payload: `{"enriched": true}`,
+	}
+
+	// Build a message with 50 fields to simulate a wide schema
+	data := map[string]interface{}{"id": "msg-1"}
+	for i := 0; i < 50; i++ {
+		data[fmt.Sprintf("field_%d", i)] = fmt.Sprintf("value_%d", i)
+	}
+	context := newTemplateTestContext(data, "test.subject", time.Now())
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		processor.processNATSAction(action, context)
+	}
+}
+
+// --- NATS Merge Action Tests ---
+
+func TestProcessNATSAction_Merge_Basic(t *testing.T) {
+	processor := newTestProcessor()
+
+	action := &NATSAction{
+		Subject: "output.merged",
+		Merge:   true,
+		Payload: `{"added_field": "new_value"}`,
+	}
+
+	data := map[string]interface{}{
+		"existing": "preserved",
+		"count":    42,
+	}
+	context := newTemplateTestContext(data, "test.subject", time.Now())
+
+	actions, err := processor.processNATSAction(action, context)
+	if err != nil {
+		t.Fatalf("processNATSAction() error = %v", err)
+	}
+
+	if len(actions) != 1 {
+		t.Fatalf("Expected 1 action, got %d", len(actions))
+	}
+
+	result := actions[0].NATS
+	if len(result.RawPayload) == 0 {
+		t.Fatal("Merge should produce RawPayload")
+	}
+
+	var merged map[string]interface{}
+	if err := json.Unmarshal(result.RawPayload, &merged); err != nil {
+		t.Fatalf("Failed to parse merged payload: %v", err)
+	}
+
+	if merged["existing"] != "preserved" {
+		t.Errorf("Original field not preserved: got %v", merged["existing"])
+	}
+	if merged["added_field"] != "new_value" {
+		t.Errorf("Overlay field not added: got %v", merged["added_field"])
+	}
+	// count comes back as float64 from JSON round-trip
+	if merged["count"] != float64(42) {
+		t.Errorf("Original numeric field not preserved: got %v", merged["count"])
+	}
+}
+
+func TestProcessNATSAction_Merge_OverwritesExistingField(t *testing.T) {
+	processor := newTestProcessor()
+
+	action := &NATSAction{
+		Subject: "output.merged",
+		Merge:   true,
+		Payload: `{"status": "enriched"}`,
+	}
+
+	data := map[string]interface{}{
+		"status": "raw",
+		"id":     "msg-1",
+	}
+	context := newTemplateTestContext(data, "test.subject", time.Now())
+
+	actions, err := processor.processNATSAction(action, context)
+	if err != nil {
+		t.Fatalf("processNATSAction() error = %v", err)
+	}
+
+	var merged map[string]interface{}
+	if err := json.Unmarshal(actions[0].NATS.RawPayload, &merged); err != nil {
+		t.Fatalf("Failed to parse: %v", err)
+	}
+
+	if merged["status"] != "enriched" {
+		t.Errorf("Overlay should overwrite: got %v", merged["status"])
+	}
+	if merged["id"] != "msg-1" {
+		t.Errorf("Non-overlapping field should be preserved: got %v", merged["id"])
+	}
+}
+
+func TestProcessNATSAction_Merge_WithTemplateVariables(t *testing.T) {
+	processor := newTestProcessor()
+
+	action := &NATSAction{
+		Subject: "output.merged",
+		Merge:   true,
+		Payload: `{"device_name": "{name}", "source_subject": "{@subject}"}`,
+	}
+
+	data := map[string]interface{}{
+		"name":     "sensor-1",
+		"reading":  98.6,
+	}
+	context := newTemplateTestContext(data, "sensors.temperature.room1", time.Now())
+
+	actions, err := processor.processNATSAction(action, context)
+	if err != nil {
+		t.Fatalf("processNATSAction() error = %v", err)
+	}
+
+	var merged map[string]interface{}
+	if err := json.Unmarshal(actions[0].NATS.RawPayload, &merged); err != nil {
+		t.Fatalf("Failed to parse: %v", err)
+	}
+
+	if merged["device_name"] != "sensor-1" {
+		t.Errorf("Template variable not resolved: got %v", merged["device_name"])
+	}
+	if merged["source_subject"] != "sensors.temperature.room1" {
+		t.Errorf("System variable not resolved: got %v", merged["source_subject"])
+	}
+	if merged["reading"] != 98.6 {
+		t.Errorf("Original field not preserved: got %v", merged["reading"])
+	}
+}
+
+func TestProcessNATSAction_Merge_InvalidOverlayJSON(t *testing.T) {
+	processor := newTestProcessor()
+
+	action := &NATSAction{
+		Subject: "output.merged",
+		Merge:   true,
+		Payload: `not valid json`,
+	}
+
+	data := map[string]interface{}{"key": "value"}
+	context := newTemplateTestContext(data, "test.subject", time.Now())
+
+	_, err := processor.processNATSAction(action, context)
+	if err == nil {
+		t.Fatal("Expected error for invalid overlay JSON")
+	}
+	if !strings.Contains(err.Error(), "merge") {
+		t.Errorf("Error should mention merge: got %v", err)
+	}
+}
+
+func TestProcessNATSAction_Merge_NestedObject(t *testing.T) {
+	processor := newTestProcessor()
+
+	action := &NATSAction{
+		Subject: "output.merged",
+		Merge:   true,
+		Payload: `{"metadata": {"processed": true, "tier": "premium"}}`,
+	}
+
+	data := map[string]interface{}{
+		"id": "order-1",
+		"metadata": map[string]interface{}{
+			"source":  "api",
+			"version": "2.0",
+		},
+	}
+	context := newTemplateTestContext(data, "test.subject", time.Now())
+
+	actions, err := processor.processNATSAction(action, context)
+	if err != nil {
+		t.Fatalf("processNATSAction() error = %v", err)
+	}
+
+	var merged map[string]interface{}
+	if err := json.Unmarshal(actions[0].NATS.RawPayload, &merged); err != nil {
+		t.Fatalf("Failed to parse: %v", err)
+	}
+
+	metadata, ok := merged["metadata"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("metadata should be object, got %T", merged["metadata"])
+	}
+
+	// Original nested fields preserved
+	if metadata["source"] != "api" {
+		t.Errorf("Nested original field not preserved: source = %v", metadata["source"])
+	}
+	if metadata["version"] != "2.0" {
+		t.Errorf("Nested original field not preserved: version = %v", metadata["version"])
+	}
+	// Overlay nested fields added
+	if metadata["processed"] != true {
+		t.Errorf("Nested overlay field not added: processed = %v", metadata["processed"])
+	}
+	if metadata["tier"] != "premium" {
+		t.Errorf("Nested overlay field not added: tier = %v", metadata["tier"])
+	}
+}
+
+// --- HTTP Merge Action Tests ---
+
+func TestProcessHTTPAction_Merge_Basic(t *testing.T) {
+	processor := newTestProcessor()
+
+	action := &HTTPAction{
+		URL:    "https://api.example.com/enrich",
+		Method: "POST",
+		Merge:  true,
+		Payload: `{"enriched": true}`,
+	}
+
+	data := map[string]interface{}{
+		"id":   "msg-1",
+		"data": "original",
+	}
+	context := newTemplateTestContext(data, "test.subject", time.Now())
+
+	actions, err := processor.processHTTPAction(action, context)
+	if err != nil {
+		t.Fatalf("processHTTPAction() error = %v", err)
+	}
+
+	if len(actions) != 1 {
+		t.Fatalf("Expected 1 action, got %d", len(actions))
+	}
+
+	result := actions[0].HTTP
+	if len(result.RawPayload) == 0 {
+		t.Fatal("Merge should produce RawPayload")
+	}
+
+	var merged map[string]interface{}
+	if err := json.Unmarshal(result.RawPayload, &merged); err != nil {
+		t.Fatalf("Failed to parse merged payload: %v", err)
+	}
+
+	if merged["id"] != "msg-1" {
+		t.Errorf("Original field not preserved: got %v", merged["id"])
+	}
+	if merged["enriched"] != true {
+		t.Errorf("Overlay field not added: got %v", merged["enriched"])
+	}
+}
+
+// --- ForEach + Merge Tests ---
+
+func TestProcessNATSActionWithForEach_Merge_Basic(t *testing.T) {
+	processor := newTestProcessor()
+
+	action := &NATSAction{
+		ForEach: "{items}",
+		Subject: "enriched.{id}",
+		Merge:   true,
+		Payload: `{"processed": true}`,
+	}
+
+	data := map[string]interface{}{
+		"items": []interface{}{
+			map[string]interface{}{"id": "a", "value": 10},
+			map[string]interface{}{"id": "b", "value": 20},
+		},
+	}
+	context := newTemplateTestContext(data, "test.subject", time.Now())
+
+	actions, err := processor.processNATSActionWithForEach(action, context)
+	if err != nil {
+		t.Fatalf("processNATSActionWithForEach() error = %v", err)
+	}
+
+	if len(actions) != 2 {
+		t.Fatalf("Expected 2 actions, got %d", len(actions))
+	}
+
+	for i, act := range actions {
+		if len(act.NATS.RawPayload) == 0 {
+			t.Fatalf("Action %d should have RawPayload", i)
+		}
+
+		var merged map[string]interface{}
+		if err := json.Unmarshal(act.NATS.RawPayload, &merged); err != nil {
+			t.Fatalf("Action %d: failed to parse: %v", i, err)
+		}
+
+		// Element fields preserved
+		if merged["value"] == nil {
+			t.Errorf("Action %d: element field 'value' not preserved", i)
+		}
+		// Overlay field added
+		if merged["processed"] != true {
+			t.Errorf("Action %d: overlay field 'processed' not added", i)
+		}
+	}
+
+	// Verify subjects resolved from element context
+	if actions[0].NATS.Subject != "enriched.a" {
+		t.Errorf("Action 0 subject = %s, want enriched.a", actions[0].NATS.Subject)
+	}
+	if actions[1].NATS.Subject != "enriched.b" {
+		t.Errorf("Action 1 subject = %s, want enriched.b", actions[1].NATS.Subject)
+	}
+}
+
+func TestProcessNATSActionWithForEach_Merge_ElementIsBase(t *testing.T) {
+	processor := newTestProcessor()
+
+	action := &NATSAction{
+		ForEach: "{items}",
+		Subject: "output.{id}",
+		Merge:   true,
+		Payload: `{"rootField": "{@msg.globalKey}"}`,
+	}
+
+	data := map[string]interface{}{
+		"globalKey": "global-value",
+		"items": []interface{}{
+			map[string]interface{}{"id": "x", "localField": "local-value"},
+		},
+	}
+	context := newTemplateTestContext(data, "test.subject", time.Now())
+
+	actions, err := processor.processNATSActionWithForEach(action, context)
+	if err != nil {
+		t.Fatalf("processNATSActionWithForEach() error = %v", err)
+	}
+
+	if len(actions) != 1 {
+		t.Fatalf("Expected 1 action, got %d", len(actions))
+	}
+
+	var merged map[string]interface{}
+	if err := json.Unmarshal(actions[0].NATS.RawPayload, &merged); err != nil {
+		t.Fatalf("Failed to parse: %v", err)
+	}
+
+	// Element field (base) should be preserved
+	if merged["localField"] != "local-value" {
+		t.Errorf("Element field not preserved: got %v", merged["localField"])
+	}
+	if merged["id"] != "x" {
+		t.Errorf("Element id not preserved: got %v", merged["id"])
+	}
+	// Overlay should include root message access via @msg
+	if merged["rootField"] != "global-value" {
+		t.Errorf("Root message field not resolved: got %v", merged["rootField"])
+	}
+	// globalKey should NOT be in merged (it's not in the element or overlay)
+	if _, exists := merged["globalKey"]; exists {
+		t.Error("Root-level globalKey should not leak into element-based merge")
+	}
+}
+
+func TestProcessNATSActionWithForEach_Merge_InvalidOverlay(t *testing.T) {
+	processor := newTestProcessor()
+
+	action := &NATSAction{
+		ForEach: "{items}",
+		Subject: "output.{id}",
+		Merge:   true,
+		Payload: `not valid json {id}`,
+	}
+
+	data := map[string]interface{}{
+		"items": []interface{}{
+			map[string]interface{}{"id": "a"},
+			map[string]interface{}{"id": "b"},
+		},
+	}
+	context := newTemplateTestContext(data, "test.subject", time.Now())
+
+	// forEach with invalid overlay should not return a top-level error,
+	// but should track failures per element and return 0 successful actions
+	actions, err := processor.processNATSActionWithForEach(action, context)
+	if err != nil {
+		t.Fatalf("forEach should not return top-level error: %v", err)
+	}
+
+	if len(actions) != 0 {
+		t.Errorf("Expected 0 successful actions for invalid overlay, got %d", len(actions))
+	}
+}
+

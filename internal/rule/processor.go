@@ -329,13 +329,17 @@ func (p *Processor) evaluateRules(rules []*Rule, context *EvaluationContext, tri
 					p.metrics.IncRuleMatches()
 					
 					if action.NATS != nil {
-						if action.NATS.Passthrough {
+						if action.NATS.Merge {
+							p.metrics.IncActionsByType("merge")
+						} else if action.NATS.Passthrough {
 							p.metrics.IncActionsByType("passthrough")
 						} else {
 							p.metrics.IncActionsByType("templated")
 						}
 					} else if action.HTTP != nil {
-						if action.HTTP.Passthrough {
+						if action.HTTP.Merge {
+							p.metrics.IncActionsByType("merge")
+						} else if action.HTTP.Passthrough {
 							p.metrics.IncActionsByType("passthrough")
 						} else {
 							p.metrics.IncActionsByType("templated")
@@ -388,6 +392,7 @@ func (p *Processor) processNATSAction(action *NATSAction, context *EvaluationCon
 
 	result := &NATSAction{
 		Passthrough: action.Passthrough,
+		Merge:       action.Merge,
 	}
 
 	subject, err := p.templater.Execute(action.Subject, context)
@@ -398,6 +403,13 @@ func (p *Processor) processNATSAction(action *NATSAction, context *EvaluationCon
 
 	if action.Passthrough {
 		result.RawPayload = context.RawPayload
+	} else if action.Merge {
+		mergedBytes, err := p.applyMerge(action.Payload, context.Msg, context)
+		if err != nil {
+			return nil, fmt.Errorf("failed to merge payload: %w", err)
+		}
+		result.RawPayload = mergedBytes
+		result.Passthrough = true // signals publisher to use RawPayload
 	} else {
 		payload, err := p.templater.Execute(action.Payload, context)
 		if err != nil {
@@ -484,6 +496,7 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 		// Template the action (reusing the same context)
 		actionResult := &NATSAction{
 			Passthrough: action.Passthrough,
+			Merge:       action.Merge,
 		}
 
 		subject, err := p.templater.Execute(action.Subject, elementContext)
@@ -519,6 +532,23 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 				continue
 			}
 			actionResult.RawPayload = rawPayload
+		} else if action.Merge {
+			mergedBytes, err := p.applyMerge(action.Payload, itemMap, elementContext)
+			if err != nil {
+				p.logger.Error("failed to merge payload for forEach element",
+					"field", action.ForEach,
+					"index", i,
+					"error", err)
+				result.FailedElements++
+				result.Errors = append(result.Errors, ElementError{
+					Index:     i,
+					ErrorType: "merge_payload_failed",
+					Error:     err,
+				})
+				continue
+			}
+			actionResult.RawPayload = mergedBytes
+			actionResult.Passthrough = true // signals publisher to use RawPayload
 		} else {
 			payload, err := p.templater.Execute(action.Payload, elementContext)
 			if err != nil {
@@ -554,7 +584,7 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 
 		actions = append(actions, &Action{NATS: actionResult})
 		result.ProcessedElements++
-		
+
 		p.logger.Debug("forEach element processed successfully",
 			"field", action.ForEach,
 			"index", i,
@@ -597,6 +627,7 @@ func (p *Processor) processHTTPAction(action *HTTPAction, context *EvaluationCon
 
 	result := &HTTPAction{
 		Passthrough: action.Passthrough,
+		Merge:       action.Merge,
 		Retry:       action.Retry,
 	}
 
@@ -614,6 +645,13 @@ func (p *Processor) processHTTPAction(action *HTTPAction, context *EvaluationCon
 
 	if action.Passthrough {
 		result.RawPayload = context.RawPayload
+	} else if action.Merge {
+		mergedBytes, err := p.applyMerge(action.Payload, context.Msg, context)
+		if err != nil {
+			return nil, fmt.Errorf("failed to merge payload: %w", err)
+		}
+		result.RawPayload = mergedBytes
+		result.Passthrough = true // signals publisher to use RawPayload
 	} else {
 		payload, err := p.templater.Execute(action.Payload, context)
 		if err != nil {
@@ -682,6 +720,7 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 		// Template the action (reusing the same context)
 		actionResult := &HTTPAction{
 			Passthrough: action.Passthrough,
+			Merge:       action.Merge,
 			Retry:       action.Retry,
 		}
 
@@ -734,6 +773,23 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 				continue
 			}
 			actionResult.RawPayload = rawPayload
+		} else if action.Merge {
+			mergedBytes, err := p.applyMerge(action.Payload, itemMap, elementContext)
+			if err != nil {
+				p.logger.Error("failed to merge payload for forEach element",
+					"field", action.ForEach,
+					"index", i,
+					"error", err)
+				result.FailedElements++
+				result.Errors = append(result.Errors, ElementError{
+					Index:     i,
+					ErrorType: "merge_payload_failed",
+					Error:     err,
+				})
+				continue
+			}
+			actionResult.RawPayload = mergedBytes
+			actionResult.Passthrough = true // signals publisher to use RawPayload
 		} else {
 			payload, err := p.templater.Execute(action.Payload, elementContext)
 			if err != nil {
@@ -835,6 +891,42 @@ func safeMarshal(v interface{}) ([]byte, error) {
 		return nil, fmt.Errorf("failed to marshal value: %w", err)
 	}
 	return b, nil
+}
+
+// deepMerge merges overlay into base, returning a new map.
+// Overlay values overwrite base values. Nested objects are merged recursively.
+// Arrays in the overlay replace arrays in the base wholesale.
+// The base map is never mutated.
+func deepMerge(base, overlay map[string]interface{}) map[string]interface{} {
+	result := make(map[string]interface{}, len(base)+len(overlay))
+	for k, v := range base {
+		result[k] = v
+	}
+	for k, v := range overlay {
+		if overlayMap, ok := v.(map[string]interface{}); ok {
+			if baseMap, ok := result[k].(map[string]interface{}); ok {
+				result[k] = deepMerge(baseMap, overlayMap)
+				continue
+			}
+		}
+		result[k] = v
+	}
+	return result
+}
+
+// applyMerge templates the overlay payload, parses it as a JSON object, deep-merges
+// it onto base, and returns the resulting JSON bytes.
+func (p *Processor) applyMerge(payloadTemplate string, base map[string]interface{}, context *EvaluationContext) ([]byte, error) {
+	overlayStr, err := p.templater.Execute(payloadTemplate, context)
+	if err != nil {
+		return nil, fmt.Errorf("merge: failed to template overlay: %w", err)
+	}
+	var overlayData map[string]interface{}
+	if err := json.Unmarshal([]byte(overlayStr), &overlayData); err != nil {
+		return nil, fmt.Errorf("merge: overlay is not a valid JSON object: %w", err)
+	}
+	merged := deepMerge(base, overlayData)
+	return safeMarshal(merged)
 }
 
 // ProcessWithSubject is kept for backward compatibility.

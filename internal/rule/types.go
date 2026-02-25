@@ -42,6 +42,7 @@ type NATSAction struct {
 	Subject     string            `json:"subject" yaml:"subject"`
 	Payload     string            `json:"payload,omitempty" yaml:"payload,omitempty"`
 	Passthrough bool              `json:"passthrough,omitempty" yaml:"passthrough,omitempty"`
+	Merge       bool              `json:"merge,omitempty" yaml:"merge,omitempty"`
 	Headers     map[string]string `json:"headers,omitempty" yaml:"headers,omitempty"`
 	RawPayload  []byte            `json:"-" yaml:"-"` // Populated during processing
 	
@@ -57,6 +58,7 @@ type HTTPAction struct {
 	Method      string            `json:"method" yaml:"method"`
 	Payload     string            `json:"payload,omitempty" yaml:"payload,omitempty"`
 	Passthrough bool              `json:"passthrough,omitempty" yaml:"passthrough,omitempty"`
+	Merge       bool              `json:"merge,omitempty" yaml:"merge,omitempty"`
 	Headers     map[string]string `json:"headers,omitempty" yaml:"headers,omitempty"`
 	RawPayload  []byte            `json:"-" yaml:"-"` // Populated during processing
 	Retry       *RetryConfig      `json:"retry,omitempty" yaml:"retry,omitempty"`

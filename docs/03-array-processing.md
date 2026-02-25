@@ -85,6 +85,22 @@ action:
 3. For each matching element, generates one action
 4. Templates subject/payload using fields from that element
 
+**With Merge** (enrich each element):
+```yaml
+action:
+  nats:
+    forEach: "{notifications}"
+    subject: "enriched.{id}"
+    merge: true
+    payload: |
+      {
+        "processed": true,
+        "batch_id": "{@msg.batchId}"
+      }
+```
+
+When `merge: true` is used with `forEach`, each array element is the merge base. The overlay is merged onto the element, preserving all element fields and adding the overlay fields. Use `{@msg.field}` in the overlay to pull values from the root message.
+
 ## Template Context: The `@msg` Prefix
 
 When using `forEach`, template variables can refer to either:

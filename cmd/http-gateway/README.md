@@ -134,6 +134,29 @@ This example processes a Stripe webhook containing multiple events, generating o
         }
 ```
 
+### Example: Webhook Enrichment with `merge`
+
+Enrich incoming webhook payloads with metadata before publishing to NATS, without re-specifying every field:
+
+```yaml
+- trigger:
+    http:
+      path: "/webhooks/sensors"
+      method: "POST"
+  action:
+    nats:
+      subject: "sensors.enriched.{@path.1}"
+      merge: true
+      payload: |
+        {
+          "received_at": "{@timestamp()}",
+          "source_path": "{@path}",
+          "event_id": "{@uuid7()}"
+        }
+```
+
+With `merge: true`, the entire webhook body is preserved and the overlay fields are added. See [Core Concepts](./../../docs/01-core-concepts.md) for full merge semantics.
+
 ## Architecture
 
 ```
