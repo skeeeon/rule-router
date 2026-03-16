@@ -168,6 +168,12 @@ func (app *RouterApp) setupSubscriptions() error {
 	defer cancel()
 
 	for _, subject := range subjects {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout during subscription setup for subject '%s'", subject)
+		default:
+		}
+
 		app.logger.Debug("setting up subscription for subject", "subject", subject)
 
 		if err := app.broker.CreateConsumerForSubject(subject); err != nil {
@@ -179,12 +185,6 @@ func (app *RouterApp) setupSubscriptions() error {
 		}
 
 		app.logger.Info("subscription configured", "subject", subject)
-
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timeout during subscription setup")
-		default:
-		}
 	}
 
 	app.logger.Info("all subscriptions configured successfully", "subscriptionCount", len(subjects))

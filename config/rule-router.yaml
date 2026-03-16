@@ -18,8 +18,8 @@ nats:
   # Option 2: Token Authentication
   # token: "your-nats-token"
   
-  # Option 3: NKey Authentication  
-  # nkey: "your-nkey-here"
+  # Option 3: NKey Authentication (path to seed file)
+  # nkeySeedFile: "/path/to/nkey.seed"
   
   # Option 4: JWT with .creds file (recommended for production)
   # credsFile: "/etc/nats/creds/rule-router.creds"

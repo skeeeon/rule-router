@@ -195,7 +195,7 @@ type NATSConfig struct {
 	Username  string   `json:"username" yaml:"username" mapstructure:"username"`
 	Password  string   `json:"password" yaml:"password" mapstructure:"password"`
 	Token     string   `json:"token" yaml:"token" mapstructure:"token"`
-	NKey      string   `json:"nkey" yaml:"nkey" mapstructure:"nkey"`
+	NKeySeedFile string `json:"nkeySeedFile" yaml:"nkeySeedFile" mapstructure:"nkeySeedFile"`
 	CredsFile string   `json:"credsFile" yaml:"credsFile" mapstructure:"credsFile"`
 
 	TLS struct {
@@ -486,7 +486,7 @@ func validateConfig(cfg *Config) error {
 	if cfg.NATS.Token != "" {
 		authCount++
 	}
-	if cfg.NATS.NKey != "" {
+	if cfg.NATS.NKeySeedFile != "" {
 		authCount++
 	}
 	if cfg.NATS.CredsFile != "" {

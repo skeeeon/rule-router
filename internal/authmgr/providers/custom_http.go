@@ -82,7 +82,7 @@ func (p *CustomHTTPProvider) GetToken(ctx context.Context) (string, error) {
 
 	// Check status code
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return "", fmt.Errorf("authentication failed with status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 

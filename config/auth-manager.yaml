@@ -14,7 +14,7 @@ nats:
   # username: "auth-manager"
   # password: "secret"
   # token: "mytoken"
-  # nkey: "seed..."
+  # nkeySeedFile: "/path/to/nkey.seed"
 
   # Optional TLS configuration
   # tls:

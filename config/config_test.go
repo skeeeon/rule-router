@@ -237,7 +237,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "multiple auth methods - token and nkey",
 			modify: func(cfg *Config) {
 				cfg.NATS.Token = "token"
-				cfg.NATS.NKey = "nkey"
+				cfg.NATS.NKeySeedFile = "nkey"
 			},
 			wantErr: "only one NATS authentication method",
 		},

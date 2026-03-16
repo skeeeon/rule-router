@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -187,7 +188,7 @@ func (s *InboundServer) startWorkers(ctx context.Context) {
 						s.logger.Info("inbound worker stopped", "workerID", workerID)
 						return
 					}
-					s.processWebhook(job.path, job.method, job.body, job.headers)
+					s.processWebhookWithRecovery(job.path, job.method, job.body, job.headers, workerID)
 				}
 			}
 		}()
@@ -288,6 +289,27 @@ func (s *InboundServer) webhookHandler(path string) http.HandlerFunc {
 			s.metrics.ObserveHTTPRequestDuration(path, r.Method, time.Since(start).Seconds())
 		}
 	}
+}
+
+// processWebhookWithRecovery wraps processWebhook with panic recovery.
+// This ensures a single malformed request cannot crash the entire worker.
+func (s *InboundServer) processWebhookWithRecovery(path, method string, body []byte, headers map[string]string, workerID int) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.Error("panic recovered in inbound HTTP worker",
+				"panic", r,
+				"path", path,
+				"method", method,
+				"workerID", workerID,
+				"stack", string(debug.Stack()))
+
+			if s.metrics != nil {
+				s.metrics.IncMessagesTotal("error")
+			}
+		}
+	}()
+
+	s.processWebhook(path, method, body, headers)
 }
 
 // processWebhook processes the webhook and publishes to NATS

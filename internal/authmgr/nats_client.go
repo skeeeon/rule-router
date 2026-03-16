@@ -134,9 +134,13 @@ func buildNATSOptions(cfg *NATSConfig, log *logger.Logger) ([]nats.Option, error
 	if cfg.CredsFile != "" {
 		log.Info("using NATS creds file authentication", "credsFile", cfg.CredsFile)
 		opts = append(opts, nats.UserCredentials(cfg.CredsFile))
-	} else if cfg.NKey != "" {
-		log.Info("using NATS NKey authentication")
-		opts = append(opts, nats.Nkey(cfg.NKey, nil))
+	} else if cfg.NKeySeedFile != "" {
+		log.Info("using NATS NKey authentication", "seedFile", cfg.NKeySeedFile)
+		nkeyOpt, err := nats.NkeyOptionFromSeed(cfg.NKeySeedFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load NKey seed file: %w", err)
+		}
+		opts = append(opts, nkeyOpt)
 	} else if cfg.Token != "" {
 		log.Info("using NATS token authentication")
 		opts = append(opts, nats.Token(cfg.Token))

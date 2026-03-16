@@ -35,7 +35,7 @@ nats:
   # username: "myuser"
   # password: "mypassword"
   # token: "mytoken"
-  # nkey: "seed..."
+  # nkeySeedFile: "/path/to/nkey.seed"
   # credsFile: "/path/to/user.creds"
 
   # JetStream Consumer Configuration
