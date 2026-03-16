@@ -32,6 +32,7 @@ type Processor struct {
 	templater        *TemplateEngine
 	sigVerification  *SignatureVerification
 	maxForEachIters  int // Configurable forEach iteration limit
+	throttle         *ThrottleManager
 }
 
 type ProcessorStats struct {
@@ -123,6 +124,7 @@ func NewProcessor(log *logger.Logger, metrics *metrics.Metrics, kvCtx *KVContext
 		templater:       NewTemplateEngine(log),
 		sigVerification: sigVerification,
 		maxForEachIters: DefaultMaxForEachIterations,
+		throttle:        NewThrottleManager(),
 	}
 
 	if kvCtx != nil {
@@ -159,8 +161,9 @@ func (p *Processor) LoadRules(rules []Rule) error {
 	
 	for i := range rules {
 		rule := &rules[i]
+		rule.index = i
 		p.allRules = append(p.allRules, rule)
-		
+
 		if rule.Trigger.NATS != nil {
 			p.index.Add(rule)
 			natsCount++
@@ -313,7 +316,33 @@ func (p *Processor) evaluateRules(rules []*Rule, context *EvaluationContext, tri
 	for _, rule := range rules {
 		p.logger.Debug("evaluating rule", "triggerType", triggerType)
 
+		// Trigger debounce: skip rule evaluation entirely if suppressed
+		if cfg := getTriggerDebounce(rule); cfg != nil {
+			key := ThrottleKey("t", rule.index, p.resolveThrottleKey(cfg, context, triggerType))
+			window, _ := time.ParseDuration(cfg.Window) // pre-validated by loader
+			if !p.throttle.Allow(key, window) {
+				p.logger.Debug("trigger debounce suppressed rule", "ruleIndex", rule.index, "key", key)
+				if p.metrics != nil {
+					p.metrics.IncThrottleSuppressed("trigger")
+				}
+				continue
+			}
+		}
+
 		if rule.Conditions == nil || p.evaluator.Evaluate(rule.Conditions, context) {
+			// Action debounce: skip action execution if suppressed
+			if cfg := getActionDebounce(rule); cfg != nil {
+				key := ThrottleKey("a", rule.index, p.resolveThrottleKey(cfg, context, triggerType))
+				window, _ := time.ParseDuration(cfg.Window) // pre-validated by loader
+				if !p.throttle.Allow(key, window) {
+					p.logger.Debug("action debounce suppressed rule", "ruleIndex", rule.index, "key", key)
+					if p.metrics != nil {
+						p.metrics.IncThrottleSuppressed("action")
+					}
+					continue
+				}
+			}
+
 			actionResults, err := p.processAction(&rule.Action, context)
 			if err != nil {
 				if p.metrics != nil {
@@ -322,12 +351,12 @@ func (p *Processor) evaluateRules(rules []*Rule, context *EvaluationContext, tri
 				p.logger.Error("failed to process action", "error", err, "triggerType", triggerType)
 				continue
 			}
-			
+
 			for _, action := range actionResults {
 				if p.metrics != nil {
 					p.metrics.IncTemplateOpsTotal("success")
 					p.metrics.IncRuleMatches()
-					
+
 					if action.NATS != nil {
 						if action.NATS.Merge {
 							p.metrics.IncActionsByType("merge")
@@ -347,7 +376,7 @@ func (p *Processor) evaluateRules(rules []*Rule, context *EvaluationContext, tri
 					}
 				}
 			}
-			
+
 			actions = append(actions, actionResults...)
 		}
 	}
@@ -357,6 +386,50 @@ func (p *Processor) evaluateRules(rules []*Rule, context *EvaluationContext, tri
 		atomic.AddUint64(&p.stats.Matched, 1)
 	}
 	return actions, nil
+}
+
+// getTriggerDebounce returns the debounce config from a rule's trigger, or nil.
+func getTriggerDebounce(rule *Rule) *DebounceConfig {
+	if rule.Trigger.NATS != nil {
+		return rule.Trigger.NATS.Debounce
+	}
+	if rule.Trigger.HTTP != nil {
+		return rule.Trigger.HTTP.Debounce
+	}
+	return nil
+}
+
+// getActionDebounce returns the debounce config from a rule's action, or nil.
+func getActionDebounce(rule *Rule) *DebounceConfig {
+	if rule.Action.NATS != nil {
+		return rule.Action.NATS.Debounce
+	}
+	if rule.Action.HTTP != nil {
+		return rule.Action.HTTP.Debounce
+	}
+	return nil
+}
+
+// resolveThrottleKey resolves the debounce key template against the evaluation context.
+// Defaults to the full NATS subject or HTTP path when no key is configured.
+func (p *Processor) resolveThrottleKey(cfg *DebounceConfig, ctx *EvaluationContext, triggerType string) string {
+	if cfg.Key == "" {
+		if triggerType == "nats" && ctx.Subject != nil {
+			return ctx.Subject.Full
+		}
+		if triggerType == "http" && ctx.HTTP != nil {
+			return ctx.HTTP.Path
+		}
+		return ""
+	}
+
+	resolved, err := p.templater.Execute(cfg.Key, ctx)
+	if err != nil {
+		p.logger.Warn("failed to resolve throttle key template, using literal",
+			"template", cfg.Key, "error", err)
+		return cfg.Key
+	}
+	return resolved
 }
 
 // processAction processes an action (NATS or HTTP)

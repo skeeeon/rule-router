@@ -1,0 +1,39 @@
+# templates/nats-debounce.yaml
+#
+# A rule with debounce/throttle on both trigger and action.
+# Uses fire-first semantics: the first message is processed immediately,
+# subsequent messages within the window are suppressed.
+#
+# Example Use Case: Alerting on high temperature readings, but limiting
+# evaluation to once every 5 seconds and alerts to once every 30 seconds per room.
+#
+- trigger:
+    nats:
+      # The subject to listen on. Supports wildcards (*, >).
+      subject: "sensors.temperature.>"
+      debounce:
+        # Skip rule evaluation entirely for 5 seconds after the first message.
+        window: "5s"
+        # Optional key for grouping. Defaults to the full subject if omitted.
+        # Use template syntax to debounce per sub-group, e.g., per room.
+        # key: "{@subject.2}"
+  conditions:
+    operator: and
+    items:
+      - field: "{temperature}"
+        operator: gt
+        value: 30
+  action:
+    nats:
+      subject: "alerts.high_temp.{@subject.2}"
+      payload: |
+        {
+          "alert": "High temperature detected!",
+          "temperature": {temperature},
+          "location": "{@subject.2}",
+          "timestamp": "{@timestamp()}"
+        }
+      debounce:
+        # Suppress duplicate alerts for 30 seconds per room.
+        window: "30s"
+        key: "{@subject.2}"

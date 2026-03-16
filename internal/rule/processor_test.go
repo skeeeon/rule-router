@@ -2060,3 +2060,313 @@ func TestProcessNATSActionWithForEach_Merge_InvalidOverlay(t *testing.T) {
 	}
 }
 
+// ========================================
+// DEBOUNCE / THROTTLE TESTS
+// ========================================
+
+func TestProcessor_TriggerDebounce_NATS(t *testing.T) {
+	processor := newTestProcessor()
+	rules := []Rule{
+		{
+			Trigger: Trigger{
+				NATS: &NATSTrigger{
+					Subject:  "sensors.temp",
+					Debounce: &DebounceConfig{Window: "1s"},
+				},
+			},
+			Action: Action{
+				NATS: &NATSAction{
+					Subject: "alerts.temp",
+					Payload: `{"alert": true}`,
+				},
+			},
+		},
+	}
+	processor.LoadRules(rules)
+
+	payload := []byte(`{"temperature": 30}`)
+
+	// First message should produce actions
+	actions1, err := processor.ProcessNATS("sensors.temp", payload, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(actions1) == 0 {
+		t.Fatal("first message should produce actions")
+	}
+
+	// Second message within window should be suppressed
+	actions2, err := processor.ProcessNATS("sensors.temp", payload, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(actions2) != 0 {
+		t.Fatalf("second message within window should be suppressed, got %d actions", len(actions2))
+	}
+}
+
+func TestProcessor_TriggerDebounce_HTTP(t *testing.T) {
+	processor := newTestProcessor()
+	rules := []Rule{
+		{
+			Trigger: Trigger{
+				HTTP: &HTTPTrigger{
+					Path:     "/webhooks/github",
+					Method:   "POST",
+					Debounce: &DebounceConfig{Window: "1s"},
+				},
+			},
+			Action: Action{
+				NATS: &NATSAction{
+					Subject: "github.events",
+					Payload: `{"event": true}`,
+				},
+			},
+		},
+	}
+	processor.LoadRules(rules)
+
+	payload := []byte(`{"action": "push"}`)
+
+	actions1, err := processor.ProcessHTTP("/webhooks/github", "POST", payload, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(actions1) == 0 {
+		t.Fatal("first message should produce actions")
+	}
+
+	actions2, err := processor.ProcessHTTP("/webhooks/github", "POST", payload, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(actions2) != 0 {
+		t.Fatalf("second message within window should be suppressed, got %d actions", len(actions2))
+	}
+}
+
+func TestProcessor_ActionDebounce(t *testing.T) {
+	processor := newTestProcessor()
+	rules := []Rule{
+		{
+			Trigger: Trigger{
+				NATS: &NATSTrigger{Subject: "sensors.temp"},
+			},
+			Conditions: &Conditions{
+				Operator: "and",
+				Items: []Condition{
+					{Field: "{temperature}", Operator: "gt", Value: 25},
+				},
+			},
+			Action: Action{
+				NATS: &NATSAction{
+					Subject:  "alerts.temp",
+					Payload:  `{"alert": true}`,
+					Debounce: &DebounceConfig{Window: "1s"},
+				},
+			},
+		},
+	}
+	processor.LoadRules(rules)
+
+	payload := []byte(`{"temperature": 30}`)
+
+	// First message passes conditions and action debounce
+	actions1, err := processor.ProcessNATS("sensors.temp", payload, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(actions1) == 0 {
+		t.Fatal("first message should produce actions")
+	}
+
+	// Second message passes conditions but action debounce suppresses
+	actions2, err := processor.ProcessNATS("sensors.temp", payload, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(actions2) != 0 {
+		t.Fatalf("action debounce should suppress second message, got %d actions", len(actions2))
+	}
+}
+
+func TestProcessor_Debounce_DefaultKey_PerSubject(t *testing.T) {
+	processor := newTestProcessor()
+	rules := []Rule{
+		{
+			Trigger: Trigger{
+				NATS: &NATSTrigger{
+					Subject:  "sensors.>",
+					Debounce: &DebounceConfig{Window: "1s"},
+				},
+			},
+			Action: Action{
+				NATS: &NATSAction{
+					Subject: "alerts",
+					Payload: `{}`,
+				},
+			},
+		},
+	}
+	processor.LoadRules(rules)
+
+	payload := []byte(`{}`)
+
+	// First message on subject A
+	actions1, _ := processor.ProcessNATS("sensors.room1", payload, nil)
+	if len(actions1) == 0 {
+		t.Fatal("first message on room1 should produce actions")
+	}
+
+	// First message on subject B (different default key)
+	actions2, _ := processor.ProcessNATS("sensors.room2", payload, nil)
+	if len(actions2) == 0 {
+		t.Fatal("first message on room2 should produce actions (different key)")
+	}
+
+	// Second message on subject A (suppressed)
+	actions3, _ := processor.ProcessNATS("sensors.room1", payload, nil)
+	if len(actions3) != 0 {
+		t.Fatal("second message on room1 should be suppressed")
+	}
+}
+
+func TestProcessor_Debounce_TemplateKey(t *testing.T) {
+	processor := newTestProcessor()
+	rules := []Rule{
+		{
+			Trigger: Trigger{
+				NATS: &NATSTrigger{
+					Subject:  "sensors.temp",
+					Debounce: &DebounceConfig{Window: "1s", Key: "{sensor_id}"},
+				},
+			},
+			Action: Action{
+				NATS: &NATSAction{
+					Subject: "alerts.temp",
+					Payload: `{}`,
+				},
+			},
+		},
+	}
+	processor.LoadRules(rules)
+
+	// Sensor A
+	actions1, _ := processor.ProcessNATS("sensors.temp", []byte(`{"sensor_id": "A"}`), nil)
+	if len(actions1) == 0 {
+		t.Fatal("first message from sensor A should produce actions")
+	}
+
+	// Sensor B on same subject (different template key)
+	actions2, _ := processor.ProcessNATS("sensors.temp", []byte(`{"sensor_id": "B"}`), nil)
+	if len(actions2) == 0 {
+		t.Fatal("first message from sensor B should produce actions")
+	}
+
+	// Sensor A again (suppressed)
+	actions3, _ := processor.ProcessNATS("sensors.temp", []byte(`{"sensor_id": "A"}`), nil)
+	if len(actions3) != 0 {
+		t.Fatal("second message from sensor A should be suppressed")
+	}
+}
+
+func TestProcessor_Debounce_IndependentRules(t *testing.T) {
+	processor := newTestProcessor()
+	rules := []Rule{
+		{
+			Trigger: Trigger{
+				NATS: &NATSTrigger{
+					Subject:  "sensors.temp",
+					Debounce: &DebounceConfig{Window: "1s"},
+				},
+			},
+			Action: Action{
+				NATS: &NATSAction{Subject: "alerts.ruleA", Payload: `{}`},
+			},
+		},
+		{
+			Trigger: Trigger{
+				NATS: &NATSTrigger{
+					Subject:  "sensors.temp",
+					Debounce: &DebounceConfig{Window: "1s"},
+				},
+			},
+			Action: Action{
+				NATS: &NATSAction{Subject: "alerts.ruleB", Payload: `{}`},
+			},
+		},
+	}
+	processor.LoadRules(rules)
+
+	payload := []byte(`{}`)
+
+	// First message should fire both rules
+	actions1, _ := processor.ProcessNATS("sensors.temp", payload, nil)
+	if len(actions1) != 2 {
+		t.Fatalf("expected 2 actions (one per rule), got %d", len(actions1))
+	}
+
+	// Second message should suppress both
+	actions2, _ := processor.ProcessNATS("sensors.temp", payload, nil)
+	if len(actions2) != 0 {
+		t.Fatalf("expected 0 actions (both suppressed), got %d", len(actions2))
+	}
+}
+
+func TestProcessor_Debounce_NoDebounceUnaffected(t *testing.T) {
+	processor := newTestProcessor()
+	rules := []Rule{
+		{
+			Trigger: Trigger{
+				NATS: &NATSTrigger{Subject: "sensors.temp"},
+			},
+			Action: Action{
+				NATS: &NATSAction{Subject: "alerts.temp", Payload: `{}`},
+			},
+		},
+	}
+	processor.LoadRules(rules)
+
+	payload := []byte(`{}`)
+
+	// Both messages should produce actions (no debounce)
+	actions1, _ := processor.ProcessNATS("sensors.temp", payload, nil)
+	actions2, _ := processor.ProcessNATS("sensors.temp", payload, nil)
+
+	if len(actions1) == 0 || len(actions2) == 0 {
+		t.Fatal("rules without debounce should always produce actions")
+	}
+}
+
+func TestProcessor_Debounce_WindowExpiry(t *testing.T) {
+	processor := newTestProcessor()
+	rules := []Rule{
+		{
+			Trigger: Trigger{
+				NATS: &NATSTrigger{
+					Subject:  "sensors.temp",
+					Debounce: &DebounceConfig{Window: "50ms"},
+				},
+			},
+			Action: Action{
+				NATS: &NATSAction{Subject: "alerts.temp", Payload: `{}`},
+			},
+		},
+	}
+	processor.LoadRules(rules)
+
+	payload := []byte(`{}`)
+
+	actions1, _ := processor.ProcessNATS("sensors.temp", payload, nil)
+	if len(actions1) == 0 {
+		t.Fatal("first message should produce actions")
+	}
+
+	time.Sleep(60 * time.Millisecond)
+
+	actions2, _ := processor.ProcessNATS("sensors.temp", payload, nil)
+	if len(actions2) == 0 {
+		t.Fatal("message after window expiry should produce actions")
+	}
+}
+

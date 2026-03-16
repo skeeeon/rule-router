@@ -7,11 +7,22 @@ import (
 	"strings"
 )
 
+// DebounceConfig defines throttle settings for triggers or actions.
+// Uses fire-first semantics: allows the first message through immediately,
+// then suppresses subsequent messages for the duration of the window.
+type DebounceConfig struct {
+	Window string `json:"window" yaml:"window"`             // Duration string: "5s", "1m", etc.
+	Key    string `json:"key,omitempty" yaml:"key,omitempty"` // Template key: "{@subject}", "{sensor_id}", etc. Defaults to full subject/path.
+}
+
 // Rule represents a generic rule with trigger and action
 type Rule struct {
 	Trigger    Trigger     `json:"trigger" yaml:"trigger"`
 	Conditions *Conditions `json:"conditions,omitempty" yaml:"conditions,omitempty"`
 	Action     Action      `json:"action" yaml:"action"`
+
+	// index is assigned during LoadRules for throttle key scoping (not serialized)
+	index int
 }
 
 // Trigger defines what initiates rule evaluation (NATS or HTTP)
@@ -22,13 +33,15 @@ type Trigger struct {
 
 // NATSTrigger represents a NATS subject-based trigger
 type NATSTrigger struct {
-	Subject string `json:"subject" yaml:"subject"`
+	Subject  string          `json:"subject" yaml:"subject"`
+	Debounce *DebounceConfig `json:"debounce,omitempty" yaml:"debounce,omitempty"`
 }
 
 // HTTPTrigger represents an HTTP endpoint-based trigger
 type HTTPTrigger struct {
-	Path   string `json:"path" yaml:"path"`
-	Method string `json:"method,omitempty" yaml:"method,omitempty"` // Optional, defaults to all methods
+	Path     string          `json:"path" yaml:"path"`
+	Method   string          `json:"method,omitempty" yaml:"method,omitempty"` // Optional, defaults to all methods
+	Debounce *DebounceConfig `json:"debounce,omitempty" yaml:"debounce,omitempty"`
 }
 
 // Action defines what happens when rule matches (NATS or HTTP)
@@ -48,8 +61,9 @@ type NATSAction struct {
 	
 	// Array iteration fields for forEach functionality
 	// ForEach must use template syntax: "{arrayField}" or "{nested.array}" or "{@items}"
-	ForEach string      `json:"forEach,omitempty" yaml:"forEach,omitempty"`
-	Filter  *Conditions `json:"filter,omitempty" yaml:"filter,omitempty"`
+	ForEach  string          `json:"forEach,omitempty" yaml:"forEach,omitempty"`
+	Filter   *Conditions     `json:"filter,omitempty" yaml:"filter,omitempty"`
+	Debounce *DebounceConfig `json:"debounce,omitempty" yaml:"debounce,omitempty"`
 }
 
 // HTTPAction represents making an HTTP request
@@ -65,8 +79,9 @@ type HTTPAction struct {
 	
 	// Array iteration fields for forEach functionality
 	// ForEach must use template syntax: "{arrayField}" or "{nested.array}" or "{@items}"
-	ForEach string      `json:"forEach,omitempty" yaml:"forEach,omitempty"`
-	Filter  *Conditions `json:"filter,omitempty" yaml:"filter,omitempty"`
+	ForEach  string          `json:"forEach,omitempty" yaml:"forEach,omitempty"`
+	Filter   *Conditions     `json:"filter,omitempty" yaml:"filter,omitempty"`
+	Debounce *DebounceConfig `json:"debounce,omitempty" yaml:"debounce,omitempty"`
 }
 
 // RetryConfig defines retry behavior for HTTP actions

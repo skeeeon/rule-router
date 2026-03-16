@@ -134,6 +134,26 @@ This example processes a Stripe webhook containing multiple events, generating o
         }
 ```
 
+### Example: Debounce / Throttle
+
+Throttle duplicate webhook submissions per endpoint, allowing one every 10 seconds:
+
+```yaml
+- trigger:
+    http:
+      path: "/webhooks/devices"
+      method: "POST"
+      debounce:
+        window: "10s"
+        key: "{@path}"
+  action:
+    nats:
+      subject: "webhooks.devices.{device_id}"
+      passthrough: true
+```
+
+See [Core Concepts](./../../docs/01-core-concepts.md) for full debounce semantics.
+
 ### Example: Webhook Enrichment with `merge`
 
 Enrich incoming webhook payloads with metadata before publishing to NATS, without re-specifying every field:
@@ -200,6 +220,10 @@ http_outbound_duration_seconds{url="https://api.example.com"}
 # Array Operations
 forEach_iterations_total{rule_file="batch_webhook"}
 forEach_actions_generated_total{rule_file="batch_webhook"}
+
+# Throttle
+throttle_suppressed_total{phase="trigger"}
+throttle_suppressed_total{phase="action"}
 ```
 
 ## Testing

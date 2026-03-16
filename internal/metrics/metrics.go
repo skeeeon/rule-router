@@ -43,6 +43,9 @@ type Metrics struct {
 	forEachElementErrors    *prometheus.CounterVec
 	forEachDuration         *prometheus.HistogramVec
 
+	// Throttle metrics (shared)
+	throttleSuppressedTotal *prometheus.CounterVec
+
 	// Array operator metrics (shared)
 	arrayOperatorEvaluations *prometheus.CounterVec
 
@@ -212,6 +215,15 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 			[]string{"rule_file"},
 		),
 
+		// Throttle metrics
+		throttleSuppressedTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "throttle_suppressed_total",
+				Help: "Total number of messages suppressed by per-rule throttle",
+			},
+			[]string{"phase"},
+		),
+
 		// Array operator metrics
 		arrayOperatorEvaluations: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
@@ -292,6 +304,7 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 		m.forEachActionsGenerated,
 		m.forEachElementErrors,
 		m.forEachDuration,
+		m.throttleSuppressedTotal,
 		m.arrayOperatorEvaluations,
 		m.goroutines,
 		m.memoryBytes,
@@ -407,6 +420,11 @@ func (m *Metrics) IncForEachElementErrors(ruleFile, errorType string) {
 
 func (m *Metrics) ObserveForEachDuration(ruleFile string, seconds float64) {
 	m.forEachDuration.WithLabelValues(ruleFile).Observe(seconds)
+}
+
+// Throttle metrics
+func (m *Metrics) IncThrottleSuppressed(phase string) {
+	m.throttleSuppressedTotal.WithLabelValues(phase).Inc()
 }
 
 // Array operator metrics

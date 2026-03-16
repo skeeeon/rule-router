@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0] - 2026-03-16
+- Added optional per-rule debounce/throttle for triggers and actions
+- Fire-first semantics: first message processed immediately, subsequent messages suppressed for the window duration
+- Configurable time window (`debounce.window`) and template-based key (`debounce.key`) on NATS/HTTP triggers and actions
+- Per-rule isolation via composite throttle keys prevents cross-rule interference
+- New `throttle_suppressed_total` Prometheus metric with phase label (trigger/action)
+
 ## [0.5.0] - 2026-02-24
 - Added `merge: true` action payload mode for NATS and HTTP actions
 - Deep-merges a templated overlay onto the original message, preserving all existing fields
@@ -43,3 +50,4 @@
 [0.3.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.3.0
 [0.4.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.4.0
 [0.5.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.5.0
+[0.6.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.6.0

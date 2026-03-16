@@ -264,6 +264,82 @@ Given an input message `{"customer_id": "c1", "amount": 99.50, "items": [...]}`,
 - If both `passthrough` and `merge` are set, `passthrough` wins
 - In `forEach` context, the merge base is the current array element (use `{@msg.field}` to pull root fields into the overlay)
 
+## 4. Debounce / Throttle
+
+Rules support an optional `debounce` block on triggers and/or actions to suppress rapid-fire processing. It uses **fire-first** semantics: the first message is processed immediately, and subsequent messages within the `window` are suppressed.
+
+### Trigger Debounce
+
+Skips rule evaluation entirely for the duration of the window. Suppressed messages are still ACKed (not redelivered).
+
+```yaml
+- trigger:
+    nats:
+      subject: "sensors.temperature.>"
+      debounce:
+        window: "5s"              # Suppress for 5 seconds after first message
+        key: "{@subject}"         # Optional. Defaults to full subject/path.
+  action:
+    nats:
+      subject: "alerts.temperature"
+      payload: '{"temp": {temperature}}'
+```
+
+### Action Debounce
+
+Conditions are still evaluated (the rule "matches"), but action execution is suppressed within the window.
+
+```yaml
+- trigger:
+    nats:
+      subject: "sensors.temperature.>"
+  conditions:
+    operator: and
+    items:
+      - field: "{temperature}"
+        operator: gt
+        value: 30
+  action:
+    nats:
+      subject: "alerts.high_temp"
+      payload: '{"alert": true, "temp": {temperature}}'
+      debounce:
+        window: "30s"
+        key: "{@subject.2}"     # Debounce per room (e.g., "room1")
+```
+
+### Debounce Key
+
+The `key` field controls what gets debounced independently. It supports template syntax for grouping:
+
+| Key | Behavior |
+|-----|----------|
+| *(omitted)* | Defaults to the full NATS subject or HTTP path |
+| `"{@subject}"` | Same as default for NATS triggers |
+| `"{@subject.2}"` | Debounce per subject token (e.g., per room) |
+| `"{sensor_id}"` | Debounce per message field value |
+| `"{@path.1}"` | Debounce per HTTP path segment |
+
+Each rule maintains its own independent debounce state, so two rules on the same subject never interfere with each other.
+
+### Using Both Together
+
+Trigger and action debounce can be combined on a single rule:
+
+```yaml
+- trigger:
+    nats:
+      subject: "sensors.temperature.>"
+      debounce:
+        window: "5s"           # Don't evaluate more than once per 5s
+  action:
+    nats:
+      subject: "alerts.high_temp"
+      payload: '{"alert": true}'
+      debounce:
+        window: "30s"          # Don't fire more than one alert per 30s
+```
+
 ## Environment Variables
 
 The rule engine supports environment variable expansion for static configuration values using `${VAR_NAME}` syntax. This enables secure secret management and environment-specific configuration without hardcoding values in rule files.

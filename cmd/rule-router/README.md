@@ -131,6 +131,33 @@ This rule processes a batch of events, generating one new message for each "crit
         }
 ```
 
+### Example: Debounce / Throttle
+
+Suppress rapid-fire alerts per room, allowing one alert every 30 seconds:
+
+```yaml
+- trigger:
+    nats:
+      subject: "sensors.temperature.>"
+      debounce:
+        window: "5s"
+  conditions:
+    operator: and
+    items:
+      - field: "{temperature}"
+        operator: gt
+        value: 30
+  action:
+    nats:
+      subject: "alerts.high_temp"
+      payload: '{"alert": true, "temp": {temperature}}'
+      debounce:
+        window: "30s"
+        key: "{@subject.2}"
+```
+
+See [Core Concepts](./../../docs/01-core-concepts.md) for full debounce semantics.
+
 ### Example: Message Enrichment with `merge`
 
 This rule enriches incoming orders with customer data from a KV store, preserving all original fields:
@@ -177,5 +204,6 @@ The rule-router exposes Prometheus metrics on port `:2112` (configurable).
 *   `rule_matches_total`
 *   `actions_total{status="success|error"}`
 *   `forEach_iterations_total{rule_file="batch_notifications"}`
+*   `throttle_suppressed_total{phase="trigger|action"}`
 *   `kv_cache_hits_total` / `kv_cache_misses_total`
 *   `nats_connection_status`

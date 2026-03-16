@@ -1638,6 +1638,177 @@ func TestRealWorldScenario_BatchNotifications(t *testing.T) {
 	}
 }
 
+// ========================================
+// DEBOUNCE VALIDATION TESTS
+// ========================================
+
+func TestDebounce_Validation(t *testing.T) {
+	tests := []struct {
+		name        string
+		ruleContent string
+		shouldPass  bool
+		errMsg      string
+	}{
+		{
+			name: "valid trigger debounce on NATS",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: sensors.temperature.>
+      debounce:
+        window: "5s"
+        key: "{@subject}"
+  action:
+    nats:
+      subject: alerts.temperature
+      payload: '{"temp": "{temperature}"}'`,
+			shouldPass: true,
+		},
+		{
+			name: "valid trigger debounce on HTTP",
+			ruleContent: `
+- trigger:
+    http:
+      path: /webhooks/github
+      method: POST
+      debounce:
+        window: "10s"
+  action:
+    nats:
+      subject: github.events
+      passthrough: true`,
+			shouldPass: true,
+		},
+		{
+			name: "valid action debounce on NATS action",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: sensors.temperature.>
+  action:
+    nats:
+      subject: alerts.temperature
+      payload: '{"temp": "{temperature}"}'
+      debounce:
+        window: "30s"
+        key: "{@subject.2}"`,
+			shouldPass: true,
+		},
+		{
+			name: "valid action debounce on HTTP action",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: alerts.critical.>
+  action:
+    http:
+      url: https://api.pagerduty.com/incidents
+      method: POST
+      payload: '{"alert": "{alert_message}"}'
+      debounce:
+        window: "1m"`,
+			shouldPass: true,
+		},
+		{
+			name: "valid trigger and action debounce together",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: sensors.temperature.>
+      debounce:
+        window: "5s"
+  action:
+    nats:
+      subject: alerts.temperature
+      payload: '{"temp": "{temperature}"}'
+      debounce:
+        window: "30s"`,
+			shouldPass: true,
+		},
+		{
+			name: "valid debounce with no key (uses default)",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: sensors.temperature.>
+      debounce:
+        window: "5s"
+  action:
+    nats:
+      subject: alerts.temperature
+      payload: '{"temp": "{temperature}"}'`,
+			shouldPass: true,
+		},
+		{
+			name: "invalid trigger debounce - empty window",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: sensors.temperature.>
+      debounce:
+        window: ""
+  action:
+    nats:
+      subject: alerts.temperature
+      payload: '{"temp": "{temperature}"}'`,
+			shouldPass: false,
+			errMsg:     "debounce window cannot be empty",
+		},
+		{
+			name: "invalid trigger debounce - bad duration",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: sensors.temperature.>
+      debounce:
+        window: "not-a-duration"
+  action:
+    nats:
+      subject: alerts.temperature
+      payload: '{"temp": "{temperature}"}'`,
+			shouldPass: false,
+			errMsg:     "invalid debounce window",
+		},
+		{
+			name: "invalid action debounce - bad duration",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: sensors.temperature.>
+  action:
+    nats:
+      subject: alerts.temperature
+      payload: '{"temp": "{temperature}"}'
+      debounce:
+        window: "abc"`,
+			shouldPass: false,
+			errMsg:     "invalid debounce window",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			loader := newTestLoader()
+			tempDir := t.TempDir()
+			createTempRuleFile(t, tempDir, "test.yaml", tt.ruleContent)
+
+			_, err := loader.LoadFromDirectory(tempDir)
+
+			if tt.shouldPass {
+				if err != nil {
+					t.Errorf("Expected rule to pass validation, but got error: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("Expected validation error containing '%s', but got nil", tt.errMsg)
+				} else if !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("Expected error to contain '%s', but got: %v", tt.errMsg, err)
+				}
+			}
+		})
+	}
+}
+
 // TestOperatorWhitelist_IncludesArrayOperators verifies array operators are in whitelist
 func TestOperatorWhitelist_IncludesArrayOperators(t *testing.T) {
 	loader := newTestLoader()

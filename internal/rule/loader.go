@@ -143,6 +143,9 @@ func (l *RulesLoader) expandEnvironmentVariables(rule *Rule, filePath string, ru
 		"file", filePath,
 		"ruleIndex", ruleIndex)
 
+	// Expand in trigger debounce
+	l.expandTriggerEnvVars(&rule.Trigger, filePath, ruleIndex)
+
 	// Expand in conditions
 	if rule.Conditions != nil {
 		l.expandConditionsEnvVars(rule.Conditions, filePath, ruleIndex)
@@ -152,6 +155,18 @@ func (l *RulesLoader) expandEnvironmentVariables(rule *Rule, filePath string, ru
 	l.expandActionEnvVars(&rule.Action, filePath, ruleIndex)
 
 	return nil
+}
+
+// expandTriggerEnvVars expands env vars in trigger debounce fields
+func (l *RulesLoader) expandTriggerEnvVars(trigger *Trigger, filePath string, ruleIndex int) {
+	if trigger.NATS != nil && trigger.NATS.Debounce != nil {
+		trigger.NATS.Debounce.Window = l.expandEnvVarsInString(trigger.NATS.Debounce.Window, "trigger.nats.debounce.window", filePath, ruleIndex)
+		trigger.NATS.Debounce.Key = l.expandEnvVarsInString(trigger.NATS.Debounce.Key, "trigger.nats.debounce.key", filePath, ruleIndex)
+	}
+	if trigger.HTTP != nil && trigger.HTTP.Debounce != nil {
+		trigger.HTTP.Debounce.Window = l.expandEnvVarsInString(trigger.HTTP.Debounce.Window, "trigger.http.debounce.window", filePath, ruleIndex)
+		trigger.HTTP.Debounce.Key = l.expandEnvVarsInString(trigger.HTTP.Debounce.Key, "trigger.http.debounce.key", filePath, ruleIndex)
+	}
 }
 
 // expandConditionsEnvVars recursively expands env vars in condition fields and values
@@ -232,6 +247,12 @@ func (l *RulesLoader) expandActionEnvVars(action *Action, filePath string, ruleI
 		if natsAction.Filter != nil {
 			l.expandConditionsEnvVars(natsAction.Filter, filePath, ruleIndex)
 		}
+
+		// Expand debounce fields
+		if natsAction.Debounce != nil {
+			natsAction.Debounce.Window = l.expandEnvVarsInString(natsAction.Debounce.Window, "action.nats.debounce.window", filePath, ruleIndex)
+			natsAction.Debounce.Key = l.expandEnvVarsInString(natsAction.Debounce.Key, "action.nats.debounce.key", filePath, ruleIndex)
+		}
 	}
 
 	if action.HTTP != nil {
@@ -257,6 +278,12 @@ func (l *RulesLoader) expandActionEnvVars(action *Action, filePath string, ruleI
 		// Expand filter conditions
 		if httpAction.Filter != nil {
 			l.expandConditionsEnvVars(httpAction.Filter, filePath, ruleIndex)
+		}
+
+		// Expand debounce fields
+		if httpAction.Debounce != nil {
+			httpAction.Debounce.Window = l.expandEnvVarsInString(httpAction.Debounce.Window, "action.http.debounce.window", filePath, ruleIndex)
+			httpAction.Debounce.Key = l.expandEnvVarsInString(httpAction.Debounce.Key, "action.http.debounce.key", filePath, ruleIndex)
 		}
 	}
 }
@@ -332,6 +359,9 @@ func (l *RulesLoader) validateTrigger(trigger *Trigger, filePath string, ruleInd
 		if err := l.validateWildcardPattern(trigger.NATS.Subject); err != nil {
 			return fmt.Errorf("invalid NATS subject pattern: %w", err)
 		}
+		if err := l.validateDebounceConfig(trigger.NATS.Debounce, "trigger.nats.debounce"); err != nil {
+			return err
+		}
 	}
 
 	if trigger.HTTP != nil {
@@ -352,6 +382,9 @@ func (l *RulesLoader) validateTrigger(trigger *Trigger, filePath string, ruleInd
 				return fmt.Errorf("invalid HTTP method: %s", trigger.HTTP.Method)
 			}
 			trigger.HTTP.Method = method
+		}
+		if err := l.validateDebounceConfig(trigger.HTTP.Debounce, "trigger.http.debounce"); err != nil {
+			return err
 		}
 	}
 
@@ -437,6 +470,10 @@ func (l *RulesLoader) validateNATSAction(action *NATSAction) error {
 		}
 	}
 
+	if err := l.validateDebounceConfig(action.Debounce, "action.nats.debounce"); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -510,6 +547,10 @@ func (l *RulesLoader) validateHTTPAction(action *HTTPAction) error {
 		}
 	}
 
+	if err := l.validateDebounceConfig(action.Debounce, "action.http.debounce"); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -546,6 +587,29 @@ func (l *RulesLoader) validateForEachConfig(forEachField string, filter *Conditi
 	if filter != nil {
 		if err := l.validateConditions(filter); err != nil {
 			return fmt.Errorf("invalid forEach filter conditions: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// validateDebounceConfig validates a debounce configuration block
+func (l *RulesLoader) validateDebounceConfig(cfg *DebounceConfig, location string) error {
+	if cfg == nil {
+		return nil
+	}
+
+	if cfg.Window == "" {
+		return fmt.Errorf("%s: debounce window cannot be empty", location)
+	}
+
+	if _, err := time.ParseDuration(cfg.Window); err != nil {
+		return fmt.Errorf("%s: invalid debounce window '%s': %w", location, cfg.Window, err)
+	}
+
+	if cfg.Key != "" {
+		if err := l.validateKVFieldsInTemplate(cfg.Key); err != nil {
+			return fmt.Errorf("%s: invalid KV field in debounce key: %w", location, err)
 		}
 	}
 
