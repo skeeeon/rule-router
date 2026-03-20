@@ -5,7 +5,7 @@ A high-performance, rule-based messaging platform for NATS, providing an interna
 This monorepo contains four primary, interoperable applications built on a shared, powerful rule engine:
 
 *   **`rule-router`**: A high-throughput NATS-to-NATS message router for internal, event-driven workflows.
-*   **`rule-scheduler`**: A cron-based scheduler that publishes templated NATS messages on configurable schedules, with full conditions and KV support.
+*   **`rule-scheduler`**: A cron-based scheduler that publishes to NATS and HTTP endpoints on configurable schedules, with full conditions, KV support, and HTTP retry logic.
 *   **`http-gateway`**: A bidirectional bridge for integrating external systems with your NATS fabric via webhooks (HTTP → NATS) and outbound API calls (NATS → HTTP).
 *   **`nats-auth-manager`**: A standalone utility that securely manages and refreshes API tokens (OAuth2, etc.), storing them in NATS KV for use by the `http-gateway` on outbound webhooks.
 
@@ -16,7 +16,7 @@ This monorepo contains four primary, interoperable applications built on a share
 The platform is designed for performance, security, and flexibility in event-driven architectures.
 
 *   **High Performance**: Microsecond rule evaluation, asynchronous processing, and thousands of messages per second.
-*   **Cron Scheduling**: Publish templated NATS messages on cron schedules with timezone support, conditional execution, and KV lookups.
+*   **Cron Scheduling**: Publish to NATS and HTTP endpoints on cron schedules with timezone support, conditional execution, KV lookups, and HTTP retry logic.
 *   **Array Processing**: Native support for batch message processing with array operators and forEach iteration.
 *   **Primitive Message Support**: Handle strings, numbers, arrays, and objects at the root - perfect for IoT protocols and simple formats.
 *   **Bidirectional HTTP Gateway**:
@@ -180,7 +180,7 @@ You will see the message appear on the `alerts.>` subscription, having been proc
 
 *   **`cmd/rule-router`**: A dedicated NATS-to-NATS message router. Ideal for high-performance, internal event stream processing, filtering, and enrichment. [**» View Router README**](./cmd/rule-router/README.md)
 
-*   **`cmd/rule-scheduler`**: A cron-based scheduler that publishes templated NATS messages on configurable schedules. Ideal for time-driven automation like access control, periodic health checks, and scheduled commands. [**» View Scheduler README**](./cmd/rule-scheduler/README.md)
+*   **`cmd/rule-scheduler`**: A cron-based scheduler that publishes to NATS and HTTP endpoints on configurable schedules. Ideal for time-driven automation like access control, periodic health checks, scheduled webhooks, and API calls. [**» View Scheduler README**](./cmd/rule-scheduler/README.md)
 
 *   **`cmd/http-gateway`**: A bidirectional HTTP-to-NATS gateway. Perfect for integrating with third-party webhooks and for triggering external APIs from NATS events. [**» View Gateway README**](./cmd/http-gateway/README.md)
 

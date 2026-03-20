@@ -39,7 +39,7 @@ trigger:
     timezone: "America/New_York"   # Optional IANA timezone, defaults to system local
 ```
 
-Schedule-triggered rules have no incoming message payload. Conditions can use time variables (`{@time.*}`, `{@day.*}`, `{@date.*}`) and KV lookups (`{@kv.*}`), but not message fields or header/subject context. See the [Rule Scheduler README](../cmd/rule-scheduler/README.md) for details.
+Schedule-triggered rules have no incoming message payload. Conditions can use time variables (`{@time.*}`, `{@day.*}`, `{@date.*}`) and KV lookups (`{@kv.*}`), but not message fields or header/subject context. Schedule rules support both NATS and HTTP actions — HTTP actions include configurable retry with exponential backoff. See the [Rule Scheduler README](../cmd/rule-scheduler/README.md) for details.
 
 ## 2. Conditions (The "When")
 

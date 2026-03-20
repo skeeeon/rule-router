@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.0] - 2026-03-19
+- Added HTTP action support to `rule-scheduler` for outbound API calls on cron schedules
+- HTTP actions use configurable retry with exponential backoff and jitter (same logic as `http-gateway`)
+- Extracted shared HTTP executor into `internal/httpclient` package, used by both `rule-scheduler` and `http-gateway`
+- Added `http.client` configuration section to `rule-scheduler.yaml` (timeout, connection pooling, TLS)
+
 ## [0.8.0] - 2026-03-19
 - Added `schedule-basic` template to `rule-cli new` for cron-based schedule rules
 - Interactive wizard now supports Schedule (Cron) triggers alongside NATS and HTTP
@@ -63,6 +69,7 @@
 - Signature verification
 - Rule-cli utility
 
+[0.9.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.9.0
 [0.8.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.8.0
 [0.7.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.7.0
 [0.1.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.1.0

@@ -10,6 +10,7 @@ import (
 	"github.com/go-co-op/gocron/v2"
 	"rule-router/config"
 	"rule-router/internal/broker"
+	"rule-router/internal/httpclient"
 	"rule-router/internal/lifecycle"
 	"rule-router/internal/logger"
 	"rule-router/internal/metrics"
@@ -35,6 +36,7 @@ type SchedulerApp struct {
 	metrics          *metrics.Metrics
 	processor        *rule.Processor
 	broker           *broker.NATSBroker
+	httpExecutor     *httpclient.HTTPExecutor
 	base             *BaseApp
 	scheduler        gocron.Scheduler
 	metricsCollector *metrics.MetricsCollector
@@ -48,6 +50,7 @@ func NewSchedulerApp(base *BaseApp, cfg *config.Config) (*SchedulerApp, error) {
 		metrics:          base.Metrics,
 		processor:        base.Processor,
 		broker:           base.Broker,
+		httpExecutor:     httpclient.NewHTTPExecutor(&cfg.HTTP.Client, base.Logger, base.Metrics),
 		base:             base,
 		metricsCollector: base.Collector,
 	}
@@ -141,9 +144,21 @@ func (app *SchedulerApp) executeScheduleRule(r *rule.Rule) {
 		}
 
 		if action.HTTP != nil {
-			app.logger.Warn("HTTP actions are not yet supported in schedule rules",
-				"url", action.HTTP.URL,
-				"method", action.HTTP.Method)
+			ctx, cancel := context.WithTimeout(context.Background(), publishTimeout)
+			if err := app.httpExecutor.ExecuteHTTPAction(ctx, action.HTTP); err != nil {
+				app.logger.Error("failed to execute scheduled HTTP action",
+					"url", action.HTTP.URL,
+					"method", action.HTTP.Method,
+					"error", err)
+				if app.metrics != nil {
+					app.metrics.IncActionPublishFailures()
+				}
+			} else {
+				app.logger.Info("executed scheduled HTTP action",
+					"url", action.HTTP.URL,
+					"method", action.HTTP.Method)
+			}
+			cancel()
 		}
 	}
 }

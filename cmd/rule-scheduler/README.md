@@ -1,12 +1,13 @@
 # Rule Scheduler
 
-Cron-based scheduled message publishing to NATS using the shared rule engine. Define schedule-triggered rules in the same YAML format as `rule-router` and `http-gateway` — with full support for conditions, KV lookups, time-based logic, and templating.
+Cron-based scheduled publishing to NATS and HTTP endpoints using the shared rule engine. Define schedule-triggered rules in the same YAML format as `rule-router` and `http-gateway` — with full support for conditions, KV lookups, time-based logic, and templating.
 
 ## Features
 
 - **Cron Scheduling**: Standard 5-field cron expressions with optional IANA timezone support.
 - **Shared Rule Engine**: Same conditions, templates, KV lookups, and time variables as `rule-router`.
-- **JetStream & Core Publishing**: Publish actions via JetStream (reliable) or core NATS (fire-and-forget).
+- **NATS Publishing**: Publish actions via JetStream (reliable) or core NATS (fire-and-forget).
+- **HTTP Publishing**: Make outbound HTTP requests on a schedule with configurable retry and exponential backoff.
 - **Conditional Execution**: Schedule rules can include conditions (e.g., only unlock doors if building status is "occupied").
 - **Hot Reload**: `SIGHUP` reloads rules and re-registers cron jobs without downtime.
 - **Prometheus Metrics**: Action publish tracking and rule activity metrics.
@@ -66,6 +67,31 @@ Create a file at `rules/scheduler/access-control.yaml`:
           "id": "{@uuid4()}",
           "at": "{@timestamp()}"
         }
+```
+
+**HTTP Action Example** — Create a file at `rules/scheduler/webhook-heartbeat.yaml`:
+
+```yaml
+# Send a heartbeat webhook every hour
+- trigger:
+    schedule:
+      cron: "0 * * * *"
+  action:
+    http:
+      url: "https://hooks.example.com/heartbeat"
+      method: POST
+      payload: |
+        {
+          "source": "rule-scheduler",
+          "at": "{@timestamp()}",
+          "id": "{@uuid7()}"
+        }
+      headers:
+        Content-Type: "application/json"
+      retry:
+        maxAttempts: 3
+        initialDelay: "1s"
+        maxDelay: "10s"
 ```
 
 ### Test It
@@ -171,6 +197,49 @@ Schedule rules can iterate over arrays stored in KV, enabling fan-out patterns w
 
 Adding or removing doors only requires updating the KV entry — no rule file changes or reloads needed. See the [Array Processing documentation](./../../docs/03-array-processing.md) for details on filters, JSON paths, and other forEach features.
 
+## HTTP Actions
+
+Schedule rules support HTTP actions for calling external APIs and webhooks on a schedule. HTTP actions use the same retry logic as the `http-gateway`'s outbound client — exponential backoff with jitter.
+
+```yaml
+# POST a daily report to an external API at 9am Eastern on weekdays
+- trigger:
+    schedule:
+      cron: "0 9 * * 1-5"
+      timezone: "America/New_York"
+  action:
+    http:
+      url: "https://api.example.com/reports/daily"
+      method: POST
+      payload: |
+        {
+          "type": "daily_status",
+          "date": "{@date.year}-{@date.month}-{@date.day}",
+          "id": "{@uuid7()}"
+        }
+      headers:
+        Content-Type: "application/json"
+        Authorization: "Bearer ${API_TOKEN}"
+      retry:
+        maxAttempts: 3
+        initialDelay: "2s"
+        maxDelay: "30s"
+```
+
+### HTTP Action Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `url` | Yes | Target URL (supports templates and `${ENV_VARS}`) |
+| `method` | Yes | HTTP method: `GET`, `POST`, `PUT`, `PATCH`, `DELETE` |
+| `payload` | No | Request body (supports templates) |
+| `headers` | No | HTTP headers (map of key-value pairs) |
+| `retry.maxAttempts` | No | Max retry attempts (default: 3) |
+| `retry.initialDelay` | No | Initial retry delay (default: `"1s"`) |
+| `retry.maxDelay` | No | Max retry delay (default: `"30s"`) |
+
+HTTP actions default to `Content-Type: application/json` if no Content-Type header is specified. A 2xx response is considered success; any other status code triggers a retry.
+
 ## Configuration
 
 See `config/rule-scheduler.yaml` for a fully documented example.
@@ -195,6 +264,7 @@ The scheduler only publishes — it does not subscribe to NATS subjects. This me
 - No `consumers` configuration block needed
 - No `security.verification` needed (no inbound messages to verify)
 - KV is optional (only needed if your schedule rules use KV conditions or templates)
+- `http.client` configures the outbound HTTP client for HTTP actions (timeout, connection pooling, TLS)
 
 ## Advanced Features
 
@@ -219,16 +289,20 @@ The `rule-scheduler` shares its powerful rule engine with `rule-router` and `htt
 │  ┌──────────┐  ┌──────────────┐  ┌───────┴──────┐      │       │
 │  │  Cron    │  │ Rule Engine  │  │   Publish    │      │       │
 │  │ Scheduler│─▶│ + Conditions │─▶│ NATS Actions │      │       │
-│  │ (gocron) │  │ + Templates  │  │              │      │       │
-│  └──────────┘  └──────┬───────┘  └──────────────┘      │       │
-│                       │                                 │       │
+│  │ (gocron) │  │ + Templates  │  ├──────────────┤      │       │
+│  └──────────┘  └──────┬───────┘  │   Execute    │      │       │
+│                       │          │ HTTP Actions │──▶ External │
+│                       │          │  (+ Retry)   │    APIs     │
+│                       │          └──────────────┘      │       │
 │                       └── KV Lookups ───────────────────┘       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 1. Cron scheduler fires at the configured time
 2. Rule engine evaluates conditions (KV lookups, time checks)
-3. If conditions pass, templates are rendered and actions are published to NATS
+3. If conditions pass, templates are rendered and actions are dispatched:
+   - **NATS actions** are published to JetStream or core NATS
+   - **HTTP actions** are sent to external APIs with configurable retry and exponential backoff
 
 ## Metrics
 

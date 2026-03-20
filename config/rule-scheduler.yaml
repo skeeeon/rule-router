@@ -28,6 +28,16 @@ nats:
     maxRetries: 3
     retryBaseDelay: 50ms
 
+# HTTP Client Configuration (for HTTP actions)
+http:
+  client:
+    timeout: 30s
+    maxIdleConns: 100
+    maxIdleConnsPerHost: 10
+    idleConnTimeout: 90s
+    tls:
+      insecureSkipVerify: false
+
 # NATS Key-Value Store (for KV lookups in templates and conditions)
 kv:
   enabled: false

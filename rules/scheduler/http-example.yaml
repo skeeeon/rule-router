@@ -1,0 +1,36 @@
+# Example HTTP Schedule Rules
+# These rules use cron triggers to make HTTP requests on a schedule.
+
+# Call a webhook every hour with a heartbeat
+- trigger:
+    schedule:
+      cron: "0 * * * *"
+  action:
+    http:
+      url: "https://hooks.example.com/heartbeat"
+      method: POST
+      payload: '{"source": "rule-scheduler", "at": "{@timestamp()}", "id": "{@uuid7()}"}'
+      headers:
+        Content-Type: "application/json"
+      retry:
+        maxAttempts: 3
+        initialDelay: "1s"
+        maxDelay: "10s"
+
+# Send a daily status report webhook at 9am Eastern on weekdays
+- trigger:
+    schedule:
+      cron: "0 9 * * 1-5"
+      timezone: "America/New_York"
+  action:
+    http:
+      url: "https://api.example.com/reports/daily"
+      method: POST
+      payload: '{"type": "daily_status", "date": "{@date.year}-{@date.month}-{@date.day}", "id": "{@uuid7()}"}'
+      headers:
+        Content-Type: "application/json"
+        Authorization: "Bearer your-api-token"
+      retry:
+        maxAttempts: 3
+        initialDelay: "2s"
+        maxDelay: "30s"
