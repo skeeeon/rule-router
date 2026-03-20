@@ -45,7 +45,7 @@ type GatewayApp struct {
 func NewGatewayApp(base *BaseApp, cfg *config.Config) (*GatewayApp, error) {
 	app := &GatewayApp{
 		config:           cfg,
-		logger:           base.Logger,
+		logger:           base.Logger.With("component", "gateway-app"),
 		metrics:          base.Metrics,
 		processor:        base.Processor,
 		broker:           base.Broker,
@@ -91,7 +91,7 @@ func (app *GatewayApp) Run(ctx context.Context) error {
 		"kvBuckets", app.config.KV.Buckets)
 
 	app.logger.Info("starting http-gateway",
-		"natsUrls", app.config.NATS.URLs,
+		"urls", app.config.NATS.URLs,
 		"httpAddress", app.config.HTTP.Server.Address,
 		"metricsEnabled", app.config.Metrics.Enabled)
 

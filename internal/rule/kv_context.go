@@ -44,7 +44,7 @@ func NewKVContext(stores map[string]jetstream.KeyValue, logger *logger.Logger, l
 
 	ctx := &KVContext{
 		stores:     make(map[string]jetstream.KeyValue),
-		logger:     logger,
+		logger:     logger.With("component", "kv"),
 		localCache: localCache,
 		traverser:  NewJSONPathTraverser(), // Use shared traverser
 	}

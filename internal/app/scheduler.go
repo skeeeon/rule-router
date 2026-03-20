@@ -46,7 +46,7 @@ type SchedulerApp struct {
 func NewSchedulerApp(base *BaseApp, cfg *config.Config) (*SchedulerApp, error) {
 	app := &SchedulerApp{
 		config:           cfg,
-		logger:           base.Logger,
+		logger:           base.Logger.With("component", "scheduler"),
 		metrics:          base.Metrics,
 		processor:        base.Processor,
 		broker:           base.Broker,
@@ -174,7 +174,7 @@ func (app *SchedulerApp) Run(ctx context.Context) error {
 		"publishMode", app.config.NATS.Publish.Mode)
 
 	app.logger.Info("starting rule-scheduler",
-		"natsUrls", app.config.NATS.URLs,
+		"urls", app.config.NATS.URLs,
 		"metricsEnabled", app.config.Metrics.Enabled)
 
 	// Start the cron scheduler

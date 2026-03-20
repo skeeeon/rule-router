@@ -35,6 +35,7 @@ type NATSClient struct {
 
 // NewNATSClient creates a NATS client and opens KV bucket
 func NewNATSClient(cfg *NATSConfig, storageConfig *StorageConfig, log *logger.Logger) (*NATSClient, error) {
+	log = log.With("component", "auth-manager")
 	log.Info("connecting to NATS", "urls", cfg.URLs)
 
 	// Build connection options (same pattern as broker package)

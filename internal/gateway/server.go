@@ -98,6 +98,8 @@ func NewInboundServer(
 	serverCfg *ServerConfig,
 	publishCfg *PublishConfig,
 ) *InboundServer {
+	logger = logger.With("component", "gateway")
+
 	// Grug brain: Use good defaults if not set.
 	if serverCfg.InboundWorkerCount <= 0 {
 		serverCfg.InboundWorkerCount = DefaultInboundWorkerCount

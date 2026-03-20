@@ -3,7 +3,6 @@
 package main
 
 import (
-	"log"
 	"strings"
 
 	flag "github.com/spf13/pflag" // Use pflag aliased as flag
@@ -16,7 +15,7 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		log.Fatal(err)
+		logger.NewBootstrapLogger().Fatal("application error", "error", err)
 	}
 }
 
@@ -83,7 +82,7 @@ func parseFlags() (*config.Config, string) {
 	// Load configuration using the new Viper-powered loader
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		log.Fatalf("failed to load config: %v", err)
+		logger.NewBootstrapLogger().Fatal("failed to load config", "error", err)
 	}
 
 	return cfg, *rulesPath

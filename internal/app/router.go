@@ -42,7 +42,7 @@ type RouterApp struct {
 func NewRouterApp(base *BaseApp, cfg *config.Config) (*RouterApp, error) {
 	app := &RouterApp{
 		config:           cfg,
-		logger:           base.Logger,
+		logger:           base.Logger.With("component", "router"),
 		metrics:          base.Metrics,
 		processor:        base.Processor,
 		broker:           base.Broker,
@@ -82,7 +82,7 @@ func (app *RouterApp) Run(ctx context.Context) error {
 		"workerCount", app.config.NATS.Consumers.WorkerCount)
 
 	app.logger.Info("starting rule-router with NATS JetStream",
-		"natsUrls", app.config.NATS.URLs,
+		"urls", app.config.NATS.URLs,
 		"subscriptionCount", subCount,
 		"metricsEnabled", app.config.Metrics.Enabled)
 

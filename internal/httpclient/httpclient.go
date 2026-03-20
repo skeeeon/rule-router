@@ -48,6 +48,7 @@ func NewHTTPExecutor(
 	log *logger.Logger,
 	m *metrics.Metrics,
 ) *HTTPExecutor {
+	log = log.With("component", "http-client")
 	return &HTTPExecutor{
 		client: &http.Client{
 			Timeout: cfg.Timeout,

@@ -35,6 +35,7 @@ func RunWithReload(
 	createApp func() (Application, error),
 	log *logger.Logger,
 ) error {
+	log = log.With("component", "lifecycle")
 	reloadCount := 0
 
 	for {

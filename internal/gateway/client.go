@@ -76,6 +76,7 @@ func NewOutboundClient(
 	consumerCfg *ConsumerConfig,
 	httpClientCfg *config.HTTPClientConfig,
 ) *OutboundClient {
+	logger = logger.With("component", "gateway-client")
 	return &OutboundClient{
 		logger:        logger,
 		metrics:       metrics,

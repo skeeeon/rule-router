@@ -71,7 +71,7 @@ func NewNATSBroker(cfg *config.Config, log *logger.Logger, metrics *metrics.Metr
 	ctx, cancel := context.WithCancel(context.Background())
 
 	broker := &NATSBroker{
-		logger:       log,
+		logger:       log.With("component", "broker"),
 		metrics:      metrics,
 		config:       cfg,
 		kvStores:     make(map[string]jetstream.KeyValue),

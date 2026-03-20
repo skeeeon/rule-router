@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -28,7 +27,7 @@ const (
 
 func main() {
 	if err := run(); err != nil {
-		log.Fatal(err)
+		logger.NewBootstrapLogger().Fatal("application error", "error", err)
 	}
 }
 

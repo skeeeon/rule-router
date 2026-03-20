@@ -133,7 +133,7 @@ func NewProcessor(log *logger.Logger, metrics *metrics.Metrics, kvCtx *KVContext
 		httpPathIndex:   make(map[string][]*Rule),
 		timeProvider:    NewSystemTimeProvider(),
 		kvContext:       kvCtx,
-		logger:          log,
+		logger:          log.With("component", "processor"),
 		metrics:         metrics,
 		evaluator:       NewEvaluator(log),
 		templater:       NewTemplateEngine(log),
