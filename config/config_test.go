@@ -177,16 +177,16 @@ func TestSetDefaults(t *testing.T) {
 			},
 		},
 		{
-			name: "KV local cache enabled when KV enabled",
+			name: "KV local cache not set by setDefaults (applied after unmarshal)",
 			initial: Config{
 				KV: KVConfig{
 					Enabled: true,
 				},
 			},
 			validate: func(t *testing.T, cfg *Config) {
-				if !cfg.KV.LocalCache.Enabled {
-					t.Error("KV.LocalCache.Enabled should be true when KV is enabled")
-				}
+				// setDefaults no longer handles localCache defaulting;
+				// it's applied after Unmarshal in Load() using v.IsSet()
+				// so setDefaults alone should not change localCache
 			},
 		},
 	}

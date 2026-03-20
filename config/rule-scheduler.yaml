@@ -1,0 +1,49 @@
+# Rule Scheduler Configuration
+# Publishes templated messages to NATS on cron schedules
+# Uses the same rule format as rule-router with schedule triggers
+
+# NATS Server Connection
+nats:
+  urls:
+    - nats://localhost:4222
+
+  # Authentication (choose one)
+  # username: "rule-scheduler-service"
+  # password: "secure-password"
+  # token: "your-nats-token"
+  # nkeySeedFile: "/path/to/nkey.seed"
+  # credsFile: "/etc/nats/creds/rule-scheduler.creds"
+
+  # TLS Configuration
+  tls:
+    enable: false
+    # certFile: "/etc/ssl/nats/client-cert.pem"
+    # keyFile: "/etc/ssl/nats/client-key.pem"
+    # caFile: "/etc/ssl/nats/ca.pem"
+
+  # Action Publish Configuration
+  publish:
+    mode: jetstream        # "jetstream" (reliable) or "core" (fire-and-forget)
+    ackTimeout: 5s
+    maxRetries: 3
+    retryBaseDelay: 50ms
+
+# NATS Key-Value Store (for KV lookups in templates and conditions)
+kv:
+  enabled: false
+  # buckets:
+  #   - "building_status"
+  #   - "device_config"
+
+# Logging
+logging:
+  level: info
+  outputPath: stdout
+  encoding: json
+
+# Prometheus Metrics
+metrics:
+  enabled: true
+  address: :2114           # Different port from rule-router (:2112) and http-gateway (:2113)
+  path: /metrics
+  updateInterval: 15s

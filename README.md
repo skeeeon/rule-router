@@ -1,10 +1,11 @@
-# Rule Router & HTTP Gateway
+# Rule Router
 
-A high-performance, rule-based messaging platform for NATS, providing an internal message router, a bidirectional HTTP gateway, and an automated token manager for secure API integration.
+A high-performance, rule-based messaging platform for NATS, providing an internal message router, cron-based scheduled publishing, a bidirectional HTTP gateway, and an automated token manager for secure API integration.
 
-This monorepo contains three primary, interoperable applications built on a shared, powerful rule engine:
+This monorepo contains four primary, interoperable applications built on a shared, powerful rule engine:
 
 *   **`rule-router`**: A high-throughput NATS-to-NATS message router for internal, event-driven workflows.
+*   **`rule-scheduler`**: A cron-based scheduler that publishes templated NATS messages on configurable schedules, with full conditions and KV support.
 *   **`http-gateway`**: A bidirectional bridge for integrating external systems with your NATS fabric via webhooks (HTTP → NATS) and outbound API calls (NATS → HTTP).
 *   **`nats-auth-manager`**: A standalone utility that securely manages and refreshes API tokens (OAuth2, etc.), storing them in NATS KV for use by the `http-gateway` on outbound webhooks.
 
@@ -15,6 +16,7 @@ This monorepo contains three primary, interoperable applications built on a shar
 The platform is designed for performance, security, and flexibility in event-driven architectures.
 
 *   **High Performance**: Microsecond rule evaluation, asynchronous processing, and thousands of messages per second.
+*   **Cron Scheduling**: Publish templated NATS messages on cron schedules with timezone support, conditional execution, and KV lookups.
 *   **Array Processing**: Native support for batch message processing with array operators and forEach iteration.
 *   **Primitive Message Support**: Handle strings, numbers, arrays, and objects at the root - perfect for IoT protocols and simple formats.
 *   **Bidirectional HTTP Gateway**:
@@ -34,7 +36,7 @@ The platform is designed for performance, security, and flexibility in event-dri
 
 The platform uses a simple `Trigger -> Conditions -> Action` model defined in YAML files.
 
-*   **Triggers** define what starts a rule (e.g., a NATS message on `sensors.>` or an HTTP POST to `/webhooks/github`).
+*   **Triggers** define what starts a rule (e.g., a NATS message on `sensors.>`, an HTTP POST to `/webhooks/github`, or a cron schedule).
 *   **Conditions** define the logic to determine if the action should run (e.g., `temperature > 30`).
 *   **Actions** define what to do if conditions pass (e.g., publish a new NATS message or make an HTTP call).
 
@@ -66,6 +68,9 @@ From the root of the repository, build both applications:
 ```bash
 # Build the NATS-to-NATS router
 go build -o rule-router ./cmd/rule-router
+
+# Build the cron scheduler
+go build -o rule-scheduler ./cmd/rule-scheduler
 
 # Build the HTTP Gateway
 go build -o http-gateway ./cmd/http-gateway
@@ -175,6 +180,8 @@ You will see the message appear on the `alerts.>` subscription, having been proc
 
 *   **`cmd/rule-router`**: A dedicated NATS-to-NATS message router. Ideal for high-performance, internal event stream processing, filtering, and enrichment. [**» View Router README**](./cmd/rule-router/README.md)
 
+*   **`cmd/rule-scheduler`**: A cron-based scheduler that publishes templated NATS messages on configurable schedules. Ideal for time-driven automation like access control, periodic health checks, and scheduled commands. [**» View Scheduler README**](./cmd/rule-scheduler/README.md)
+
 *   **`cmd/http-gateway`**: A bidirectional HTTP-to-NATS gateway. Perfect for integrating with third-party webhooks and for triggering external APIs from NATS events. [**» View Gateway README**](./cmd/http-gateway/README.md)
 
 *   **`cmd/nats-auth-manager`**: A standalone service that handles OAuth2 and custom API authentication, storing tokens in NATS KV for use by other services. [**» View Auth Manager README**](./cmd/nats-auth-manager/README.md)
@@ -183,7 +190,7 @@ You will see the message appear on the `alerts.>` subscription, having been proc
 
 ## Monitoring
 
-Both applications expose a Prometheus metrics endpoint, typically on port `:2112`. Key metrics include:
+All applications expose a Prometheus metrics endpoint (rule-router on `:2112`, http-gateway on `:2113`, rule-scheduler on `:2114`). Key metrics include:
 
 **Message Processing:**
 *   `messages_total`: Total messages processed by status.
@@ -201,6 +208,10 @@ Both applications expose a Prometheus metrics endpoint, typically on port `:2112
 **HTTP Gateway:**
 *   `http_inbound_requests_total`: (Gateway) Inbound HTTP requests.
 *   `http_outbound_requests_total`: (Gateway) Outbound HTTP requests.
+
+**Scheduler:**
+*   `rules_active`: Number of schedule rules registered.
+*   `action_publish_failures_total`: Failed scheduled publish attempts.
 
 **Auth Manager:**
 *   `authmgr_auth_success_total`: Successful authentications by provider.

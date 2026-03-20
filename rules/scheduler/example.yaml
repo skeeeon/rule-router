@@ -1,0 +1,32 @@
+# Example Schedule Rules
+# These rules use cron triggers to publish NATS messages on a schedule.
+# Same format as NATS/HTTP-triggered rules — just a different trigger type.
+
+# Unlock the front door every weekday morning at 8am Eastern
+- trigger:
+    schedule:
+      cron: "0 8 * * 1-5"
+      timezone: "America/New_York"
+  action:
+    nats:
+      subject: "access.door.front.command"
+      payload: '{"command": "unlock", "source": "rule-scheduler", "id": "{@uuid4()}", "at": "{@timestamp()}"}'
+
+# Lock all doors every evening at 6pm Eastern
+- trigger:
+    schedule:
+      cron: "0 18 * * *"
+      timezone: "America/New_York"
+  action:
+    nats:
+      subject: "access.door.all.command"
+      payload: '{"command": "lock", "source": "rule-scheduler", "id": "{@uuid4()}", "at": "{@timestamp()}"}'
+
+# Publish a scheduler heartbeat every 5 minutes
+- trigger:
+    schedule:
+      cron: "*/5 * * * *"
+  action:
+    nats:
+      subject: "system.scheduler.heartbeat"
+      payload: '{"status": "alive", "id": "{@uuid7()}", "at": "{@timestamp()}"}'

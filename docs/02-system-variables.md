@@ -12,6 +12,8 @@ The rule engine provides a rich set of system variables (prefixed with `@`) that
 | `{@value}` | Access primitive value (strings, numbers, booleans at root or in arrays) | `{@value}` → `"ERROR: timeout"` |
 | `{@items}` | Access array at root level | Field reference for root arrays |
 
+**Note:** Schedule-triggered rules (`rule-scheduler`) have no incoming message, so only Time & Date, Key-Value Store, and Template Functions are available. Message fields, subject context, HTTP context, and headers are not populated.
+
 ## NATS Subject Context (`rule-router` only)
 
 | Variable | Description | Example Value |

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 	"rule-router/internal/logger"
 )
@@ -166,6 +167,10 @@ func (l *RulesLoader) expandTriggerEnvVars(trigger *Trigger, filePath string, ru
 	if trigger.HTTP != nil && trigger.HTTP.Debounce != nil {
 		trigger.HTTP.Debounce.Window = l.expandEnvVarsInString(trigger.HTTP.Debounce.Window, "trigger.http.debounce.window", filePath, ruleIndex)
 		trigger.HTTP.Debounce.Key = l.expandEnvVarsInString(trigger.HTTP.Debounce.Key, "trigger.http.debounce.key", filePath, ruleIndex)
+	}
+	if trigger.Schedule != nil {
+		trigger.Schedule.Cron = l.expandEnvVarsInString(trigger.Schedule.Cron, "trigger.schedule.cron", filePath, ruleIndex)
+		trigger.Schedule.Timezone = l.expandEnvVarsInString(trigger.Schedule.Timezone, "trigger.schedule.timezone", filePath, ruleIndex)
 	}
 }
 
@@ -348,11 +353,10 @@ func (l *RulesLoader) validateRule(rule *Rule, filePath string, ruleIndex int) e
 
 // validateTrigger ensures exactly one trigger type is specified
 func (l *RulesLoader) validateTrigger(trigger *Trigger, filePath string, ruleIndex int) error {
-	natsCount := 0
-	httpCount := 0
+	triggerCount := 0
 
 	if trigger.NATS != nil {
-		natsCount++
+		triggerCount++
 		if trigger.NATS.Subject == "" {
 			return fmt.Errorf("NATS trigger subject cannot be empty")
 		}
@@ -365,7 +369,7 @@ func (l *RulesLoader) validateTrigger(trigger *Trigger, filePath string, ruleInd
 	}
 
 	if trigger.HTTP != nil {
-		httpCount++
+		triggerCount++
 		if trigger.HTTP.Path == "" {
 			return fmt.Errorf("HTTP trigger path cannot be empty")
 		}
@@ -388,12 +392,41 @@ func (l *RulesLoader) validateTrigger(trigger *Trigger, filePath string, ruleInd
 		}
 	}
 
-	if natsCount+httpCount == 0 {
-		return fmt.Errorf("rule must have either a NATS or HTTP trigger")
+	if trigger.Schedule != nil {
+		triggerCount++
+		if err := l.validateScheduleTrigger(trigger.Schedule); err != nil {
+			return err
+		}
 	}
 
-	if natsCount+httpCount > 1 {
-		return fmt.Errorf("rule must have exactly one trigger type (found NATS=%d, HTTP=%d)", natsCount, httpCount)
+	if triggerCount == 0 {
+		return fmt.Errorf("rule must have a NATS, HTTP, or schedule trigger")
+	}
+
+	if triggerCount > 1 {
+		return fmt.Errorf("rule must have exactly one trigger type")
+	}
+
+	return nil
+}
+
+// validateScheduleTrigger validates a schedule trigger configuration
+func (l *RulesLoader) validateScheduleTrigger(schedule *ScheduleTrigger) error {
+	if schedule.Cron == "" {
+		return fmt.Errorf("schedule trigger cron expression cannot be empty")
+	}
+
+	// Validate cron expression is parseable (standard 5-field)
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	if _, err := parser.Parse(schedule.Cron); err != nil {
+		return fmt.Errorf("invalid cron expression '%s': %w", schedule.Cron, err)
+	}
+
+	// Validate timezone if provided
+	if schedule.Timezone != "" {
+		if _, err := time.LoadLocation(schedule.Timezone); err != nil {
+			return fmt.Errorf("invalid timezone '%s': %w", schedule.Timezone, err)
+		}
 	}
 
 	return nil

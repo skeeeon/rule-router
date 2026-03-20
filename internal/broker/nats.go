@@ -646,6 +646,52 @@ func (b *NATSBroker) GetConsumerName(subject string) string {
 	return b.generateConsumerName(subject)
 }
 
+// Publish publishes a NATS action using the configured publish mode (jetstream or core).
+// This is used by the scheduler to publish without a SubscriptionManager.
+func (b *NATSBroker) Publish(ctx context.Context, action *rule.NATSAction) error {
+	var payloadBytes []byte
+	if action.Passthrough {
+		payloadBytes = action.RawPayload
+	} else {
+		payloadBytes = []byte(action.Payload)
+	}
+
+	msg := nats.NewMsg(action.Subject)
+	msg.Data = payloadBytes
+
+	if len(action.Headers) > 0 {
+		msg.Header = make(nats.Header)
+		for key, value := range action.Headers {
+			msg.Header.Set(key, value)
+		}
+	}
+
+	if b.config.NATS.Publish.Mode == "core" {
+		if len(action.Headers) == 0 {
+			return b.natsConn.Publish(action.Subject, payloadBytes)
+		}
+		return b.natsConn.PublishMsg(msg)
+	}
+
+	// JetStream async publish
+	ackF, err := b.jetStream.PublishMsgAsync(msg)
+	if err != nil {
+		return fmt.Errorf("jetstream async publish failed: %w", err)
+	}
+
+	pubCtx, cancel := context.WithTimeout(ctx, b.config.NATS.Publish.AckTimeout)
+	defer cancel()
+
+	select {
+	case <-ackF.Ok():
+		return nil
+	case err := <-ackF.Err():
+		return fmt.Errorf("jetstream publish ack failed: %w", err)
+	case <-pubCtx.Done():
+		return fmt.Errorf("timeout waiting for publish ack: %w", pubCtx.Err())
+	}
+}
+
 // Close shuts down the broker connections
 func (b *NATSBroker) Close() error {
 	b.logger.Info("closing NATS broker connections")

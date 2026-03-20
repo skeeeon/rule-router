@@ -22,6 +22,7 @@ const (
 type Processor struct {
 	index            *RuleIndex
 	allRules         []*Rule
+	scheduleRules    []*Rule
 	httpPathIndex    map[string][]*Rule
 	timeProvider     TimeProvider
 	kvContext        *KVContext
@@ -151,14 +152,16 @@ func (p *Processor) SetMaxForEachIterations(max int) {
 // LoadRules loads rules and indexes them by trigger type
 func (p *Processor) LoadRules(rules []Rule) error {
 	p.logger.Info("loading rules into processor", "ruleCount", len(rules))
-	
+
 	p.index.Clear()
 	p.allRules = make([]*Rule, 0, len(rules))
+	p.scheduleRules = make([]*Rule, 0)
 	p.httpPathIndex = make(map[string][]*Rule)
-	
+
 	natsCount := 0
 	httpCount := 0
-	
+	scheduleCount := 0
+
 	for i := range rules {
 		rule := &rules[i]
 		rule.index = i
@@ -168,28 +171,38 @@ func (p *Processor) LoadRules(rules []Rule) error {
 			p.index.Add(rule)
 			natsCount++
 		}
-		
+
 		if rule.Trigger.HTTP != nil {
 			path := rule.Trigger.HTTP.Path
 			p.httpPathIndex[path] = append(p.httpPathIndex[path], rule)
 			httpCount++
-			
+
 			p.logger.Debug("indexed HTTP rule",
 				"path", path,
 				"method", rule.Trigger.HTTP.Method)
 		}
+
+		if rule.Trigger.Schedule != nil {
+			p.scheduleRules = append(p.scheduleRules, rule)
+			scheduleCount++
+
+			p.logger.Debug("indexed schedule rule",
+				"cron", rule.Trigger.Schedule.Cron,
+				"timezone", rule.Trigger.Schedule.Timezone)
+		}
 	}
-	
+
 	if p.metrics != nil {
-		p.metrics.SetRulesActive(float64(natsCount + httpCount))
+		p.metrics.SetRulesActive(float64(natsCount + httpCount + scheduleCount))
 	}
-	
+
 	p.logger.Info("rules loaded",
 		"total", len(rules),
 		"natsRules", natsCount,
 		"httpRules", httpCount,
+		"scheduleRules", scheduleCount,
 		"httpPaths", len(p.httpPathIndex))
-	
+
 	return nil
 }
 
@@ -207,9 +220,42 @@ func (p *Processor) GetHTTPPaths() []string {
 	return paths
 }
 
-// GetAllRules returns all loaded rules (both NATS and HTTP)
+// GetAllRules returns all loaded rules (NATS, HTTP, and schedule)
 func (p *Processor) GetAllRules() []*Rule {
 	return p.allRules
+}
+
+// GetScheduleRules returns all schedule-triggered rules
+func (p *Processor) GetScheduleRules() []*Rule {
+	return p.scheduleRules
+}
+
+// ProcessSchedule processes a schedule-triggered rule.
+// Creates an evaluation context with no inbound message data — only time and KV contexts
+// are available for condition evaluation and template rendering.
+func (p *Processor) ProcessSchedule(rule *Rule) ([]*Action, error) {
+	p.logger.Debug("processing schedule rule", "cron", rule.Trigger.Schedule.Cron)
+
+	context, err := NewEvaluationContext(
+		nil, // no payload
+		nil, // no headers
+		nil, // no subject context
+		nil, // no HTTP context
+		p.timeProvider.GetCurrentContext(),
+		p.kvContext,
+		nil, // no signature verification
+		p.logger,
+	)
+	if err != nil {
+		atomic.AddUint64(&p.stats.Errors, 1)
+		if p.metrics != nil {
+			p.metrics.IncMessagesTotal("error")
+		}
+		p.logger.Error("failed to create evaluation context for schedule rule", "error", err)
+		return nil, err
+	}
+
+	return p.evaluateRules([]*Rule{rule}, context, "schedule")
 }
 
 // ProcessNATS processes a NATS message through the rule engine

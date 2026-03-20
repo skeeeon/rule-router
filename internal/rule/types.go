@@ -25,16 +25,23 @@ type Rule struct {
 	index int
 }
 
-// Trigger defines what initiates rule evaluation (NATS or HTTP)
+// Trigger defines what initiates rule evaluation (NATS, HTTP, or Schedule)
 type Trigger struct {
-	NATS *NATSTrigger `json:"nats,omitempty" yaml:"nats,omitempty"`
-	HTTP *HTTPTrigger `json:"http,omitempty" yaml:"http,omitempty"`
+	NATS     *NATSTrigger     `json:"nats,omitempty" yaml:"nats,omitempty"`
+	HTTP     *HTTPTrigger     `json:"http,omitempty" yaml:"http,omitempty"`
+	Schedule *ScheduleTrigger `json:"schedule,omitempty" yaml:"schedule,omitempty"`
 }
 
 // NATSTrigger represents a NATS subject-based trigger
 type NATSTrigger struct {
 	Subject  string          `json:"subject" yaml:"subject"`
 	Debounce *DebounceConfig `json:"debounce,omitempty" yaml:"debounce,omitempty"`
+}
+
+// ScheduleTrigger represents a cron-based schedule trigger
+type ScheduleTrigger struct {
+	Cron     string `json:"cron" yaml:"cron"`
+	Timezone string `json:"timezone,omitempty" yaml:"timezone,omitempty"`
 }
 
 // HTTPTrigger represents an HTTP endpoint-based trigger

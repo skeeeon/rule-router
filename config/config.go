@@ -307,6 +307,12 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
+	// Apply defaults that depend on other config values (must run after unmarshal).
+	// Default localCache to enabled when KV is enabled, unless explicitly set to false.
+	if config.KV.Enabled && !v.IsSet("kv.localCache.enabled") {
+		config.KV.LocalCache.Enabled = true
+	}
+
 	// Run final validation
 	if err := validateConfig(&config); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
@@ -450,11 +456,6 @@ func setDefaults(cfg *Config) {
 		if cfg.Metrics.UpdateInterval == "" {
 			cfg.Metrics.UpdateInterval = "15s"
 		}
-	}
-
-	// KV defaults
-	if cfg.KV.Enabled {
-		cfg.KV.LocalCache.Enabled = true
 	}
 
 	// Security defaults

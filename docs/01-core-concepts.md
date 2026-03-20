@@ -14,22 +14,32 @@ All applications in this repository are configured using a shared rule syntax. A
 
 ## 1. Triggers (The "If")
 
-A trigger defines the event that initiates a rule evaluation.
+A trigger defines the event that initiates a rule evaluation. Each rule has exactly one trigger type.
 
-**NATS Trigger**: Evaluates a message from a NATS subject.
+**NATS Trigger** (`rule-router`, `http-gateway`): Evaluates a message from a NATS subject.
 ```yaml
 trigger:
   nats:
     subject: "sensors.temperature.>" # Supports wildcards
 ```
 
-**HTTP Trigger**: Evaluates an incoming HTTP request.
+**HTTP Trigger** (`http-gateway`): Evaluates an incoming HTTP request.
 ```yaml
 trigger:
   http:
     path: "/webhooks/github"   # Exact path match
     method: "POST"             # Optional, defaults to all methods
 ```
+
+**Schedule Trigger** (`rule-scheduler`): Fires on a cron schedule.
+```yaml
+trigger:
+  schedule:
+    cron: "0 8 * * 1-5"           # Standard 5-field cron expression
+    timezone: "America/New_York"   # Optional IANA timezone, defaults to system local
+```
+
+Schedule-triggered rules have no incoming message payload. Conditions can use time variables (`{@time.*}`, `{@day.*}`, `{@date.*}`) and KV lookups (`{@kv.*}`), but not message fields or header/subject context. See the [Rule Scheduler README](../cmd/rule-scheduler/README.md) for details.
 
 ## 2. Conditions (The "When")
 

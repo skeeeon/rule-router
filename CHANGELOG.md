@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.0] - 2026-03-19
+- Added `rule-scheduler` application for cron-based scheduled NATS publishing
+- New `schedule` trigger type with standard 5-field cron expressions and optional IANA timezone support
+- Schedule rules use the same conditions, templates, KV lookups, and time variables as NATS/HTTP rules
+- Added `Publish()` method to NATS broker for direct publishing without a subscription manager
+- Hot reload (`SIGHUP`) support for schedule rules
+- Fixed KV `localCache.enabled` default not being applied when `kv.enabled: true` (defaulting logic ran before config was loaded)
+- Prometheus metrics on port `:2114` for scheduler action tracking
+
 ## [0.6.0] - 2026-03-16
 - Added optional per-rule debounce/throttle for triggers and actions
 - Fire-first semantics: first message processed immediately, subsequent messages suppressed for the window duration
@@ -43,6 +52,7 @@
 - Signature verification
 - Rule-cli utility
 
+[0.7.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.7.0
 [0.1.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.1.0
 [0.2.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.2.0
 [0.2.1]: https://github.com/skeeeon/rule-router/releases/tag/v0.2.1
