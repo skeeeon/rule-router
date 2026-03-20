@@ -8,6 +8,8 @@
 - `rule-cli test` detects and runs `_rule_N/` per-rule test directories independently
 - `rule-cli check` adds `--rule-index` / `-n` flag to select a specific rule in multi-rule files
 - Single-rule files retain full backward compatibility with existing flat test directory layout
+- `forEach` can now source arrays from KV stores (`forEach: "{@kv.bucket.key}"`) for fan-out patterns
+- Enables `rule-scheduler` forEach with KV-managed target lists (no message payload required)
 
 ## [0.7.0] - 2026-03-19
 - Added `rule-scheduler` application for cron-based scheduled NATS publishing

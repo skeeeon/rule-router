@@ -4,6 +4,7 @@ package rule
 
 import (
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -66,9 +67,12 @@ type forEachArrayData struct {
 
 // extractForEachArray extracts and validates the array for forEach processing.
 // This is shared logic between NATS and HTTP forEach handlers.
+// Supports both message field paths (e.g., "{data.readings}") and system field
+// references (e.g., "{@kv.config.door_list}") for KV-sourced fan-out patterns.
 func (p *Processor) extractForEachArray(forEachTemplate string, context *EvaluationContext) (*forEachArrayData, error) {
 	// Extract the field path from template braces using shared utility
 	// forEach: "{data.readings}" → "data.readings"
+	// forEach: "{@kv.config.doors}" → "@kv.config.doors"
 	fieldPath := ExtractVariable(forEachTemplate)
 	if fieldPath == "" {
 		return nil, fmt.Errorf("invalid forEach template syntax (must be {field}): %s", forEachTemplate)
@@ -78,15 +82,25 @@ func (p *Processor) extractForEachArray(forEachTemplate string, context *Evaluat
 		"template", forEachTemplate,
 		"extractedPath", fieldPath)
 
-	// Use brace-aware path splitting on the extracted path
-	arrayPath, err := SplitPathRespectingBraces(fieldPath)
-	if err != nil {
-		return nil, fmt.Errorf("invalid forEach path '%s': %w", fieldPath, err)
-	}
-
-	arrayValue, err := context.traverser.TraversePath(context.Msg, arrayPath)
-	if err != nil {
-		return nil, fmt.Errorf("forEach field not found: %s: %w", forEachTemplate, err)
+	// Resolve the array value — system fields (@kv, etc.) go through ResolveValue,
+	// regular message fields use direct path traversal.
+	var arrayValue interface{}
+	if strings.HasPrefix(fieldPath, "@") {
+		resolved, found := context.ResolveValue(fieldPath)
+		if !found {
+			return nil, fmt.Errorf("forEach system field not found: %s", forEachTemplate)
+		}
+		arrayValue = resolved
+	} else {
+		arrayPath, err := SplitPathRespectingBraces(fieldPath)
+		if err != nil {
+			return nil, fmt.Errorf("invalid forEach path '%s': %w", fieldPath, err)
+		}
+		var traverseErr error
+		arrayValue, traverseErr = context.traverser.TraversePath(context.Msg, arrayPath)
+		if traverseErr != nil {
+			return nil, fmt.Errorf("forEach field not found: %s: %w", forEachTemplate, traverseErr)
+		}
 	}
 
 	arrayItems, ok := arrayValue.([]interface{})

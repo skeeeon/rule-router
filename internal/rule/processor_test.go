@@ -2370,3 +2370,233 @@ func TestProcessor_Debounce_WindowExpiry(t *testing.T) {
 	}
 }
 
+// --- KV-Sourced forEach Tests ---
+
+func TestProcessNATSForEach_KVSourcedArray(t *testing.T) {
+	kvData := map[string]map[string]interface{}{
+		"config": {
+			"devices": []interface{}{
+				map[string]interface{}{"id": "dev-1", "name": "Front Door"},
+				map[string]interface{}{"id": "dev-2", "name": "Back Door"},
+				map[string]interface{}{"id": "dev-3", "name": "Garage"},
+			},
+		},
+	}
+	processor := setupTestProcessorWithKV(kvData)
+
+	action := &NATSAction{
+		ForEach: "{@kv.config.devices}",
+		Subject: "commands.{id}",
+		Payload: `{"device": "{id}", "name": "{name}", "command": "unlock"}`,
+	}
+
+	// Message payload doesn't need to contain the array — it comes from KV
+	data := map[string]interface{}{"source": "scheduler"}
+	context := newKVTemplateTestContext(data, kvData)
+
+	actions, err := processor.processNATSActionWithForEach(action, context)
+	if err != nil {
+		t.Fatalf("processNATSActionWithForEach() error = %v", err)
+	}
+
+	if len(actions) != 3 {
+		t.Fatalf("Expected 3 actions, got %d", len(actions))
+	}
+
+	if actions[0].NATS.Subject != "commands.dev-1" {
+		t.Errorf("Action 0 subject = %s, want commands.dev-1", actions[0].NATS.Subject)
+	}
+	if !strings.Contains(actions[0].NATS.Payload, `"name": "Front Door"`) {
+		t.Errorf("Action 0 payload missing expected content: %s", actions[0].NATS.Payload)
+	}
+
+	if actions[1].NATS.Subject != "commands.dev-2" {
+		t.Errorf("Action 1 subject = %s, want commands.dev-2", actions[1].NATS.Subject)
+	}
+
+	if actions[2].NATS.Subject != "commands.dev-3" {
+		t.Errorf("Action 2 subject = %s, want commands.dev-3", actions[2].NATS.Subject)
+	}
+}
+
+func TestProcessScheduleForEach_KVSourcedArray(t *testing.T) {
+	kvData := map[string]map[string]interface{}{
+		"config": {
+			"doors": []interface{}{
+				map[string]interface{}{"id": "front", "zone": "main"},
+				map[string]interface{}{"id": "back", "zone": "service"},
+			},
+		},
+	}
+	processor := setupTestProcessorWithKV(kvData)
+
+	rule := Rule{
+		Trigger: Trigger{
+			Schedule: &ScheduleTrigger{Cron: "0 8 * * 1-5"},
+		},
+		Action: Action{
+			NATS: &NATSAction{
+				ForEach: "{@kv.config.doors}",
+				Subject: "access.door.{id}.command",
+				Payload: `{"command": "unlock", "zone": "{zone}", "source": "rule-scheduler"}`,
+			},
+		},
+	}
+
+	processor.LoadRules([]Rule{rule})
+
+	actions, err := processor.ProcessSchedule(processor.scheduleRules[0])
+	if err != nil {
+		t.Fatalf("ProcessSchedule() error = %v", err)
+	}
+
+	if len(actions) != 2 {
+		t.Fatalf("Expected 2 actions, got %d", len(actions))
+	}
+
+	if actions[0].NATS.Subject != "access.door.front.command" {
+		t.Errorf("Action 0 subject = %s, want access.door.front.command", actions[0].NATS.Subject)
+	}
+	if !strings.Contains(actions[0].NATS.Payload, `"zone": "main"`) {
+		t.Errorf("Action 0 payload missing zone: %s", actions[0].NATS.Payload)
+	}
+
+	if actions[1].NATS.Subject != "access.door.back.command" {
+		t.Errorf("Action 1 subject = %s, want access.door.back.command", actions[1].NATS.Subject)
+	}
+	if !strings.Contains(actions[1].NATS.Payload, `"zone": "service"`) {
+		t.Errorf("Action 1 payload missing zone: %s", actions[1].NATS.Payload)
+	}
+}
+
+func TestProcessForEach_KVSourcedArray_NotFound(t *testing.T) {
+	// Empty KV — no data
+	processor := setupTestProcessorWithKV(map[string]map[string]interface{}{})
+
+	action := &NATSAction{
+		ForEach: "{@kv.config.missing_key}",
+		Subject: "test.{id}",
+		Payload: `{"id": "{id}"}`,
+	}
+
+	data := map[string]interface{}{}
+	kvData := map[string]map[string]interface{}{}
+	context := newKVTemplateTestContext(data, kvData)
+
+	_, err := processor.processNATSActionWithForEach(action, context)
+	if err == nil {
+		t.Fatal("Expected error for missing KV key, got nil")
+	}
+	if !strings.Contains(err.Error(), "forEach system field not found") {
+		t.Errorf("Expected 'forEach system field not found' error, got: %v", err)
+	}
+}
+
+func TestProcessForEach_KVSourcedArray_NotArray(t *testing.T) {
+	kvData := map[string]map[string]interface{}{
+		"config": {
+			"settings": map[string]interface{}{"key": "value"}, // object, not array
+		},
+	}
+	processor := setupTestProcessorWithKV(kvData)
+
+	action := &NATSAction{
+		ForEach: "{@kv.config.settings}",
+		Subject: "test.{key}",
+		Payload: `{"key": "{key}"}`,
+	}
+
+	context := newKVTemplateTestContext(map[string]interface{}{}, kvData)
+
+	_, err := processor.processNATSActionWithForEach(action, context)
+	if err == nil {
+		t.Fatal("Expected error for non-array KV value, got nil")
+	}
+	if !strings.Contains(err.Error(), "forEach field is not an array") {
+		t.Errorf("Expected 'not an array' error, got: %v", err)
+	}
+}
+
+func TestProcessForEach_KVSourcedArray_WithFilter(t *testing.T) {
+	kvData := map[string]map[string]interface{}{
+		"config": {
+			"doors": []interface{}{
+				map[string]interface{}{"id": "front", "enabled": true},
+				map[string]interface{}{"id": "back", "enabled": false},
+				map[string]interface{}{"id": "garage", "enabled": true},
+			},
+		},
+	}
+	processor := setupTestProcessorWithKV(kvData)
+
+	action := &NATSAction{
+		ForEach: "{@kv.config.doors}",
+		Filter: &Conditions{
+			Operator: "and",
+			Items: []Condition{
+				{Field: "{enabled}", Operator: "eq", Value: true},
+			},
+		},
+		Subject: "access.{id}.unlock",
+		Payload: `{"door": "{id}"}`,
+	}
+
+	context := newKVTemplateTestContext(map[string]interface{}{}, kvData)
+
+	actions, err := processor.processNATSActionWithForEach(action, context)
+	if err != nil {
+		t.Fatalf("processNATSActionWithForEach() error = %v", err)
+	}
+
+	if len(actions) != 2 {
+		t.Fatalf("Expected 2 actions (back filtered out), got %d", len(actions))
+	}
+
+	if actions[0].NATS.Subject != "access.front.unlock" {
+		t.Errorf("Action 0 subject = %s, want access.front.unlock", actions[0].NATS.Subject)
+	}
+	if actions[1].NATS.Subject != "access.garage.unlock" {
+		t.Errorf("Action 1 subject = %s, want access.garage.unlock", actions[1].NATS.Subject)
+	}
+}
+
+func TestProcessForEach_KVSourcedArray_WithJsonPath(t *testing.T) {
+	kvData := map[string]map[string]interface{}{
+		"config": {
+			"building": map[string]interface{}{
+				"name": "HQ",
+				"doors": []interface{}{
+					map[string]interface{}{"id": "front"},
+					map[string]interface{}{"id": "back"},
+				},
+			},
+		},
+	}
+	processor := setupTestProcessorWithKV(kvData)
+
+	// Use KV JSON path to reach nested array: @kv.config.building:doors
+	action := &NATSAction{
+		ForEach: "{@kv.config.building:doors}",
+		Subject: "access.{id}.command",
+		Payload: `{"door": "{id}", "command": "unlock"}`,
+	}
+
+	context := newKVTemplateTestContext(map[string]interface{}{}, kvData)
+
+	actions, err := processor.processNATSActionWithForEach(action, context)
+	if err != nil {
+		t.Fatalf("processNATSActionWithForEach() error = %v", err)
+	}
+
+	if len(actions) != 2 {
+		t.Fatalf("Expected 2 actions, got %d", len(actions))
+	}
+
+	if actions[0].NATS.Subject != "access.front.command" {
+		t.Errorf("Action 0 subject = %s, want access.front.command", actions[0].NATS.Subject)
+	}
+	if actions[1].NATS.Subject != "access.back.command" {
+		t.Errorf("Action 1 subject = %s, want access.back.command", actions[1].NATS.Subject)
+	}
+}
+

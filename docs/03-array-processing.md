@@ -293,6 +293,88 @@ action:
     payload: '{"device": "{device}"}'
 ```
 
+## KV-Sourced Arrays
+
+ForEach can source its array from a NATS KV store instead of the message payload. This enables **fan-out patterns** — especially useful for `rule-scheduler`, where there is no incoming message.
+
+**Syntax:** Use `{@kv.bucket.key}` as the forEach field. The KV value must be a JSON array.
+
+### Schedule Fan-Out Example
+
+Unlock all doors from a KV-managed list every weekday morning:
+
+```yaml
+# KV: config["door_list"] = [{"id": "front", "zone": "main"}, {"id": "back", "zone": "service"}]
+- trigger:
+    schedule:
+      cron: "0 8 * * 1-5"
+      timezone: "America/New_York"
+  action:
+    nats:
+      forEach: "{@kv.config.door_list}"
+      subject: "access.door.{id}.command"
+      payload: |
+        {
+          "command": "unlock",
+          "zone": "{zone}",
+          "source": "rule-scheduler",
+          "id": "{@uuid7()}"
+        }
+```
+
+Adding or removing doors only requires updating the KV entry — no rule file changes or reloads needed.
+
+### With JSON Path
+
+Use the colon delimiter to reach a nested array inside a KV value:
+
+```yaml
+# KV: config["building"] = {"name": "HQ", "doors": [{"id": "front"}, {"id": "back"}]}
+action:
+  nats:
+    forEach: "{@kv.config.building:doors}"
+    subject: "access.{id}.command"
+    payload: '{"door": "{id}", "command": "unlock"}'
+```
+
+### With Filter
+
+Combine KV-sourced arrays with filters to conditionally process elements:
+
+```yaml
+# KV: config["doors"] = [{"id": "front", "enabled": true}, {"id": "storage", "enabled": false}]
+action:
+  nats:
+    forEach: "{@kv.config.doors}"
+    filter:
+      operator: and
+      items:
+        - field: "{enabled}"
+          operator: eq
+          value: true
+    subject: "access.{id}.command"
+    payload: '{"door": "{id}", "command": "unlock"}'
+```
+
+### NATS/HTTP Rules with KV Arrays
+
+KV-sourced forEach also works with NATS and HTTP triggers. This is useful when the set of targets is managed in KV rather than embedded in each message:
+
+```yaml
+- trigger:
+    nats:
+      subject: "commands.broadcast"
+  action:
+    nats:
+      forEach: "{@kv.config.endpoints}"
+      subject: "commands.{endpoint_id}"
+      payload: |
+        {
+          "endpoint": "{endpoint_id}",
+          "original_command": "{@msg.command}"
+        }
+```
+
 ## Performance & Limits
 
 **Default Limits:**

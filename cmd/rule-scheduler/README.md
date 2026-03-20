@@ -138,10 +138,38 @@ Since schedule rules have no incoming message, only a subset of system variables
 | Yes | `{@time.*}`, `{@day.*}`, `{@date.*}`, `{@timestamp.*}` | Time-based logic |
 | Yes | `{@kv.bucket.key}` | KV store lookups |
 | Yes | `{@uuid4()}`, `{@uuid7()}`, `{@timestamp()}` | Template functions |
+| Yes | `forEach: "{@kv.bucket.key}"` | KV-sourced fan-out (array from KV) |
 | No | `{fieldName}`, `{@msg.*}` | No incoming message payload |
 | No | `{@subject.*}`, `{@header.*}` | No NATS/HTTP trigger context |
 | No | `{@path.*}`, `{@method}` | No HTTP context |
 | No | `{@signature.*}` | No signature context |
+
+## Fan-Out Pattern (KV-Sourced forEach)
+
+Schedule rules can iterate over arrays stored in KV, enabling fan-out patterns where targets are managed at runtime.
+
+```yaml
+# KV: config["door_list"] = [{"id": "front", "zone": "main"}, {"id": "back", "zone": "service"}]
+
+# Unlock all doors from KV list every weekday morning
+- trigger:
+    schedule:
+      cron: "0 8 * * 1-5"
+      timezone: "America/New_York"
+  action:
+    nats:
+      forEach: "{@kv.config.door_list}"
+      subject: "access.door.{id}.command"
+      payload: |
+        {
+          "command": "unlock",
+          "zone": "{zone}",
+          "source": "rule-scheduler",
+          "id": "{@uuid7()}"
+        }
+```
+
+Adding or removing doors only requires updating the KV entry — no rule file changes or reloads needed. See the [Array Processing documentation](./../../docs/03-array-processing.md) for details on filters, JSON paths, and other forEach features.
 
 ## Configuration
 
