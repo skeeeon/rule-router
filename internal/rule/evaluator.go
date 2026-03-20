@@ -35,14 +35,8 @@ func (e *Evaluator) SetMetrics(m *metrics.Metrics) {
 // Evaluate checks if a message satisfies the conditions
 func (e *Evaluator) Evaluate(conditions *Conditions, context *EvaluationContext) bool {
 	if conditions == nil || (len(conditions.Items) == 0 && len(conditions.Groups) == 0) {
-		e.logger.Debug("no conditions to evaluate")
 		return true
 	}
-
-	e.logger.Debug("evaluating condition group",
-		"operator", conditions.Operator,
-		"numConditions", len(conditions.Items),
-		"numGroups", len(conditions.Groups))
 
 	if conditions.Operator == "and" {
 		return e.evaluateAND(conditions, context)
@@ -55,86 +49,34 @@ func (e *Evaluator) Evaluate(conditions *Conditions, context *EvaluationContext)
 }
 
 func (e *Evaluator) evaluateAND(conditions *Conditions, context *EvaluationContext) bool {
-	for i, condition := range conditions.Items {
-		result := e.evaluateCondition(&condition, context)
-		
-		e.logger.Debug("evaluated AND condition",
-			"index", i,
-			"field", condition.Field,
-			"operator", condition.Operator,
-			"value", condition.Value,
-			"result", result)
-		
-		if !result {
-			e.logger.Debug("AND group short-circuited on condition",
-				"failedIndex", i,
-				"field", condition.Field,
-				"totalConditions", len(conditions.Items),
-				"skippedConditions", len(conditions.Items)-i-1)
+	for _, condition := range conditions.Items {
+		if !e.evaluateCondition(&condition, context) {
 			return false
 		}
 	}
 
-	for i, group := range conditions.Groups {
-		result := e.Evaluate(&group, context)
-		
-		e.logger.Debug("evaluated AND nested group",
-			"index", i,
-			"operator", group.Operator,
-			"result", result)
-		
-		if !result {
-			e.logger.Debug("AND group short-circuited on nested group",
-				"failedGroupIndex", i,
-				"totalGroups", len(conditions.Groups),
-				"skippedGroups", len(conditions.Groups)-i-1)
+	for _, group := range conditions.Groups {
+		if !e.Evaluate(&group, context) {
 			return false
 		}
 	}
 
-	e.logger.Debug("AND group: all conditions passed")
 	return true
 }
 
 func (e *Evaluator) evaluateOR(conditions *Conditions, context *EvaluationContext) bool {
-	for i, condition := range conditions.Items {
-		result := e.evaluateCondition(&condition, context)
-		
-		e.logger.Debug("evaluated OR condition",
-			"index", i,
-			"field", condition.Field,
-			"operator", condition.Operator,
-			"value", condition.Value,
-			"result", result)
-		
-		if result {
-			e.logger.Debug("OR group short-circuited on condition",
-				"successIndex", i,
-				"field", condition.Field,
-				"totalConditions", len(conditions.Items),
-				"skippedConditions", len(conditions.Items)-i-1)
+	for _, condition := range conditions.Items {
+		if e.evaluateCondition(&condition, context) {
 			return true
 		}
 	}
 
-	for i, group := range conditions.Groups {
-		result := e.Evaluate(&group, context)
-		
-		e.logger.Debug("evaluated OR nested group",
-			"index", i,
-			"operator", group.Operator,
-			"result", result)
-		
-		if result {
-			e.logger.Debug("OR group short-circuited on nested group",
-				"successGroupIndex", i,
-				"totalGroups", len(conditions.Groups),
-				"skippedGroups", len(conditions.Groups)-i-1)
+	for _, group := range conditions.Groups {
+		if e.Evaluate(&group, context) {
 			return true
 		}
 	}
 
-	e.logger.Debug("OR group: no conditions passed")
 	return false
 }
 
@@ -144,26 +86,19 @@ func (e *Evaluator) evaluateCondition(cond *Condition, context *EvaluationContex
 	if err != nil {
 		e.logger.Warn("failed to resolve condition field",
 			"field", cond.Field,
-			"error", err,
-			"impact", "Condition will evaluate to false")
+			"operator", cond.Operator,
+			"error", err)
 		return false
 	}
 
 	// Check existence before proceeding (except for 'exists' operator)
 	if leftValue == nil && cond.Operator != "exists" {
-		e.logger.Debug("condition field resolved to nil",
-			"field", cond.Field,
-			"operator", cond.Operator)
 		return false
 	}
 
 	// Handle 'exists' operator specially
 	if cond.Operator == "exists" {
-		result := leftValue != nil
-		e.logger.Debug("exists operator evaluation",
-			"field", cond.Field,
-			"exists", result)
-		return result
+		return leftValue != nil
 	}
 
 	// Handle array operators (any/all/none) - pass through to existing handler
@@ -175,61 +110,47 @@ func (e *Evaluator) evaluateCondition(cond *Condition, context *EvaluationContex
 	rightValue, err := resolveConditionValueFast(cond.Value, cond.valueVarName, cond.valuePath, context)
 	if err != nil {
 		e.logger.Warn("failed to resolve condition value",
+			"field", cond.Field,
+			"operator", cond.Operator,
 			"value", cond.Value,
-			"error", err,
-			"impact", "Condition will evaluate to false")
+			"error", err)
 		return false
 	}
 
 	// Perform comparison with both sides resolved
-	var result bool
 	switch cond.Operator {
 	case "eq":
-		result = e.compareValues(leftValue, rightValue, "eq")
+		return e.compareValues(leftValue, rightValue, "eq")
 	case "neq":
-		result = e.compareValues(leftValue, rightValue, "neq")
+		return e.compareValues(leftValue, rightValue, "neq")
 	case "gt", "lt", "gte", "lte":
-		result = e.compareNumeric(leftValue, rightValue, cond.Operator)
+		return e.compareNumeric(leftValue, rightValue, cond.Operator)
 	case "contains":
-		result = e.compareContains(leftValue, rightValue)
+		return e.compareContains(leftValue, rightValue)
 	case "not_contains":
-		result = !e.compareContains(leftValue, rightValue)
+		return !e.compareContains(leftValue, rightValue)
 	case "in":
-		result = e.compareIn(leftValue, rightValue)
+		return e.compareIn(leftValue, rightValue)
 	case "not_in":
-		result = !e.compareIn(leftValue, rightValue)
+		return !e.compareIn(leftValue, rightValue)
 	case "recent":
-		result = e.compareRecent(leftValue, rightValue, context)
+		return e.compareRecent(leftValue, rightValue, context)
 	default:
-		e.logger.Error("unknown operator", "operator", cond.Operator)
+		e.logger.Error("unknown operator", "operator", cond.Operator, "field", cond.Field)
 		return false
 	}
-
-	e.logger.Debug("condition evaluation result",
-		"field", cond.Field,
-		"operator", cond.Operator,
-		"expectedValue", cond.Value,
-		"leftResolved", leftValue,
-		"rightResolved", rightValue,
-		"result", result)
-
-	return result
 }
 
 // evaluateArrayCondition handles array operators: any, all, none
 // Now supports primitive array elements via ensureObject wrapping
 func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Condition, context *EvaluationContext) bool {
-	e.logger.Debug("evaluating array condition",
-		"field", cond.Field,
-		"operator", cond.Operator)
-
 	array, ok := fieldValue.([]interface{})
 	if !ok {
 		e.logger.Debug("array operator used on non-array field",
 			"field", cond.Field,
 			"operator", cond.Operator,
 			"actualType", fmt.Sprintf("%T", fieldValue))
-		
+
 		if e.metrics != nil {
 			e.metrics.IncArrayOperatorEvaluations(cond.Operator, false)
 		}
@@ -240,69 +161,35 @@ func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Conditi
 		e.logger.Error("array operator missing nested conditions",
 			"field", cond.Field,
 			"operator", cond.Operator)
-		
+
 		if e.metrics != nil {
 			e.metrics.IncArrayOperatorEvaluations(cond.Operator, false)
 		}
 		return false
 	}
 
-	e.logger.Debug("array condition setup complete",
-		"field", cond.Field,
-		"operator", cond.Operator,
-		"arrayLength", len(array),
-		"nestedConditions", cond.Conditions.Operator)
-
 	matchCount := 0
-	
+
 	for i, element := range array {
 		// Wrap primitives, pass objects through
 		elementMap := ensureObject(element)
-		
-		// Log if we wrapped a primitive (helpful for debugging)
-		if _, ok := element.(map[string]interface{}); !ok {
-			e.logger.Debug("array element wrapped as primitive",
-				"field", cond.Field,
-				"index", i,
-				"originalType", fmt.Sprintf("%T", element),
-				"operator", cond.Operator,
-				"accessVia", "@value")
-		}
 
 		// Create element context for array element processing
 		elementContext := context.WithElement(elementMap)
 
-		elementMatches := e.Evaluate(cond.Conditions, elementContext)
-		
-		e.logger.Debug("array element evaluation",
-			"field", cond.Field,
-			"index", i,
-			"matches", elementMatches)
-
-		if elementMatches {
+		if e.Evaluate(cond.Conditions, elementContext) {
 			matchCount++
-			
+
 			// Short-circuit for "any"
 			if cond.Operator == "any" {
-				e.logger.Debug("array operator 'any' short-circuited",
-					"field", cond.Field,
-					"matchedIndex", i,
-					"totalElements", len(array),
-					"skippedElements", len(array)-i-1)
-				
 				if e.metrics != nil {
 					e.metrics.IncArrayOperatorEvaluations(cond.Operator, true)
 				}
 				return true
 			}
-			
+
 			// Short-circuit for "none"
 			if cond.Operator == "none" {
-				e.logger.Debug("array operator 'none' short-circuited (found match)",
-					"field", cond.Field,
-					"matchedIndex", i,
-					"totalElements", len(array))
-				
 				if e.metrics != nil {
 					e.metrics.IncArrayOperatorEvaluations(cond.Operator, false)
 				}
@@ -311,12 +198,12 @@ func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Conditi
 		} else {
 			// Short-circuit for "all"
 			if cond.Operator == "all" {
-				e.logger.Debug("array operator 'all' short-circuited (found non-match)",
+				e.logger.Debug("array 'all' failed",
 					"field", cond.Field,
 					"failedIndex", i,
-					"totalElements", len(array),
-					"skippedElements", len(array)-i-1)
-				
+					"checked", i+1,
+					"total", len(array))
+
 				if e.metrics != nil {
 					e.metrics.IncArrayOperatorEvaluations(cond.Operator, false)
 				}
@@ -339,13 +226,6 @@ func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Conditi
 		result = false
 	}
 
-	e.logger.Debug("array condition evaluation complete",
-		"field", cond.Field,
-		"operator", cond.Operator,
-		"arrayLength", len(array),
-		"matchCount", matchCount,
-		"result", result)
-
 	if e.metrics != nil {
 		e.metrics.IncArrayOperatorEvaluations(cond.Operator, result)
 	}
@@ -357,23 +237,16 @@ func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Conditi
 func (e *Evaluator) compareRecent(msgTimestamp, tolerance interface{}, context *EvaluationContext) bool {
 	toleranceStr, ok := tolerance.(string)
 	if !ok {
-		e.logger.Debug("recent operator: tolerance must be a duration string", "tolerance", tolerance)
 		return false
 	}
-	
+
 	duration, err := time.ParseDuration(toleranceStr)
 	if err != nil {
-		e.logger.Debug("recent operator: invalid duration",
-			"tolerance", toleranceStr,
-			"error", err)
 		return false
 	}
 
 	ts, err := e.parseTimestamp(msgTimestamp)
 	if err != nil {
-		e.logger.Debug("recent operator: failed to parse timestamp",
-			"value", msgTimestamp,
-			"error", err)
 		return false
 	}
 
@@ -381,24 +254,10 @@ func (e *Evaluator) compareRecent(msgTimestamp, tolerance interface{}, context *
 	diff := now.Sub(ts)
 
 	if diff < -clockSkewTolerance {
-		e.logger.Debug("recent operator: timestamp too far in future",
-			"timestamp", ts,
-			"now", now,
-			"diff", diff,
-			"maxFutureTolerance", clockSkewTolerance)
 		return false
 	}
 
-	isRecent := diff <= duration
-
-	e.logger.Debug("recent operator evaluation",
-		"timestamp", ts,
-		"now", now,
-		"diff", diff,
-		"tolerance", duration,
-		"result", isRecent)
-
-	return isRecent
+	return diff <= duration
 }
 
 // parseTimestamp flexibly parses timestamps
@@ -553,4 +412,3 @@ func (e *Evaluator) convertToString(value interface{}) string {
 	}
 	return fmt.Sprintf("%v", value)
 }
-

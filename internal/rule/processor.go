@@ -388,7 +388,7 @@ func (p *Processor) evaluateRules(rules []*Rule, context *EvaluationContext, tri
 	var actions []*Action
 
 	for _, rule := range rules {
-		p.logger.Debug("evaluating rule", "triggerType", triggerType)
+		p.logger.Debug("evaluating rule", "ruleIndex", rule.index, "triggerType", triggerType)
 
 		// Trigger debounce: skip rule evaluation entirely if suppressed
 		if cfg := getTriggerDebounce(rule); cfg != nil {
@@ -616,15 +616,6 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 	for i, item := range arrayData.items {
 		// Wrap primitives, pass objects through
 		itemMap := ensureObject(item)
-		
-		// Log if we wrapped a primitive (helpful for debugging)
-		if _, ok := item.(map[string]interface{}); !ok {
-			p.logger.Debug("forEach element wrapped as primitive",
-				"field", action.ForEach,
-				"index", i,
-				"originalType", fmt.Sprintf("%T", item),
-				"accessVia", "@value")
-		}
 
 		// Create context once and reuse for both filter and templating
 		elementContext := p.createElementContext(itemMap, context)
@@ -632,9 +623,6 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 		// Apply filter if present (using the same context)
 		if action.Filter != nil {
 			if !p.evaluator.Evaluate(action.Filter, elementContext) {
-				p.logger.Debug("forEach element filtered out",
-					"field", action.ForEach,
-					"index", i)
 				result.FilteredElements++
 				continue
 			}
@@ -731,11 +719,6 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 
 		actions = append(actions, &Action{NATS: actionResult})
 		result.ProcessedElements++
-
-		p.logger.Debug("forEach element processed successfully",
-			"field", action.ForEach,
-			"index", i,
-			"subject", actionResult.Subject)
 	}
 
 	duration := time.Since(start).Seconds()
@@ -753,14 +736,20 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 		}
 	}
 
-	p.logger.Info("forEach processing complete",
+	logFields := []any{
 		"field", action.ForEach,
 		"totalElements", result.TotalElements,
 		"processedElements", result.ProcessedElements,
 		"filteredElements", result.FilteredElements,
 		"failedElements", result.FailedElements,
 		"actionsGenerated", len(actions),
-		"duration", fmt.Sprintf("%.3fs", duration))
+		"duration", fmt.Sprintf("%.3fs", duration),
+	}
+	if result.FailedElements > 0 {
+		p.logger.Warn("forEach processing complete with failures", logFields...)
+	} else {
+		p.logger.Info("forEach processing complete", logFields...)
+	}
 
 	return actions, nil
 }
@@ -840,15 +829,6 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 	for i, item := range arrayData.items {
 		// Wrap primitives, pass objects through
 		itemMap := ensureObject(item)
-		
-		// Log if we wrapped a primitive (helpful for debugging)
-		if _, ok := item.(map[string]interface{}); !ok {
-			p.logger.Debug("forEach element wrapped as primitive",
-				"field", action.ForEach,
-				"index", i,
-				"originalType", fmt.Sprintf("%T", item),
-				"accessVia", "@value")
-		}
 
 		// Create context once and reuse for both filter and templating
 		elementContext := p.createElementContext(itemMap, context)
@@ -856,9 +836,6 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 		// Apply filter if present (using the same context)
 		if action.Filter != nil {
 			if !p.evaluator.Evaluate(action.Filter, elementContext) {
-				p.logger.Debug("forEach element filtered out",
-					"field", action.ForEach,
-					"index", i)
 				result.FilteredElements++
 				continue
 			}
@@ -972,11 +949,6 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 
 		actions = append(actions, &Action{HTTP: actionResult})
 		result.ProcessedElements++
-		
-		p.logger.Debug("forEach element processed successfully",
-			"field", action.ForEach,
-			"index", i,
-			"url", actionResult.URL)
 	}
 
 	duration := time.Since(start).Seconds()
@@ -994,14 +966,20 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 		}
 	}
 
-	p.logger.Info("forEach processing complete",
+	logFields := []any{
 		"field", action.ForEach,
 		"totalElements", result.TotalElements,
 		"processedElements", result.ProcessedElements,
 		"filteredElements", result.FilteredElements,
 		"failedElements", result.FailedElements,
 		"actionsGenerated", len(actions),
-		"duration", fmt.Sprintf("%.3fs", duration))
+		"duration", fmt.Sprintf("%.3fs", duration),
+	}
+	if result.FailedElements > 0 {
+		p.logger.Warn("forEach processing complete with failures", logFields...)
+	} else {
+		p.logger.Info("forEach processing complete", logFields...)
+	}
 
 	return actions, nil
 }

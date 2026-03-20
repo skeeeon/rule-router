@@ -171,23 +171,18 @@ func (s *InboundServer) Start(ctx context.Context) error {
 
 // startWorkers launches the fixed pool of goroutines.
 func (s *InboundServer) startWorkers(ctx context.Context) {
+	s.logger.Info("starting inbound workers", "count", s.serverCfg.InboundWorkerCount)
 	for i := 0; i < s.serverCfg.InboundWorkerCount; i++ {
 		s.wg.Add(1)
 		workerID := i + 1
 		go func() {
 			defer s.wg.Done()
-			s.logger.Info("starting inbound worker", "workerID", workerID)
-			// Loop checks both context cancellation and channel closure
 			for {
 				select {
 				case <-ctx.Done():
-					// Context cancelled - exit immediately
-					s.logger.Debug("inbound worker context cancelled", "workerID", workerID)
 					return
 				case job, ok := <-s.workQueue:
 					if !ok {
-						// Channel closed - no more jobs will arrive
-						s.logger.Info("inbound worker stopped", "workerID", workerID)
 						return
 					}
 					s.processWebhookWithRecovery(job.path, job.method, job.body, job.headers, workerID)

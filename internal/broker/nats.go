@@ -335,16 +335,26 @@ func (b *NATSBroker) InitializeKVCache() error {
 
 // subscribeToKVChanges subscribes to KV change streams using the new Watch API
 func (b *NATSBroker) subscribeToKVChanges() error {
-	b.logger.Info("subscribing to KV changes using Watch API", "buckets", len(b.config.KV.Buckets))
+	total := len(b.config.KV.Buckets)
+	b.logger.Info("subscribing to KV changes using Watch API", "buckets", total)
 
+	var failedBuckets []string
 	for _, bucketName := range b.config.KV.Buckets {
 		if err := b.watchKVBucket(bucketName); err != nil {
 			b.logger.Error("failed to watch KV bucket", "bucket", bucketName, "error", err)
-			// Continue with other buckets
+			failedBuckets = append(failedBuckets, bucketName)
 		}
 	}
 
-	b.logger.Info("KV watch subscriptions established", "watchers", len(b.kvWatchers))
+	if len(failedBuckets) > 0 {
+		b.logger.Warn("KV watch subscriptions partially established",
+			"watching", len(b.kvWatchers),
+			"failed", len(failedBuckets),
+			"total", total,
+			"failedBuckets", failedBuckets)
+	} else {
+		b.logger.Info("KV watch subscriptions established", "watchers", len(b.kvWatchers))
+	}
 	return nil
 }
 
@@ -389,8 +399,8 @@ func (b *NATSBroker) processKVWatchUpdates(bucketName string, watcher jetstream.
 
 		case entry := <-watcher.Updates():
 			if entry == nil {
-				// Initial values sent, now receiving updates
-				b.logger.Debug("KV watcher initial sync complete", "bucket", bucketName)
+				// Initial values sent, now receiving live updates
+				b.logger.Info("KV watcher initial sync complete", "bucket", bucketName)
 				continue
 			}
 
