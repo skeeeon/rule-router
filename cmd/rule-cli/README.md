@@ -1,6 +1,6 @@
 # Rule CLI (`rule-cli`)
 
-The `rule-cli` is a powerful command-line utility for creating, testing, and validating your rules in a fast, offline environment. It is the primary tool for managing the lifecycle of rules for both the `rule-router` and `http-gateway` applications.
+The `rule-cli` is a powerful command-line utility for creating, testing, and validating your rules in a fast, offline environment. It is the primary tool for managing the lifecycle of rules for the `rule-router`, `rule-scheduler`, and `http-gateway` applications.
 
 This tool streamlines the developer workflow by providing both rapid, template-based scaffolding for common patterns and a flexible, interactive builder for custom rules. It is essential for maintaining a high-quality, reliable ruleset and integrating rule validation into a modern CI/CD workflow.
 
@@ -8,9 +8,10 @@ This tool streamlines the developer workflow by providing both rapid, template-b
 
 ## Features
 
-*   **Interactive Rule Builder**: A step-by-step wizard that guides you through creating complex rules, including nested conditions and `forEach` actions.
-*   **Template-Based Scaffolding**: Quickly generate rules for common use cases like NATS-to-NATS routing, batch processing, KV enrichment, and HTTP webhooks.
-*   **Unified Testing**: Test rules for both NATS and HTTP triggers/actions with a single tool.
+*   **Interactive Rule Builder**: A step-by-step wizard that guides you through creating complex rules, including nested conditions, `forEach` actions, and cron schedule triggers. Supports building multiple rules into a single file.
+*   **Template-Based Scaffolding**: Quickly generate rules for common use cases like NATS-to-NATS routing, batch processing, KV enrichment, HTTP webhooks, and cron schedules.
+*   **Unified Testing**: Test rules for NATS, HTTP, and Schedule triggers/actions with a single tool.
+*   **Multi-Rule File Support**: Scaffold, test, and check rules in files containing multiple rules with per-rule test directories.
 *   **Full `forEach` Support**: Intelligently scaffolds, tests, and validates rules that use `forEach` for batch processing, including multi-action output validation.
 *   **Primitive Message Support**: Test rules with strings, numbers, and arrays at the root.
 *   **Linting**: Quickly validate the YAML syntax and structure of all rule files.
@@ -44,13 +45,15 @@ First, list the available templates:
 ```
 ```
 Available templates:
-  - array-operators
   - http-forEach
   - http-inbound
   - http-outbound
+  - nats-array-operators
   - nats-basic
+  - nats-debounce
   - nats-forEach
   - nats-kv-enrichment
+  - schedule-basic
   - signature-verification
 ```
 
@@ -62,6 +65,9 @@ Then, create a rule from a template. The CLI will automatically place it in the 
 
 # Create a rule for batch processing
 ./rule-cli new --template=nats-forEach --output=rules/my-batch-rule.yaml
+
+# Create a cron schedule rule
+./rule-cli new --template=schedule-basic --output=rules/scheduler/my-schedule.yaml
 ```
 
 ### 2. Scaffold Tests
@@ -73,6 +79,8 @@ After creating a rule, use the `scaffold` command to generate a test directory. 
 ```
 
 This creates a `rules/my-batch-rule_test/` directory with pre-populated JSON files for you to edit.
+
+**Multi-rule files**: If the YAML file contains multiple rules, scaffold creates per-rule subdirectories (`_rule_0/`, `_rule_1/`, etc.), each with its own `_test_config.json` and example files.
 
 ### 3. Write Test Cases
 
@@ -101,10 +109,19 @@ Run the `test` command from the root of your project. It will automatically disc
   ✓ not_match_1.json (4ms)
   ✓ not_match_2_empty_array.json (2ms)
 
+=== RULE: rules/webhooks.yaml [rule 0] ===
+  ✓ match_1.json (3ms)
+
+=== RULE: rules/webhooks.yaml [rule 1] ===
+  ✓ match_1.json (2ms)
+  ✓ not_match_1.json (1ms)
+
 --- SUMMARY ---
-Total Tests: 5, Passed: 5, Failed: 0
-Duration: 24ms
+Total Tests: 8, Passed: 8, Failed: 0
+Duration: 30ms
 ```
+
+For multi-rule files, the test runner detects `_rule_N/` subdirectories within the `_test` directory and runs each independently.
 
 -----
 
@@ -131,7 +148,7 @@ Flags:
 
 ### `new` Command
 
-Create new rule files.
+Create new rule files. The interactive wizard supports all three trigger types (NATS, HTTP, Schedule) and can build multiple rules into a single file.
 
 ```bash
 # Start the interactive builder
@@ -141,10 +158,13 @@ rule-cli new
 rule-cli new --list
 
 # Show the content of a template
-rule-cli new --show=nats-basic
+rule-cli new --show=schedule-basic
 
 # Create from a template
 rule-cli new --template=http-inbound --output=rules/http/stripe-webhooks.yaml
+
+# Create a schedule rule from template
+rule-cli new --template=schedule-basic --output=rules/scheduler/daily-check.yaml
 
 # Create and automatically scaffold tests
 rule-cli new --template=nats-forEach --with-tests
@@ -182,8 +202,11 @@ rule-cli lint --rules ./rules
 Generate a test directory for an existing rule file.
 
 ```bash
-# Scaffold tests for a rule (auto-detects forEach)
+# Scaffold tests for a single-rule file (auto-detects forEach)
 rule-cli scaffold rules/my-rule.yaml
+
+# Scaffold tests for a multi-rule file (creates _rule_N/ subdirectories)
+rule-cli scaffold rules/webhooks.yaml
 ```
 
 ### `check` Command
@@ -199,7 +222,12 @@ rule-cli check --rule rules/my-rule.yaml --message msg.json --subject "new.test.
 
 # Provide mock KV data for the check
 rule-cli check --rule rules/kv-rule.yaml --message msg.json --kv-mock test-data/kv.json
+
+# Check a specific rule in a multi-rule file (0-based index)
+rule-cli check --rule rules/webhooks.yaml --message msg.json --rule-index 2
 ```
+
+For multi-rule files, omitting `--rule-index` will list all rules with their triggers so you can pick one.
 
 -----
 
@@ -238,6 +266,35 @@ The `rule-cli` has first-class support for testing array operations.
   }
 ]
 ```
+
+-----
+
+## Testing Multi-Rule Files
+
+When a YAML file contains multiple rules, the test system uses per-rule subdirectories:
+
+```
+rules/
+  webhooks.yaml                   # contains 3 rules
+  webhooks_test/
+    _rule_0/                      # tests for rule 0
+      _test_config.json
+      match_1.json
+      match_1_output.json
+    _rule_1/                      # tests for rule 1
+      _test_config.json
+      match_1.json
+      not_match_1.json
+    _rule_2/                      # tests for rule 2
+      _test_config.json
+      match_1.json
+```
+
+Each `_rule_N/` directory has the same structure as a standard flat test directory — its own `_test_config.json`, `mock_kv_data.json`, match/not_match files, and output files.
+
+**Single-rule files** continue to use the flat layout with no subdirectories (fully backward compatible).
+
+The `scaffold` command automatically detects multi-rule files and creates the appropriate directory structure.
 
 -----
 

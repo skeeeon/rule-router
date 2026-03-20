@@ -63,13 +63,15 @@ type TestSummary struct {
 	Results    []TestResult `json:"results"`
 }
 
-// TestGroup represents a single rule file and all its associated test cases.
+// TestGroup represents a single rule file (or a specific rule within a multi-rule file)
+// and all its associated test cases.
 type TestGroup struct {
 	RulePath   string
 	TestDir    string
 	TestFiles  []string
 	KVData     map[string]map[string]interface{}
 	TestConfig *TestConfig
+	RuleIndex  int // -1 = flat/legacy mode (all rules), >= 0 = specific rule in multi-rule file
 }
 
 // TestJob is used for parallel execution of test cases.

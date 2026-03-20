@@ -1,0 +1,41 @@
+# templates/schedule-basic.yaml
+#
+# A cron-based schedule rule for the rule-scheduler.
+# It triggers on a time schedule and publishes a NATS message.
+# No incoming message payload — only time, KV, and function variables are available.
+#
+# Cron Syntax (5 fields):
+#   minute  hour  day-of-month  month  day-of-week
+#   0 8 * * 1-5      → Weekdays at 8:00 AM
+#   */5 * * * *      → Every 5 minutes
+#   0 0 1 * *        → First day of each month at midnight
+#   30 18 * * *      → Every day at 6:30 PM
+#
+# Available Variables (no message payload in schedule rules):
+#   Time:      {@time.hour}, {@time.minute}, {@day.name}, {@date.month}
+#   KV:        {@kv.bucket.key}, {@kv.bucket.key:json.path}
+#   Functions: {@timestamp()}, {@uuid4()}, {@uuid7()}
+#
+- trigger:
+    schedule:
+      # Standard 5-field cron expression
+      cron: "0 8 * * 1-5"
+      # (Optional) IANA timezone. Defaults to system local time if omitted.
+      timezone: "America/New_York"
+  conditions:
+    operator: and
+    items:
+      # Example: only fire in January (optional — remove if not needed)
+      - field: "{@date.month}"
+        operator: neq
+        value: 12
+  action:
+    nats:
+      subject: "scheduled.daily-task"
+      payload: |
+        {
+          "source": "rule-scheduler",
+          "task": "daily-check",
+          "triggered_at": "{@timestamp()}",
+          "id": "{@uuid7()}"
+        }

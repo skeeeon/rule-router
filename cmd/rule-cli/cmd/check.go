@@ -18,6 +18,7 @@ and displays the fully rendered action(s) if the rule matches.`,
 		messagePath, _ := cmd.Flags().GetString("message")
 		subjectOverride, _ := cmd.Flags().GetString("subject")
 		kvMockPath, _ := cmd.Flags().GetString("kv-mock")
+		ruleIndex, _ := cmd.Flags().GetInt("rule-index")
 
 		if rulePath == "" || messagePath == "" {
 			return cmd.Help()
@@ -26,7 +27,7 @@ and displays the fully rendered action(s) if the rule matches.`,
 		log := logger.NewNopLogger()
 		testRunner := tester.New(log, false, 0)
 
-		return testRunner.QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath)
+		return testRunner.QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath, ruleIndex)
 	},
 }
 
@@ -35,6 +36,7 @@ func init() {
 	checkCmd.Flags().String("message", "", "Path to a single message file (required)")
 	checkCmd.Flags().String("subject", "", "Manually specify a NATS subject to override the one in the rule's trigger")
 	checkCmd.Flags().String("kv-mock", "", "Path to a mock KV data file")
+	checkCmd.Flags().IntP("rule-index", "n", -1, "Index of the rule to check in a multi-rule file (0-based)")
 	checkCmd.MarkFlagRequired("rule")
 	checkCmd.MarkFlagRequired("message")
 }

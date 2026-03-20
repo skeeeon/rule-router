@@ -37,6 +37,9 @@ Available Fields (always use {braces}):
   - Array Wrapper:    {@items} (when message is a root array)
   - Value Wrapper:    {@value} (when message is a primitive)
 
+  Note: Schedule rules have no incoming message — only Time, KV,
+  {@timestamp()}, {@uuid4()}, and {@uuid7()} are available.
+
 Available Operators:
   Equality:    eq, neq
   Comparison:  gt, lt, gte, lte

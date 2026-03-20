@@ -46,7 +46,7 @@ through an interactive prompt.`,
 		// If interactive flag is set, or no template is provided, run the builder
 		if isInteractive || templateName == "" {
 			builder := cli.NewRuleBuilder(prompter)
-			ruleBytes, err = builder.BuildRule()
+			ruleBytes, err = builder.BuildRules()
 			if err != nil {
 				return fmt.Errorf("interactive build failed: %w", err)
 			}

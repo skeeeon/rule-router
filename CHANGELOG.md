@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.0] - 2026-03-19
+- Added `schedule-basic` template to `rule-cli new` for cron-based schedule rules
+- Interactive wizard now supports Schedule (Cron) triggers alongside NATS and HTTP
+- Interactive wizard supports building multiple rules into a single file with "Add another rule?" loop
+- `rule-cli scaffold` creates per-rule `_rule_N/` test subdirectories for multi-rule YAML files
+- `rule-cli test` detects and runs `_rule_N/` per-rule test directories independently
+- `rule-cli check` adds `--rule-index` / `-n` flag to select a specific rule in multi-rule files
+- Single-rule files retain full backward compatibility with existing flat test directory layout
+
 ## [0.7.0] - 2026-03-19
 - Added `rule-scheduler` application for cron-based scheduled NATS publishing
 - New `schedule` trigger type with standard 5-field cron expressions and optional IANA timezone support
@@ -52,6 +61,7 @@
 - Signature verification
 - Rule-cli utility
 
+[0.8.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.8.0
 [0.7.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.7.0
 [0.1.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.1.0
 [0.2.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.2.0

@@ -22,11 +22,46 @@ func NewRuleBuilder(p Prompter) *RuleBuilder {
 	return &RuleBuilder{prompter: p}
 }
 
-// BuildRule starts the interactive process to build a complete rule.
-func (rb *RuleBuilder) BuildRule() ([]byte, error) {
-	var r rule.Rule
+// BuildRules starts the interactive process to build one or more rules.
+func (rb *RuleBuilder) BuildRules() ([]byte, error) {
+	var rules []rule.Rule
 
-	fmt.Printf("\n%s--- Building a New Rule ---%s\n", ColorGreen, ColorReset)
+	for {
+		ruleNum := len(rules) + 1
+		fmt.Printf("\n%s--- Building Rule %d ---%s\n", ColorGreen, ruleNum, ColorReset)
+
+		r, err := rb.buildSingleRule()
+		if err != nil {
+			return nil, err
+		}
+		rules = append(rules, *r)
+
+		addMore, _ := rb.prompter.Confirm("Add another rule to this file?")
+		if !addMore {
+			break
+		}
+	}
+
+	var buf bytes.Buffer
+	encoder := yaml.NewEncoder(&buf)
+	encoder.SetIndent(2)
+
+	if err := encoder.Encode(rules); err != nil {
+		return nil, fmt.Errorf("failed to marshal rules to YAML: %w", err)
+	}
+
+	yamlBytes := buf.Bytes()
+
+	header := fmt.Sprintf("# Rule file created on %s\n#\n", time.Now().Format(time.RFC1123))
+	if len(rules) > 1 {
+		header += fmt.Sprintf("# Contains %d rules\n#\n", len(rules))
+	}
+	return append([]byte(header), yamlBytes...), nil
+}
+
+// buildSingleRule walks through trigger, conditions, and action for one rule.
+func (rb *RuleBuilder) buildSingleRule() (*rule.Rule, error) {
+	var r rule.Rule
 
 	// 1. Get Trigger
 	trigger, err := rb.getTrigger()
@@ -49,39 +84,33 @@ func (rb *RuleBuilder) BuildRule() ([]byte, error) {
 	}
 	r.Action = *action
 
-	// Marshal the final rule to YAML with custom indentation
-	ruleList := []rule.Rule{r}
-
-	var buf bytes.Buffer
-	encoder := yaml.NewEncoder(&buf)
-	encoder.SetIndent(2) // Set indentation to 2 spaces
-
-	if err := encoder.Encode(ruleList); err != nil {
-		return nil, fmt.Errorf("failed to marshal rule to YAML: %w", err)
-	}
-
-	yamlBytes := buf.Bytes()
-
-	// Add header comment
-	header := fmt.Sprintf("# Rule file created on %s\n#\n", time.Now().Format(time.RFC1123))
-	return append([]byte(header), yamlBytes...), nil
+	return &r, nil
 }
 
 func (rb *RuleBuilder) getTrigger() (*rule.Trigger, error) {
 	fmt.Printf("\n%s1. Trigger (What starts the rule?)%s\n", ColorBlue, ColorReset)
-	choice, err := rb.prompter.Select("Select Trigger Type:", []string{"NATS (Message Bus)", "HTTP (Webhook)"})
+	choice, err := rb.prompter.Select("Select Trigger Type:", []string{"NATS (Message Bus)", "HTTP (Webhook)", "Schedule (Cron)"})
 	if err != nil {
 		return nil, err
 	}
 
 	var trigger rule.Trigger
-	if choice == 0 { // NATS
+	switch choice {
+	case 0: // NATS
 		subject, _ := rb.prompter.Ask("Enter NATS Trigger Subject (e.g., 'sensors.temp.>'):")
 		trigger.NATS = &rule.NATSTrigger{Subject: subject}
-	} else { // HTTP
+	case 1: // HTTP
 		path, _ := rb.prompter.Ask("Enter HTTP Trigger Path (e.g., '/webhooks/github'):")
 		method, _ := rb.prompter.AskWithDefault("Enter HTTP Method (e.g., 'POST', press Enter for all):", "")
 		trigger.HTTP = &rule.HTTPTrigger{Path: path, Method: strings.ToUpper(method)}
+	case 2: // Schedule
+		fmt.Println("\n  Cron examples:")
+		fmt.Println("    */5 * * * *    → Every 5 minutes")
+		fmt.Println("    0 8 * * 1-5    → Weekdays at 8:00 AM")
+		fmt.Println("    0 0 1 * *      → First day of each month at midnight")
+		cron, _ := rb.prompter.Ask("Enter cron expression (5 fields: min hour dom month dow):")
+		tz, _ := rb.prompter.AskWithDefault("Enter timezone (e.g., 'America/New_York', press Enter for system default):", "")
+		trigger.Schedule = &rule.ScheduleTrigger{Cron: cron, Timezone: tz}
 	}
 	return &trigger, nil
 }

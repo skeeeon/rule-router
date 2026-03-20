@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -74,8 +76,8 @@ func (t *Tester) Lint(rulesDir string) error {
 	return nil
 }
 
-// Scaffold runs the scaffold mode, generating a test directory for a rule.
-// ENHANCED: Better detection and example generation for new v0.4 syntax features
+// Scaffold runs the scaffold mode, generating a test directory for a rule file.
+// Supports both single-rule and multi-rule YAML files.
 func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 	if !strings.HasSuffix(rulePath, ".yaml") && !strings.HasSuffix(rulePath, ".yml") {
 		return fmt.Errorf("--scaffold requires a path to a .yaml rule file")
@@ -105,8 +107,35 @@ func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 	if err != nil || len(rules) == 0 {
 		return fmt.Errorf("could not load rule file to determine trigger type: %w", err)
 	}
-	r := rules[0]
 
+	if len(rules) == 1 {
+		// Single-rule file: flat layout (existing behavior)
+		return t.scaffoldSingleRule(testDir, &rules[0])
+	}
+
+	// Multi-rule file: create _rule_N/ subdirectories
+	fmt.Printf("Found %d rules in %s\n\n", len(rules), rulePath)
+	for i := range rules {
+		fmt.Printf("--- Rule %d: %s ---\n", i, describeTrigger(&rules[i]))
+		ruleSubDir := filepath.Join(testDir, fmt.Sprintf("_rule_%d", i))
+		if err := os.MkdirAll(ruleSubDir, 0755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", ruleSubDir, err)
+		}
+		if err := t.scaffoldSingleRule(ruleSubDir, &rules[i]); err != nil {
+			return err
+		}
+		fmt.Println()
+	}
+
+	fmt.Printf("✓ Scaffolded %d rule test directories under: %s\n", len(rules), testDir)
+	fmt.Println("\nNext steps:")
+	fmt.Println("  1. Edit the JSON files in each _rule_N/ directory with your test data")
+	fmt.Println("  2. Run: rule-cli test --rules ./rules")
+	return nil
+}
+
+// scaffoldSingleRule generates test files for a single rule in the given directory.
+func (t *Tester) scaffoldSingleRule(testDir string, r *rule.Rule) error {
 	// Create a test config based on the rule's trigger type
 	testConfig := TestConfig{
 		MockTime: time.Now().Format(time.RFC3339),
@@ -123,8 +152,8 @@ func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 	os.WriteFile(filepath.Join(testDir, "_test_config.json"), configBytes, 0644)
 
 	// Analyze rule features to generate appropriate examples
-	features := analyzeRuleFeatures(&r)
-	
+	features := analyzeRuleFeatures(r)
+
 	fmt.Printf("📋 Rule Analysis:\n")
 	if features.UsesForEach {
 		fmt.Printf("   ✓ ForEach operation detected: %s\n", features.ForEachField)
@@ -145,12 +174,12 @@ func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 
 	// Generate examples based on detected features
 	if features.UsesForEach {
-		t.generateForEachExamples(testDir, features.ForEachField, &r, features)
+		t.generateForEachExamples(testDir, features.ForEachField, r, features)
 	} else if features.HasVariableComparisons || features.HasKVLookups {
-		t.generateVariableComparisonExamples(testDir, &r, features)
+		t.generateVariableComparisonExamples(testDir, r, features)
 	} else {
 		// Standard single-object examples
-		t.generateBasicExamples(testDir, &r, features)
+		t.generateBasicExamples(testDir, r, features)
 	}
 
 	// Generate mock KV data if needed
@@ -159,7 +188,7 @@ func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 	}
 
 	// Show directory structure
-	fmt.Printf("\n✓ Scaffolded test directory at: %s\n\n", testDir)
+	fmt.Printf("✓ Scaffolded test directory at: %s\n\n", testDir)
 	fmt.Println("Generated files:")
 	fmt.Println("  ├── _test_config.json        (mock trigger, time, headers)")
 	fmt.Println("  ├── match_1.json             (example matching input)")
@@ -172,11 +201,6 @@ func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 		fmt.Println("  ├── mock_kv_data.json        (mock KV store data)")
 	}
 	fmt.Println("  └── README.md                (test instructions)")
-	fmt.Println()
-	fmt.Println("Next steps:")
-	fmt.Println("  1. Edit the JSON files with your actual test data")
-	fmt.Println("  2. Update match_1_output.json with expected actions")
-	fmt.Println("  3. Run: rule-cli test --rules ./rules")
 
 	// Provide helpful tips based on features
 	t.printScaffoldTips(features)
@@ -869,13 +893,33 @@ func (t *Tester) printScaffoldTips(features RuleFeatures) {
 }
 
 // QuickCheck runs the quick check mode for interactive testing.
-func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath string) error {
+// ruleIndex selects which rule in a multi-rule file (-1 = auto, works for single-rule files).
+func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath string, ruleIndex int) error {
 	rules, err := loadSingleRuleFile(rulePath)
 	if err != nil || len(rules) == 0 {
 		return fmt.Errorf("could not load or parse rule file %s: %w", rulePath, err)
 	}
-	r := rules[0]
-	
+
+	// Resolve which rule to use
+	if ruleIndex == -1 {
+		if len(rules) > 1 {
+			fmt.Printf("File contains %d rules. Use --rule-index (-n) to select one:\n\n", len(rules))
+			for i := range rules {
+				fmt.Printf("  %d: %s\n", i, describeTrigger(&rules[i]))
+			}
+			return fmt.Errorf("multiple rules found, specify --rule-index")
+		}
+		ruleIndex = 0
+	}
+	if ruleIndex < 0 || ruleIndex >= len(rules) {
+		return fmt.Errorf("rule index %d out of range (file has %d rules, indices 0-%d)", ruleIndex, len(rules), len(rules)-1)
+	}
+	r := rules[ruleIndex]
+
+	if len(rules) > 1 {
+		fmt.Printf("Using rule %d: %s\n\n", ruleIndex, describeTrigger(&r))
+	}
+
 	// Setup test config based on the actual rule trigger
 	testConfig := &TestConfig{Headers: make(map[string]string)}
 	if r.Trigger.NATS != nil {
@@ -972,7 +1016,11 @@ func (t *Tester) RunBatchTest(rulesDir string) (TestSummary, error) {
 func (t *Tester) runTestsSequential(groups []TestGroup) TestSummary {
 	summary := TestSummary{}
 	for _, group := range groups {
-		fmt.Printf("=== RULE: %s ===\n", group.RulePath)
+		if group.RuleIndex >= 0 {
+			fmt.Printf("=== RULE: %s [rule %d] ===\n", group.RulePath, group.RuleIndex)
+		} else {
+			fmt.Printf("=== RULE: %s ===\n", group.RulePath)
+		}
 		processor := setupTestProcessor(group.RulePath, group.KVData, group.TestConfig, false)
 		for _, testFile := range group.TestFiles {
 			baseName := filepath.Base(testFile)
@@ -1236,15 +1284,31 @@ func (t *Tester) collectTestGroups(rulesDir string) ([]TestGroup, error) {
 			return nil
 		}
 		testDir := strings.TrimSuffix(path, filepath.Ext(path)) + "_test"
-		if _, err := os.Stat(testDir); !os.IsNotExist(err) {
-			testFiles, _ := filepath.Glob(filepath.Join(testDir, "*.json"))
-			var validTests []string
-			for _, testFile := range testFiles {
-				baseName := filepath.Base(testFile)
-				if !strings.HasSuffix(baseName, "_output.json") && baseName != "mock_kv_data.json" && baseName != "_test_config.json" {
-					validTests = append(validTests, testFile)
+		if _, err := os.Stat(testDir); os.IsNotExist(err) {
+			return nil
+		}
+
+		// Check for _rule_N/ subdirectories (multi-rule mode)
+		ruleSubDirs := findRuleSubDirs(testDir)
+		if len(ruleSubDirs) > 0 {
+			for _, dirName := range ruleSubDirs {
+				idx := parseRuleIndex(dirName)
+				subDirPath := filepath.Join(testDir, dirName)
+				validTests := collectTestFiles(subDirPath)
+				if len(validTests) > 0 {
+					testGroups = append(testGroups, TestGroup{
+						RulePath:   path,
+						TestDir:    subDirPath,
+						TestFiles:  validTests,
+						KVData:     loadMockKV(filepath.Join(subDirPath, "mock_kv_data.json")),
+						TestConfig: loadTestConfig(filepath.Join(subDirPath, "_test_config.json")),
+						RuleIndex:  idx,
+					})
 				}
 			}
+		} else {
+			// Flat layout (single-rule / legacy mode)
+			validTests := collectTestFiles(testDir)
 			if len(validTests) > 0 {
 				testGroups = append(testGroups, TestGroup{
 					RulePath:   path,
@@ -1252,6 +1316,7 @@ func (t *Tester) collectTestGroups(rulesDir string) ([]TestGroup, error) {
 					TestFiles:  validTests,
 					KVData:     loadMockKV(filepath.Join(testDir, "mock_kv_data.json")),
 					TestConfig: loadTestConfig(filepath.Join(testDir, "_test_config.json")),
+					RuleIndex:  -1,
 				})
 			}
 		}
@@ -1331,4 +1396,67 @@ func loadMockKV(path string) map[string]map[string]interface{} {
 	var data map[string]map[string]interface{}
 	json.Unmarshal(bytes, &data)
 	return data
+}
+
+// findRuleSubDirs returns sorted _rule_N directory names within a test directory.
+func findRuleSubDirs(testDir string) []string {
+	entries, err := os.ReadDir(testDir)
+	if err != nil {
+		return nil
+	}
+	var dirs []string
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), "_rule_") {
+			if parseRuleIndex(e.Name()) >= 0 {
+				dirs = append(dirs, e.Name())
+			}
+		}
+	}
+	sort.Strings(dirs)
+	return dirs
+}
+
+// parseRuleIndex extracts N from a "_rule_N" directory name. Returns -1 on bad format.
+func parseRuleIndex(name string) int {
+	prefix := "_rule_"
+	if !strings.HasPrefix(name, prefix) {
+		return -1
+	}
+	n, err := strconv.Atoi(name[len(prefix):])
+	if err != nil || n < 0 {
+		return -1
+	}
+	return n
+}
+
+// describeTrigger returns a short human-readable description of a rule's trigger.
+func describeTrigger(r *rule.Rule) string {
+	if r.Trigger.NATS != nil {
+		return fmt.Sprintf("NATS %s", r.Trigger.NATS.Subject)
+	}
+	if r.Trigger.HTTP != nil {
+		method := r.Trigger.HTTP.Method
+		if method == "" {
+			method = "*"
+		}
+		return fmt.Sprintf("HTTP %s %s", method, r.Trigger.HTTP.Path)
+	}
+	if r.Trigger.Schedule != nil {
+		return fmt.Sprintf("Schedule %s", r.Trigger.Schedule.Cron)
+	}
+	return "unknown"
+}
+
+// collectTestFiles returns valid test JSON files from a directory,
+// excluding _output.json, mock_kv_data.json, and _test_config.json.
+func collectTestFiles(dir string) []string {
+	testFiles, _ := filepath.Glob(filepath.Join(dir, "*.json"))
+	var valid []string
+	for _, f := range testFiles {
+		baseName := filepath.Base(f)
+		if !strings.HasSuffix(baseName, "_output.json") && baseName != "mock_kv_data.json" && baseName != "_test_config.json" {
+			valid = append(valid, f)
+		}
+	}
+	return valid
 }
