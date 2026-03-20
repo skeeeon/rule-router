@@ -90,6 +90,18 @@ func (pm *PatternMatcher) Match(subject string) bool {
 	return pm.matchTokens(subjectTokens, pm.compiled)
 }
 
+// MatchTokens checks if pre-split subject tokens match this pattern.
+// Use this when the caller already has tokens to avoid redundant strings.Split.
+func (pm *PatternMatcher) MatchTokens(subjectTokens []string) bool {
+	if !pm.isPattern {
+		return pm.pattern == strings.Join(subjectTokens, ".")
+	}
+	if len(subjectTokens) == 0 {
+		return pm.pattern == "" || pm.pattern == ">"
+	}
+	return pm.matchTokens(subjectTokens, pm.compiled)
+}
+
 // compile pre-compiles the pattern for efficient matching
 func (pm *PatternMatcher) compile() *CompiledPattern {
 	compiled := &CompiledPattern{

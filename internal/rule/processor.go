@@ -181,6 +181,17 @@ func (p *Processor) LoadRules(rules []Rule) error {
 		rule.index = i
 		p.allRules = append(p.allRules, rule)
 
+		// Pre-compute condition paths for hot-path optimization
+		if rule.Conditions != nil {
+			PrepareConditions(rule.Conditions)
+		}
+		if rule.Action.NATS != nil && rule.Action.NATS.Filter != nil {
+			PrepareConditions(rule.Action.NATS.Filter)
+		}
+		if rule.Action.HTTP != nil && rule.Action.HTTP.Filter != nil {
+			PrepareConditions(rule.Action.HTTP.Filter)
+		}
+
 		if rule.Trigger.NATS != nil {
 			p.index.Add(rule)
 			natsCount++
@@ -276,7 +287,10 @@ func (p *Processor) ProcessSchedule(rule *Rule) ([]*Action, error) {
 func (p *Processor) ProcessNATS(subject string, payload []byte, headers map[string]string) ([]*Action, error) {
 	p.logger.Debug("processing NATS message", "subject", subject, "payloadSize", len(payload))
 
-	rules := p.index.FindAllMatching(subject)
+	// Create SubjectContext first so we can reuse its tokens for pattern matching
+	subjectCtx := NewSubjectContext(subject)
+
+	rules := p.index.FindAllMatchingTokenized(subject, subjectCtx.Tokens)
 	if len(rules) == 0 {
 		return nil, nil
 	}
@@ -284,7 +298,7 @@ func (p *Processor) ProcessNATS(subject string, payload []byte, headers map[stri
 	context, err := NewEvaluationContext(
 		payload,
 		headers,
-		NewSubjectContext(subject),
+		subjectCtx,
 		nil,
 		p.timeProvider.GetCurrentContext(),
 		p.kvContext,

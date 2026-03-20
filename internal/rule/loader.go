@@ -20,6 +20,9 @@ import (
 // Allows uppercase, lowercase, numbers, and underscores
 var envVarPattern = regexp.MustCompile(`\$\{([A-Za-z0-9_]+)\}`)
 
+// kvFieldPattern matches KV field references in templates: {@kv.bucket.key} or {@kv.bucket.key:path}
+var kvFieldPattern = regexp.MustCompile(`\{@kv\.(.+?)\}`)
+
 // RulesLoader handles loading and validating rule definitions from YAML files
 type RulesLoader struct {
 	logger              *logger.Logger
@@ -813,8 +816,7 @@ func (l *RulesLoader) validateKVFieldsInTemplate(template string) error {
 // extractKVFieldsFromTemplate finds all KV field references
 func (l *RulesLoader) extractKVFieldsFromTemplate(template string) []string {
 	var fields []string
-	re := regexp.MustCompile(`\{@kv\.(.+?)\}`)
-	matches := re.FindAllStringSubmatch(template, -1)
+	matches := kvFieldPattern.FindAllStringSubmatch(template, -1)
 	for _, match := range matches {
 		if len(match) > 1 {
 			fields = append(fields, "@kv."+match[1])

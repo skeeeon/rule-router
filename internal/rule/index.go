@@ -105,7 +105,7 @@ func (idx *RuleIndex) FindAllMatching(subject string) []*Rule {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
-	allMatches := make([]*Rule, 0)
+	allMatches := make([]*Rule, 0, 4)
 
 	// Check exact matches first (O(1))
 	atomic.AddUint64(&idx.stats.exactLookups, 1)
@@ -123,6 +123,52 @@ func (idx *RuleIndex) FindAllMatching(subject string) []*Rule {
 		atomic.AddUint64(&idx.stats.patternChecks, 1)
 
 		if patternRule.Matcher.Match(subject) {
+			allMatches = append(allMatches, patternRule.Rule)
+			patternMatches++
+
+			idx.logger.Debug("pattern rule matched",
+				"subject", subject,
+				"pattern", patternRule.Rule.Trigger.NATS.Subject)
+		}
+	}
+
+	if len(allMatches) > 0 {
+		atomic.AddUint64(&idx.stats.matches, 1)
+	}
+
+	idx.logger.Debug("completed rule matching",
+		"subject", subject,
+		"totalMatches", len(allMatches),
+		"exactMatches", len(allMatches)-patternMatches,
+		"patternMatches", patternMatches)
+
+	return allMatches
+}
+
+// FindAllMatchingTokenized returns all rules matching the given NATS subject.
+// Uses pre-split tokens to avoid redundant strings.Split in pattern matchers.
+func (idx *RuleIndex) FindAllMatchingTokenized(subject string, tokens []string) []*Rule {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	allMatches := make([]*Rule, 0, 4)
+
+	// Check exact matches first (O(1))
+	atomic.AddUint64(&idx.stats.exactLookups, 1)
+	if exactRules, found := idx.exactMatches[subject]; found {
+		allMatches = append(allMatches, exactRules...)
+
+		idx.logger.Debug("found exact rule matches",
+			"subject", subject,
+			"exactMatches", len(exactRules))
+	}
+
+	// Then check pattern matches (O(n)) using pre-split tokens
+	var patternMatches int
+	for _, patternRule := range idx.patternRules {
+		atomic.AddUint64(&idx.stats.patternChecks, 1)
+
+		if patternRule.Matcher.MatchTokens(tokens) {
 			allMatches = append(allMatches, patternRule.Rule)
 			patternMatches++
 

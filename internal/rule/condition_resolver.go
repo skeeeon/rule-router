@@ -87,3 +87,68 @@ func resolveConditionValue(value interface{}, context *EvaluationContext) (inter
 	// Return resolved value with original type preserved
 	return resolved, nil
 }
+
+// resolveConditionValueFast uses pre-computed path data when available.
+// Falls back to resolveConditionValue for system fields, nested braces, and non-templates.
+func resolveConditionValueFast(value interface{}, varName string, path []string, context *EvaluationContext) (interface{}, error) {
+	if path != nil {
+		result, err := context.traverser.TraversePath(context.Msg, path)
+		if err != nil {
+			return nil, fmt.Errorf("variable not found: %s", varName)
+		}
+		return result, nil
+	}
+	return resolveConditionValue(value, context)
+}
+
+// PrepareConditions walks the condition tree and pre-computes field/value
+// paths for simple message field templates. Called once at rule load time.
+func PrepareConditions(conditions *Conditions) {
+	if conditions == nil {
+		return
+	}
+	for i := range conditions.Items {
+		prepareCondition(&conditions.Items[i])
+	}
+	for i := range conditions.Groups {
+		PrepareConditions(&conditions.Groups[i])
+	}
+}
+
+// prepareCondition pre-computes paths for a single condition's Field and Value.
+func prepareCondition(cond *Condition) {
+	cond.fieldVarName, cond.fieldPath = precomputeTemplatePath(cond.Field)
+
+	if strVal, ok := cond.Value.(string); ok {
+		cond.valueVarName, cond.valuePath = precomputeTemplatePath(strVal)
+	}
+
+	// Recurse into nested conditions (array operators: any/all/none)
+	if cond.Conditions != nil {
+		PrepareConditions(cond.Conditions)
+	}
+}
+
+// precomputeTemplatePath checks if a string is a simple message field template
+// and returns the extracted variable name and pre-split path.
+// Returns ("", nil) for anything that needs runtime resolution:
+// non-templates, system fields (@), and nested braces.
+func precomputeTemplatePath(s string) (string, []string) {
+	if !IsTemplate(s) {
+		return "", nil
+	}
+	varName := ExtractVariable(s)
+	if varName == "" {
+		return "", nil
+	}
+	// System fields require runtime dispatch -- don't pre-compute
+	if strings.HasPrefix(varName, "@") {
+		return "", nil
+	}
+	// Nested braces require runtime template resolution
+	if strings.Contains(varName, "{") {
+		return "", nil
+	}
+	path := strings.Split(varName, ".")
+	return varName, path
+}

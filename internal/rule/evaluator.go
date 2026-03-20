@@ -139,8 +139,8 @@ func (e *Evaluator) evaluateOR(conditions *Conditions, context *EvaluationContex
 }
 
 func (e *Evaluator) evaluateCondition(cond *Condition, context *EvaluationContext) bool {
-	// Resolve LEFT side (field) - now supports template syntax: {field} or {@system}
-	leftValue, err := resolveConditionValue(cond.Field, context)
+	// Resolve LEFT side (field) - uses pre-computed path when available
+	leftValue, err := resolveConditionValueFast(cond.Field, cond.fieldVarName, cond.fieldPath, context)
 	if err != nil {
 		e.logger.Warn("failed to resolve condition field",
 			"field", cond.Field,
@@ -171,9 +171,8 @@ func (e *Evaluator) evaluateCondition(cond *Condition, context *EvaluationContex
 		return e.evaluateArrayCondition(leftValue, cond, context)
 	}
 
-	// Resolve RIGHT side (value) - NEW: now supports variables!
-	// This enables variable-to-variable comparisons
-	rightValue, err := resolveConditionValue(cond.Value, context)
+	// Resolve RIGHT side (value) - uses pre-computed path when available
+	rightValue, err := resolveConditionValueFast(cond.Value, cond.valueVarName, cond.valuePath, context)
 	if err != nil {
 		e.logger.Warn("failed to resolve condition value",
 			"value", cond.Value,

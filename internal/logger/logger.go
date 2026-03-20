@@ -91,8 +91,12 @@ func (l *Logger) Info(msg string, args ...interface{}) {
 	l.Logger.Info(msg, fields...)
 }
 
-// Debug logs a message at Debug level
+// Debug logs a message at Debug level.
+// Skips argsToFields conversion when debug logging is disabled.
 func (l *Logger) Debug(msg string, args ...interface{}) {
+	if !l.Logger.Core().Enabled(zapcore.DebugLevel) {
+		return
+	}
 	fields := argsToFields(args...)
 	l.Logger.Debug(msg, fields...)
 }

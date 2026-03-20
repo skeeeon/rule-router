@@ -137,9 +137,16 @@ type Condition struct {
 	Field    string      `json:"field" yaml:"field"`       // Template: "{temperature}" or "{@time.hour}"
 	Operator string      `json:"operator" yaml:"operator"` // eq, gt, contains, etc.
 	Value    interface{} `json:"value,omitempty" yaml:"value,omitempty"` // Literal or template: 30 or "{@kv.config:max_temp}"
-	
+
 	// For array operators (any/all/none) - nested conditions to evaluate against array elements
 	Conditions *Conditions `json:"conditions,omitempty" yaml:"conditions,omitempty"`
+
+	// Pre-computed at load time for hot-path optimization.
+	// Only populated for simple message field templates (no @ prefix, no nested braces).
+	fieldVarName string   // extracted variable name, e.g., "temperature" from "{temperature}"
+	fieldPath    []string // pre-split dot path, e.g., ["sensor", "reading", "value"]
+	valueVarName string   // same for Value side when it's a template string
+	valuePath    []string // pre-split dot path for Value
 }
 
 // SubjectContext provides access to NATS subject information for templates and conditions

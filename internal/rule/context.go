@@ -126,7 +126,7 @@ func NewEvaluationContext(
 		HTTP:            httpCtx,
 		Time:            timeCtx,
 		KV:              kvCtx,
-		traverser:       NewJSONPathTraverser(),
+		traverser:       defaultTraverser,
 		sigVerification: sigVerification,
 		logger:          logger,
 	}
