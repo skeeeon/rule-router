@@ -138,10 +138,9 @@ func (kv *KVContext) GetFieldWithContext(field string, msgData map[string]interf
 	
 	// If variables couldn't be resolved, return empty string
 	if hasUnresolvedVars {
-		kv.logger.Warn("KV field has unresolved variables, returning empty", 
-			"original", field, 
-			"resolved", resolvedField,
-			"impact", "Template will use empty value")
+		kv.logger.Debug("KV field has unresolved variables, returning empty",
+			"original", field,
+			"resolved", resolvedField)
 		return "", false
 	}
 
@@ -152,10 +151,9 @@ func (kv *KVContext) GetFieldWithContext(field string, msgData map[string]interf
 	
 	// If KV lookup fails, return empty string (not nil)
 	if !found {
-		kv.logger.Warn("KV lookup failed after variable resolution",
+		kv.logger.Debug("KV lookup failed after variable resolution",
 			"resolvedField", resolvedField,
-			"originalField", field,
-			"impact", "Template will use empty value")
+			"originalField", field)
 		return "", false
 	}
 	
@@ -218,7 +216,7 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
     	// Populate the cache after a successful lazy-load
     	if kv.localCache != nil && kv.localCache.IsEnabled() {
         	kv.localCache.Set(bucket, key, jsonObj)
-       		kv.logger.Info("populated KV cache on first read (lazy-load)", "bucket", bucket, "key", key)
+       		kv.logger.Debug("populated KV cache on first read (lazy-load)", "bucket", bucket, "key", key)
     	}
 
 	// Skip traversal if path is empty, returning the entire value

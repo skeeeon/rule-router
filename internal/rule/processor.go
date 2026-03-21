@@ -761,7 +761,7 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 	if result.FailedElements > 0 {
 		p.logger.Warn("forEach processing complete with failures", logFields...)
 	} else {
-		p.logger.Info("forEach processing complete", logFields...)
+		p.logger.Debug("forEach processing complete", logFields...)
 	}
 
 	return actions, nil
@@ -991,7 +991,7 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 	if result.FailedElements > 0 {
 		p.logger.Warn("forEach processing complete with failures", logFields...)
 	} else {
-		p.logger.Info("forEach processing complete", logFields...)
+		p.logger.Debug("forEach processing complete", logFields...)
 	}
 
 	return actions, nil

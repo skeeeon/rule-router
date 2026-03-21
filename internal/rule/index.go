@@ -92,7 +92,7 @@ func (idx *RuleIndex) Add(rule *Rule) {
 
 	idx.stats.lastUpdated = time.Now()
 
-	idx.logger.Info("rule added to index",
+	idx.logger.Debug("rule added to index",
 		"subject", subject,
 		"isPattern", containsWildcards(subject),
 		"totalExactSubjects", len(idx.exactMatches),
