@@ -152,3 +152,25 @@ func precomputeTemplatePath(s string) (string, []string) {
 	path := strings.Split(varName, ".")
 	return varName, path
 }
+
+// prepareForEachPath pre-computes the split path for a forEach template.
+// Returns nil for system fields (@) or dynamic paths (nested braces).
+func prepareForEachPath(forEachTemplate string) []string {
+	fieldPath := ExtractVariable(forEachTemplate)
+	if fieldPath == "" {
+		return nil
+	}
+	// System fields require runtime ResolveValue dispatch
+	if strings.HasPrefix(fieldPath, "@") {
+		return nil
+	}
+	// Nested braces require runtime template resolution
+	if strings.Contains(fieldPath, "{") {
+		return nil
+	}
+	path, err := SplitPathRespectingBraces(fieldPath)
+	if err != nil {
+		return nil
+	}
+	return path
+}

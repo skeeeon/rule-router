@@ -69,7 +69,7 @@ type forEachArrayData struct {
 // This is shared logic between NATS and HTTP forEach handlers.
 // Supports both message field paths (e.g., "{data.readings}") and system field
 // references (e.g., "{@kv.config.door_list}") for KV-sourced fan-out patterns.
-func (p *Processor) extractForEachArray(forEachTemplate string, context *EvaluationContext) (*forEachArrayData, error) {
+func (p *Processor) extractForEachArray(forEachTemplate string, precomputedPath []string, context *EvaluationContext) (*forEachArrayData, error) {
 	// Extract the field path from template braces using shared utility
 	// forEach: "{data.readings}" → "data.readings"
 	// forEach: "{@kv.config.doors}" → "@kv.config.doors"
@@ -92,9 +92,14 @@ func (p *Processor) extractForEachArray(forEachTemplate string, context *Evaluat
 		}
 		arrayValue = resolved
 	} else {
-		arrayPath, err := SplitPathRespectingBraces(fieldPath)
-		if err != nil {
-			return nil, fmt.Errorf("invalid forEach path '%s': %w", fieldPath, err)
+		// Use pre-computed path when available, fall back to runtime split
+		arrayPath := precomputedPath
+		if arrayPath == nil {
+			var err error
+			arrayPath, err = SplitPathRespectingBraces(fieldPath)
+			if err != nil {
+				return nil, fmt.Errorf("invalid forEach path '%s': %w", fieldPath, err)
+			}
 		}
 		var traverseErr error
 		arrayValue, traverseErr = context.traverser.TraversePath(context.Msg, arrayPath)
@@ -190,6 +195,14 @@ func (p *Processor) LoadRules(rules []Rule) error {
 		}
 		if rule.Action.HTTP != nil && rule.Action.HTTP.Filter != nil {
 			PrepareConditions(rule.Action.HTTP.Filter)
+		}
+
+		// Pre-compute forEach paths
+		if rule.Action.NATS != nil && rule.Action.NATS.ForEach != "" {
+			rule.Action.NATS.forEachPath = prepareForEachPath(rule.Action.NATS.ForEach)
+		}
+		if rule.Action.HTTP != nil && rule.Action.HTTP.ForEach != "" {
+			rule.Action.HTTP.forEachPath = prepareForEachPath(rule.Action.HTTP.ForEach)
 		}
 
 		if rule.Trigger.NATS != nil {
@@ -600,7 +613,7 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 		"forEachField", action.ForEach)
 
 	// Extract and validate the forEach array
-	arrayData, err := p.extractForEachArray(action.ForEach, context)
+	arrayData, err := p.extractForEachArray(action.ForEach, action.forEachPath, context)
 	if err != nil {
 		return nil, err
 	}
@@ -813,7 +826,7 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 		"forEachField", action.ForEach)
 
 	// Extract and validate the forEach array
-	arrayData, err := p.extractForEachArray(action.ForEach, context)
+	arrayData, err := p.extractForEachArray(action.ForEach, action.forEachPath, context)
 	if err != nil {
 		return nil, err
 	}

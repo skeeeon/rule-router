@@ -26,13 +26,22 @@ var (
 	kvVariablePattern = regexp.MustCompile(`\{([^}]+)\}`)
 )
 
+// parsedKVField caches the result of parsing a KV field specification string.
+// This avoids repeated SplitN/SplitPathRespectingBraces on the same resolved field.
+type parsedKVField struct {
+	bucket   string
+	key      string
+	jsonPath []string
+}
+
 // KVContext provides access to NATS Key-Value stores for rule evaluation and templating
 // Now includes local cache support for improved performance
 type KVContext struct {
 	stores     map[string]jetstream.KeyValue
 	logger     *logger.Logger
-	localCache *LocalKVCache  // Local cache for performance optimization
-	traverser  *JSONPathTraverser // Shared JSON path traversal
+	localCache *LocalKVCache        // Local cache for performance optimization
+	traverser  *JSONPathTraverser   // Shared JSON path traversal
+	parseCache map[string]*parsedKVField // Cache for parsed KV field specs
 }
 
 // NewKVContext creates a new KV context with the provided KV stores and optional local cache
@@ -46,7 +55,8 @@ func NewKVContext(stores map[string]jetstream.KeyValue, logger *logger.Logger, l
 		stores:     make(map[string]jetstream.KeyValue),
 		logger:     logger.With("component", "kv"),
 		localCache: localCache,
-		traverser:  NewJSONPathTraverser(), // Use shared traverser
+		traverser:  defaultTraverser,
+		parseCache: make(map[string]*parsedKVField),
 	}
 
 	// Copy the stores map to avoid external modification
@@ -245,6 +255,11 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
 // If no colon is present, the entire value is returned (jsonPath is empty).
 // If a colon is present with no path, the entire value is also returned.
 func (kv *KVContext) parseKVField(field string) (bucket, key string, jsonPath []string, err error) {
+	// Check parse cache first — avoids repeated string splitting for the same field spec
+	if cached, ok := kv.parseCache[field]; ok {
+		return cached.bucket, cached.key, cached.jsonPath, nil
+	}
+
 	if !strings.HasPrefix(field, "@kv.") {
 		return "", "", nil, fmt.Errorf("KV field must start with '@kv.', got: %s", field)
 	}
@@ -268,6 +283,7 @@ func (kv *KVContext) parseKVField(field string) (bucket, key string, jsonPath []
 			return "", "", nil, fmt.Errorf("KV key name cannot be empty in field: %s", field)
 		}
 
+		kv.parseCache[field] = &parsedKVField{bucket: bucket, key: key, jsonPath: []string{}}
 		return bucket, key, []string{}, nil // Return empty path slice
 	}
 
@@ -297,6 +313,7 @@ func (kv *KVContext) parseKVField(field string) (bucket, key string, jsonPath []
 
 	// Empty path after colon is a valid way to get the whole value
 	if jsonPathPart == "" {
+		kv.parseCache[field] = &parsedKVField{bucket: bucket, key: key, jsonPath: []string{}}
 		return bucket, key, []string{}, nil // Return empty path slice
 	}
 
@@ -311,6 +328,7 @@ func (kv *KVContext) parseKVField(field string) (bucket, key string, jsonPath []
 		"key", key,
 		"jsonPath", jsonPath)
 
+	kv.parseCache[field] = &parsedKVField{bucket: bucket, key: key, jsonPath: jsonPath}
 	return bucket, key, jsonPath, nil
 }
 

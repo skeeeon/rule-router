@@ -71,6 +71,9 @@ type NATSAction struct {
 	ForEach  string          `json:"forEach,omitempty" yaml:"forEach,omitempty"`
 	Filter   *Conditions     `json:"filter,omitempty" yaml:"filter,omitempty"`
 	Debounce *DebounceConfig `json:"debounce,omitempty" yaml:"debounce,omitempty"`
+
+	// Pre-computed at load time (nil for system fields or dynamic paths)
+	forEachPath []string
 }
 
 // HTTPAction represents making an HTTP request
@@ -89,6 +92,9 @@ type HTTPAction struct {
 	ForEach  string          `json:"forEach,omitempty" yaml:"forEach,omitempty"`
 	Filter   *Conditions     `json:"filter,omitempty" yaml:"filter,omitempty"`
 	Debounce *DebounceConfig `json:"debounce,omitempty" yaml:"debounce,omitempty"`
+
+	// Pre-computed at load time (nil for system fields or dynamic paths)
+	forEachPath []string
 }
 
 // RetryConfig defines retry behavior for HTTP actions
