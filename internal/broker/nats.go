@@ -318,7 +318,7 @@ func (b *NATSBroker) InitializeKVCache() error {
 		return nil
 	}
 
-	b.logger.Info("initializing local KV cache", "buckets", b.config.KV.Buckets)
+	b.logger.Info("initializing local KV cache", "buckets", b.config.KV.BucketNames())
 
 	// Subscribe to KV changes using the new Watch API
 	if err := b.subscribeToKVChanges(); err != nil {
@@ -339,10 +339,10 @@ func (b *NATSBroker) subscribeToKVChanges() error {
 	b.logger.Info("subscribing to KV changes using Watch API", "buckets", total)
 
 	var failedBuckets []string
-	for _, bucketName := range b.config.KV.Buckets {
-		if err := b.watchKVBucket(bucketName); err != nil {
-			b.logger.Error("failed to watch KV bucket", "bucket", bucketName, "error", err)
-			failedBuckets = append(failedBuckets, bucketName)
+	for _, bucket := range b.config.KV.Buckets {
+		if err := b.watchKVBucket(bucket.Name, bucket.KeyFilter); err != nil {
+			b.logger.Error("failed to watch KV bucket", "bucket", bucket.Name, "error", err)
+			failedBuckets = append(failedBuckets, bucket.Name)
 		}
 	}
 
@@ -358,18 +358,19 @@ func (b *NATSBroker) subscribeToKVChanges() error {
 	return nil
 }
 
-// watchKVBucket creates a watcher for a specific KV bucket using the new Watch API
-func (b *NATSBroker) watchKVBucket(bucketName string) error {
+// watchKVBucket creates a watcher for a specific KV bucket using the Watch API.
+// The keyFilter controls which keys are watched (e.g. ">" for all, "bldg-a.>" for a subset).
+func (b *NATSBroker) watchKVBucket(bucketName string, keyFilter string) error {
 	store, exists := b.kvStores[bucketName]
 	if !exists {
 		return fmt.Errorf("bucket not found: %s", bucketName)
 	}
 
-	// Watch all keys in the bucket using ">" pattern
+	// Watch keys matching the filter pattern
 	// Context from broker ensures watcher stops when broker closes
-	watcher, err := store.Watch(b.ctx, ">")
+	watcher, err := store.Watch(b.ctx, keyFilter)
 	if err != nil {
-		return fmt.Errorf("failed to create watcher for bucket %s: %w", bucketName, err)
+		return fmt.Errorf("failed to create watcher for bucket %s (filter %q): %w", bucketName, keyFilter, err)
 	}
 
 	b.kvWatchers = append(b.kvWatchers, watcher)
@@ -382,7 +383,8 @@ func (b *NATSBroker) watchKVBucket(bucketName string) error {
 	}()
 
 	b.logger.Info("created KV watcher",
-		"bucket", bucketName)
+		"bucket", bucketName,
+		"keyFilter", keyFilter)
 
 	return nil
 }
@@ -502,32 +504,30 @@ func (b *NATSBroker) initializeNATSConnection() error {
 // initializeKVStores connects to configured KV buckets
 func (b *NATSBroker) initializeKVStores(ctx context.Context) error {
 	// Change the log message to reflect the new behavior
-	b.logger.Info("validating configured KV stores are available", "buckets", b.config.KV.Buckets)
+	b.logger.Info("validating configured KV stores are available", "buckets", b.config.KV.BucketNames())
 
-	for _, bucketName := range b.config.KV.Buckets {
-		b.logger.Debug("connecting to KV bucket", "bucket", bucketName)
+	for _, bucket := range b.config.KV.Buckets {
+		b.logger.Debug("connecting to KV bucket", "bucket", bucket.Name)
 
 		kvCtx, cancel := context.WithTimeout(ctx, kvOperationTimeout)
-		kv, err := b.jetStream.KeyValue(kvCtx, bucketName)
-		cancel() 
+		kv, err := b.jetStream.KeyValue(kvCtx, bucket.Name)
+		cancel()
 
 		if err != nil {
-			
 			if err == jetstream.ErrBucketNotFound {
 				// FAIL FAST: The bucket does not exist. Return a user-friendly error.
 				return fmt.Errorf(
 					"configured KV bucket not found: '%s'. Please create it before starting the application using 'nats kv add %s'",
-					bucketName,
-					bucketName,
+					bucket.Name,
+					bucket.Name,
 				)
 			}
 			// For all other errors (permissions, connection issues), fail as before.
-			return fmt.Errorf("failed to access KV bucket '%s': %w", bucketName, err)
-			
+			return fmt.Errorf("failed to access KV bucket '%s': %w", bucket.Name, err)
 		}
 
-		b.kvStores[bucketName] = kv
-		b.logger.Debug("successfully connected to KV bucket", "bucket", bucketName)
+		b.kvStores[bucket.Name] = kv
+		b.logger.Debug("successfully connected to KV bucket", "bucket", bucket.Name)
 	}
 
 	b.logger.Info("all configured KV stores validated successfully", "bucketCount", len(b.kvStores))

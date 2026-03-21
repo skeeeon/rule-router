@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 )
 
@@ -253,13 +255,29 @@ type MetricsConfig struct {
 	UpdateInterval string `json:"updateInterval" yaml:"updateInterval" mapstructure:"updateInterval"`
 }
 
+// KVBucketConfig defines a KV bucket with an optional key filter pattern.
+// In YAML, buckets can be specified as plain strings (all keys) or objects with a keyFilter.
+type KVBucketConfig struct {
+	Name      string `json:"name" yaml:"name" mapstructure:"name"`
+	KeyFilter string `json:"keyFilter,omitempty" yaml:"keyFilter,omitempty" mapstructure:"keyFilter"`
+}
+
 // KVConfig contains Key-Value store configuration
 type KVConfig struct {
-	Enabled    bool     `json:"enabled" yaml:"enabled" mapstructure:"enabled"`
-	Buckets    []string `json:"buckets" yaml:"buckets" mapstructure:"buckets"`
+	Enabled    bool              `json:"enabled" yaml:"enabled" mapstructure:"enabled"`
+	Buckets    []KVBucketConfig  `json:"buckets" yaml:"buckets" mapstructure:"buckets"`
 	LocalCache struct {
 		Enabled bool `json:"enabled" yaml:"enabled" mapstructure:"enabled"`
 	} `json:"localCache" yaml:"localCache" mapstructure:"localCache"`
+}
+
+// BucketNames returns just the bucket name strings for consumers that don't need the filter.
+func (kv *KVConfig) BucketNames() []string {
+	names := make([]string, len(kv.Buckets))
+	for i, b := range kv.Buckets {
+		names[i] = b.Name
+	}
+	return names
 }
 
 // SecurityConfig contains security-related configuration
@@ -303,8 +321,21 @@ func Load(path string) (*Config, error) {
 
 	// Unmarshal the configuration into the struct. This merges all sources:
 	// file, environment variables, and any bound flags.
-	if err := v.Unmarshal(&config); err != nil {
+	// Custom decode hook allows KV buckets as plain strings or objects.
+	decodeHook := mapstructure.ComposeDecodeHookFunc(
+		kvBucketDecodeHook(),
+		mapstructure.StringToTimeDurationHookFunc(),
+		mapstructure.StringToSliceHookFunc(","),
+	)
+	if err := v.Unmarshal(&config, viper.DecodeHook(decodeHook)); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	// Default empty KeyFilter to ">" (watch all keys)
+	for i := range config.KV.Buckets {
+		if config.KV.Buckets[i].KeyFilter == "" {
+			config.KV.Buckets[i].KeyFilter = ">"
+		}
 	}
 
 	// Apply defaults that depend on other config values (must run after unmarshal).
@@ -601,6 +632,20 @@ func validateConfig(cfg *Config) error {
 		}
 	}
 
+	// KV bucket validation
+	if cfg.KV.Enabled {
+		seen := make(map[string]bool, len(cfg.KV.Buckets))
+		for _, bucket := range cfg.KV.Buckets {
+			if bucket.Name == "" {
+				return fmt.Errorf("KV bucket name cannot be empty")
+			}
+			if seen[bucket.Name] {
+				return fmt.Errorf("duplicate KV bucket name: %q", bucket.Name)
+			}
+			seen[bucket.Name] = true
+		}
+	}
+
 	// ForEach validation
 	if cfg.ForEach.MaxIterations < 0 {
 		return fmt.Errorf("forEach maxIterations cannot be negative (use 0 for unlimited)")
@@ -612,4 +657,20 @@ func validateConfig(cfg *Config) error {
 	return nil
 }
 
-
+// kvBucketDecodeHook returns a mapstructure decode hook that allows KV buckets
+// to be specified as plain strings (converted to KVBucketConfig with default filter)
+// or as objects with name and optional keyFilter.
+func kvBucketDecodeHook() mapstructure.DecodeHookFuncType {
+	return func(from reflect.Type, to reflect.Type, data interface{}) (interface{}, error) {
+		if to != reflect.TypeOf(KVBucketConfig{}) {
+			return data, nil
+		}
+		if from.Kind() == reflect.String {
+			return map[string]interface{}{
+				"name":      data,
+				"keyFilter": ">",
+			}, nil
+		}
+		return data, nil
+	}
+}

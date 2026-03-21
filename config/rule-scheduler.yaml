@@ -42,8 +42,9 @@ http:
 kv:
   enabled: false
   # buckets:
-  #   - "building_status"
-  #   - "device_config"
+  #   - "building_status"           # String format - watches all keys
+  #   - name: "device_config"       # Object format with optional key filter
+  #     keyFilter: "region-us.>"
 
 # Logging
 logging:

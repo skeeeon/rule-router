@@ -3,6 +3,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -490,3 +492,178 @@ func findSubstring(s, substr string) bool {
 	return false
 }
 
+func TestKVBucketNames(t *testing.T) {
+	kv := KVConfig{
+		Buckets: []KVBucketConfig{
+			{Name: "bucket1", KeyFilter: ">"},
+			{Name: "bucket2", KeyFilter: "bldg-a.>"},
+		},
+	}
+	names := kv.BucketNames()
+	if len(names) != 2 || names[0] != "bucket1" || names[1] != "bucket2" {
+		t.Errorf("BucketNames() = %v, want [bucket1 bucket2]", names)
+	}
+}
+
+func TestKVBucketMixedFormatParsing(t *testing.T) {
+	tests := []struct {
+		name     string
+		yaml     string
+		expected []KVBucketConfig
+	}{
+		{
+			name: "plain strings get default filter",
+			yaml: `
+kv:
+  enabled: true
+  buckets:
+    - "device_status"
+    - "customer_data"
+`,
+			expected: []KVBucketConfig{
+				{Name: "device_status", KeyFilter: ">"},
+				{Name: "customer_data", KeyFilter: ">"},
+			},
+		},
+		{
+			name: "object with keyFilter",
+			yaml: `
+kv:
+  enabled: true
+  buckets:
+    - name: "occupancy"
+      keyFilter: "bldg-a.>"
+`,
+			expected: []KVBucketConfig{
+				{Name: "occupancy", KeyFilter: "bldg-a.>"},
+			},
+		},
+		{
+			name: "object without keyFilter defaults to >",
+			yaml: `
+kv:
+  enabled: true
+  buckets:
+    - name: "occupancy"
+`,
+			expected: []KVBucketConfig{
+				{Name: "occupancy", KeyFilter: ">"},
+			},
+		},
+		{
+			name: "mixed strings and objects",
+			yaml: `
+kv:
+  enabled: true
+  buckets:
+    - "device_status"
+    - name: "occupancy"
+      keyFilter: "bldg-a.>"
+    - "customer_data"
+    - name: "device_config"
+`,
+			expected: []KVBucketConfig{
+				{Name: "device_status", KeyFilter: ">"},
+				{Name: "occupancy", KeyFilter: "bldg-a.>"},
+				{Name: "customer_data", KeyFilter: ">"},
+				{Name: "device_config", KeyFilter: ">"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Write YAML to temp file
+			dir := t.TempDir()
+			cfgPath := filepath.Join(dir, "config.yaml")
+			if err := os.WriteFile(cfgPath, []byte(tt.yaml), 0644); err != nil {
+				t.Fatalf("failed to write temp config: %v", err)
+			}
+
+			cfg, err := Load(cfgPath)
+			if err != nil {
+				t.Fatalf("Load() error: %v", err)
+			}
+
+			if len(cfg.KV.Buckets) != len(tt.expected) {
+				t.Fatalf("got %d buckets, want %d", len(cfg.KV.Buckets), len(tt.expected))
+			}
+
+			for i, want := range tt.expected {
+				got := cfg.KV.Buckets[i]
+				if got.Name != want.Name {
+					t.Errorf("bucket[%d].Name = %q, want %q", i, got.Name, want.Name)
+				}
+				if got.KeyFilter != want.KeyFilter {
+					t.Errorf("bucket[%d].KeyFilter = %q, want %q", i, got.KeyFilter, want.KeyFilter)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateKVBuckets(t *testing.T) {
+	validConfig := func() *Config {
+		cfg := &Config{}
+		setDefaults(cfg)
+		return cfg
+	}
+
+	tests := []struct {
+		name    string
+		modify  func(*Config)
+		wantErr string
+	}{
+		{
+			name: "empty bucket name rejected",
+			modify: func(cfg *Config) {
+				cfg.KV.Enabled = true
+				cfg.KV.Buckets = []KVBucketConfig{{Name: "", KeyFilter: ">"}}
+			},
+			wantErr: "KV bucket name cannot be empty",
+		},
+		{
+			name: "duplicate bucket names rejected",
+			modify: func(cfg *Config) {
+				cfg.KV.Enabled = true
+				cfg.KV.Buckets = []KVBucketConfig{
+					{Name: "bucket1", KeyFilter: ">"},
+					{Name: "bucket1", KeyFilter: "bldg-a.>"},
+				}
+			},
+			wantErr: "duplicate KV bucket name",
+		},
+		{
+			name: "valid buckets pass",
+			modify: func(cfg *Config) {
+				cfg.KV.Enabled = true
+				cfg.KV.Buckets = []KVBucketConfig{
+					{Name: "bucket1", KeyFilter: ">"},
+					{Name: "bucket2", KeyFilter: "bldg-a.>"},
+				}
+			},
+			wantErr: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			tt.modify(cfg)
+
+			err := validateConfig(cfg)
+
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("validateConfig() unexpected error: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("validateConfig() expected error containing %q, got nil", tt.wantErr)
+				} else if !contains(err.Error(), tt.wantErr) {
+					t.Errorf("validateConfig() error = %q, want error containing %q", err.Error(), tt.wantErr)
+				}
+			}
+		})
+	}
+}

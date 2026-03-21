@@ -170,7 +170,7 @@ func (app *SchedulerApp) Run(ctx context.Context) error {
 	app.logger.Info("configuration summary",
 		"scheduleRules", len(scheduleRules),
 		"kvEnabled", app.config.KV.Enabled,
-		"kvBuckets", app.config.KV.Buckets,
+		"kvBuckets", app.config.KV.BucketNames(),
 		"publishMode", app.config.NATS.Publish.Mode)
 
 	app.logger.Info("starting rule-scheduler",

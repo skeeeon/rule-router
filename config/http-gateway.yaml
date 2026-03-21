@@ -75,8 +75,9 @@ kv:
   enabled: false
   buckets: []
   # buckets:
-  #   - "device_status"
-  #   - "customer_data"
+  #   - "device_status"             # String format - watches all keys
+  #   - name: "customer_data"       # Object format with optional key filter
+  #     keyFilter: "region-us.>"
   localCache:
     enabled: false # Enable for ~25x faster lookups
 

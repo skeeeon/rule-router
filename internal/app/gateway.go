@@ -88,7 +88,7 @@ func (app *GatewayApp) Run(ctx context.Context) error {
 		"inboundWorkers", app.config.HTTP.Server.InboundWorkerCount,
 		"inboundQueueSize", app.config.HTTP.Server.InboundQueueSize,
 		"kvEnabled", app.config.KV.Enabled,
-		"kvBuckets", app.config.KV.Buckets)
+		"kvBuckets", app.config.KV.BucketNames())
 
 	app.logger.Info("starting http-gateway",
 		"urls", app.config.NATS.URLs,

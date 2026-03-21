@@ -134,7 +134,7 @@ func (b *AppBuilder) WithNATSBroker() *AppBuilder {
 
 	// Initialize local KV cache if enabled
 	if b.cfg.KV.Enabled && b.cfg.KV.LocalCache.Enabled {
-		b.base.Logger.Info("initializing local KV cache", "buckets", b.cfg.KV.Buckets)
+		b.base.Logger.Info("initializing local KV cache", "buckets", b.cfg.KV.BucketNames())
 		if err := b.base.Broker.InitializeKVCache(); err != nil {
 			b.base.Logger.Error("failed to initialize local KV cache, continuing with direct NATS KV access", "error", err)
 		} else {
@@ -152,7 +152,7 @@ func (b *AppBuilder) WithRuleProcessor() *AppBuilder {
 
 	kvBuckets := []string{}
 	if b.cfg.KV.Enabled {
-		kvBuckets = b.cfg.KV.Buckets
+		kvBuckets = b.cfg.KV.BucketNames()
 	}
 
 	rulesLoader := rule.NewRulesLoader(b.base.Logger, kvBuckets)

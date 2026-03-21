@@ -109,11 +109,14 @@ nats:
 kv:
   enabled: true
   buckets:
-    - "device_status"         # Device operational status
-    - "device_config"         # Device configuration and thresholds
-    - "customer_data"         # Customer metadata for enrichment
-    - "feature_flags"         # Feature toggles and A/B testing
-    - "system_config"         # System-wide configuration
+    - "device_status"         # String format - watches all keys
+    - "device_config"         # String format - watches all keys
+    - "customer_data"         # String format - watches all keys
+    - "feature_flags"         # String format - watches all keys
+    - "system_config"         # String format - watches all keys
+    # Object format with optional keyFilter (watches only matching keys):
+    # - name: "occupancy"
+    #   keyFilter: "bldg-a.>"
   
   # Local Cache Configuration - High Performance In-Memory KV Cache
   localCache:

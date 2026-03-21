@@ -77,7 +77,7 @@ func (app *RouterApp) Run(ctx context.Context) error {
 		"natsSubjects", len(natsSubjects),
 		"subjectList", natsSubjects,
 		"kvEnabled", app.config.KV.Enabled,
-		"kvBuckets", app.config.KV.Buckets,
+		"kvBuckets", app.config.KV.BucketNames(),
 		"publishMode", app.config.NATS.Publish.Mode,
 		"workerCount", app.config.NATS.Consumers.WorkerCount)
 
