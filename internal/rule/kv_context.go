@@ -5,6 +5,7 @@ package rule
 import (
 	json "github.com/goccy/go-json"
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -51,7 +52,7 @@ func NewKVContext(stores map[string]jetstream.KeyValue, logger *logger.Logger, l
 		panic("KVContext requires a logger")
 	}
 
-	ctx := &KVContext{
+	kvCtx := &KVContext{
 		stores:     make(map[string]jetstream.KeyValue),
 		logger:     logger.With("component", "kv"),
 		localCache: localCache,
@@ -61,7 +62,7 @@ func NewKVContext(stores map[string]jetstream.KeyValue, logger *logger.Logger, l
 
 	// Copy the stores map to avoid external modification
 	for bucket, store := range stores {
-		ctx.stores[bucket] = store
+		kvCtx.stores[bucket] = store
 	}
 
 	cacheStatus := "disabled"
@@ -71,11 +72,11 @@ func NewKVContext(stores map[string]jetstream.KeyValue, logger *logger.Logger, l
 
 	// Updated log message to reflect new syntax support
 	logger.Info("KV context initialized with optional path syntax",
-		"bucketCount", len(ctx.stores),
-		"buckets", ctx.getBucketNames(),
+		"bucketCount", len(kvCtx.stores),
+		"buckets", kvCtx.getBucketNames(),
 		"localCache", cacheStatus,
 		"syntax", "@kv.bucket.key[:json.path]")
-	return ctx
+	return kvCtx
 }
 
 // GetField retrieves a value from KV store (cache first, then NATS KV fallback)
@@ -180,7 +181,7 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
 	// Perform the KV lookup
 	entry, err := store.Get(ctx, key)
 	if err != nil {
-		if err == jetstream.ErrKeyNotFound {
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
 			kv.logger.Warn("KV key does not exist in bucket",
 				"bucket", bucket,
 				"key", key,
@@ -396,6 +397,8 @@ func (kv *KVContext) convertToString(value interface{}) string {
 	switch v := value.(type) {
 	case string:
 		return v
+	case json.Number:
+		return v.String()
 	case float64:
 		return strconv.FormatFloat(v, 'f', -1, 64)
 	case int:

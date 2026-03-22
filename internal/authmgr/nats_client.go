@@ -5,6 +5,7 @@ package authmgr
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -68,7 +69,7 @@ func NewNATSClient(cfg *NATSConfig, storageConfig *StorageConfig, log *logger.Lo
 	kv, err := js.KeyValue(ctx, storageConfig.Bucket)
 	if err != nil {
 		nc.Close()
-		if err == jetstream.ErrBucketNotFound {
+		if errors.Is(err, jetstream.ErrBucketNotFound) {
 			return nil, fmt.Errorf("KV bucket '%s' not found. Create it with: nats kv add %s",
 				storageConfig.Bucket, storageConfig.Bucket)
 		}

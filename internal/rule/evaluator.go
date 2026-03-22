@@ -3,6 +3,7 @@
 package rule
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -263,6 +264,13 @@ func (e *Evaluator) compareRecent(msgTimestamp, tolerance interface{}, context *
 // parseTimestamp flexibly parses timestamps
 func (e *Evaluator) parseTimestamp(value interface{}) (time.Time, error) {
 	switch v := value.(type) {
+	case json.Number:
+		f, err := v.Float64()
+		if err != nil {
+			return time.Time{}, fmt.Errorf("invalid numeric timestamp: %w", err)
+		}
+		sec, dec := math.Modf(f)
+		return time.Unix(int64(sec), int64(dec*1e9)), nil
 	case float64:
 		sec, dec := math.Modf(v)
 		return time.Unix(int64(sec), int64(dec*1e9)), nil
@@ -286,6 +294,11 @@ func (e *Evaluator) compareValues(a, b interface{}, op string) bool {
 	if a == nil || b == nil {
 		return op == "neq"
 	}
+
+	// Normalize json.Number to float64 before comparison so all numeric
+	// paths go through the existing float64/int branches.
+	a = normalizeNumber(a)
+	b = normalizeNumber(b)
 
 	equal := false
 	switch va := a.(type) {
@@ -393,6 +406,8 @@ func (e *Evaluator) compareNumeric(a, b interface{}, op string) bool {
 
 func (e *Evaluator) toFloat(v interface{}) (float64, error) {
 	switch val := v.(type) {
+	case json.Number:
+		return val.Float64()
 	case float64:
 		return val, nil
 	case int:
@@ -411,4 +426,21 @@ func (e *Evaluator) convertToString(value interface{}) string {
 		return ""
 	}
 	return fmt.Sprintf("%v", value)
+}
+
+// normalizeNumber converts json.Number to a native Go numeric type
+// so callers don't need separate json.Number branches in type switches.
+// Returns float64 for decimals, int for integers that fit.
+func normalizeNumber(v interface{}) interface{} {
+	n, ok := v.(json.Number)
+	if !ok {
+		return v
+	}
+	if i, err := n.Int64(); err == nil {
+		return int(i)
+	}
+	if f, err := n.Float64(); err == nil {
+		return f
+	}
+	return n.String()
 }

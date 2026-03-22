@@ -2,6 +2,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,9 @@ import (
 	"rule-router/internal/rule"
 	"rule-router/internal/tester"
 )
+
+// ErrCancelled is returned when the user cancels an operation.
+var ErrCancelled = errors.New("cancelled")
 
 var newCmd = &cobra.Command{
 	Use:   "new",
@@ -72,7 +76,7 @@ through an interactive prompt.`,
 		// Write the file
 		if err := writeFileWithConfirm(output, ruleBytes); err != nil {
 			// If writeFileWithConfirm returns nil, it means the user cancelled, so we should exit gracefully.
-			if err.Error() == "cancelled" {
+			if errors.Is(err, ErrCancelled) {
 				return nil
 			}
 			return err
@@ -150,7 +154,7 @@ func writeFileWithConfirm(path string, data []byte) error {
 		fmt.Scanln(&response)
 		if strings.ToLower(strings.TrimSpace(response)) != "y" {
 			fmt.Println("Cancelled.")
-			return fmt.Errorf("cancelled") // Return a specific error to signal cancellation
+			return ErrCancelled
 		}
 	}
 	return os.WriteFile(path, data, 0644)

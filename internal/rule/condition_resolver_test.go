@@ -3,6 +3,7 @@
 package rule
 
 import (
+	"encoding/json"
 	"testing"
 
 	"rule-router/internal/logger"
@@ -296,12 +297,12 @@ func TestResolveConditionValue_TypePreservation(t *testing.T) {
 		{
 			name:         "integer preserved",
 			input:        "{num_int}",
-			expectedType: "float64", // JSON unmarshals to float64
+			expectedType: "json.Number", // UseNumber() preserves numeric precision
 		},
 		{
 			name:         "float preserved",
 			input:        "{num_float}",
-			expectedType: "float64",
+			expectedType: "json.Number",
 		},
 		{
 			name:         "string preserved",
@@ -356,6 +357,10 @@ func compareTestValues(a, b interface{}) bool {
 		return false
 	}
 
+	// Normalize json.Number to float64 for comparison
+	a = normalizeForTest(a)
+	b = normalizeForTest(b)
+
 	// For numeric comparison, handle float64/int conversion
 	switch va := a.(type) {
 	case float64:
@@ -378,6 +383,17 @@ func compareTestValues(a, b interface{}) bool {
 	return a == b
 }
 
+func normalizeForTest(v interface{}) interface{} {
+	n, ok := v.(json.Number)
+	if !ok {
+		return v
+	}
+	if f, err := n.Float64(); err == nil {
+		return f
+	}
+	return n.String()
+}
+
 func getTypeName(v interface{}) string {
 	if v == nil {
 		return "nil"
@@ -389,6 +405,8 @@ func typeToString(v interface{}) string {
 	switch v.(type) {
 	case int:
 		return "int"
+	case json.Number:
+		return "json.Number"
 	case float64:
 		return "float64"
 	case string:

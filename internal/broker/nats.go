@@ -3,8 +3,10 @@
 package broker
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -422,12 +424,16 @@ func (b *NATSBroker) handleKVUpdate(bucketName string, entry jetstream.KeyValueE
 		return
 	}
 
-	// Process normal update/create
+	// Process normal update/create.
+	// UseNumber() preserves numeric precision by decoding numbers as json.Number
+	// instead of float64, preventing silent data corruption on large integers.
 	var parsedValue interface{}
 	rawValue := entry.Value()
 
 	if len(rawValue) > 0 {
-		if err := json.Unmarshal(rawValue, &parsedValue); err != nil {
+		dec := json.NewDecoder(bytes.NewReader(rawValue))
+		dec.UseNumber()
+		if err := dec.Decode(&parsedValue); err != nil {
 			parsedValue = string(rawValue)
 			b.logger.Debug("stored non-JSON KV update as string",
 				"bucket", bucketName, "key", key, "error", err)
@@ -514,7 +520,7 @@ func (b *NATSBroker) initializeKVStores(ctx context.Context) error {
 		cancel()
 
 		if err != nil {
-			if err == jetstream.ErrBucketNotFound {
+			if errors.Is(err, jetstream.ErrBucketNotFound) {
 				// FAIL FAST: The bucket does not exist. Return a user-friendly error.
 				return fmt.Errorf(
 					"configured KV bucket not found: '%s'. Please create it before starting the application using 'nats kv add %s'",

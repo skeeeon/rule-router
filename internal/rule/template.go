@@ -197,6 +197,8 @@ func (te *TemplateEngine) convertToString(value interface{}) string {
 	switch v := value.(type) {
 	case string:
 		return v
+	case json.Number:
+		return v.String()
 	case float64:
 		return strconv.FormatFloat(v, 'f', -1, 64)
 	case int:

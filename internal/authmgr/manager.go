@@ -63,8 +63,14 @@ func (m *Manager) Start() error {
 		go func() {
 			// Introduce a random startup delay (jitter) of 0-5 seconds
 			// to prevent a "thundering herd" of auth requests on startup.
+			// Uses select so shutdown cancellation is respected during the wait.
 			jitter := time.Duration(rand.Intn(startupJitterMax)) * time.Millisecond
-			time.Sleep(jitter)
+			select {
+			case <-time.After(jitter):
+			case <-m.ctx.Done():
+				m.wg.Done()
+				return
+			}
 
 			// Call the refresh loop which will call wg.Done() on exit.
 			m.refreshLoop(provider)

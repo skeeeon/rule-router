@@ -3,6 +3,7 @@
 package rule
 
 import (
+	"bytes"
 	"encoding/base64"
 	"strings"
 	"sync"
@@ -97,10 +98,14 @@ func NewEvaluationContext(
 	sigVerification *SignatureVerification,
 	logger *logger.Logger,
 ) (*EvaluationContext, error) {
-	// Parse payload as generic interface to handle all JSON types
+	// Parse payload as generic interface to handle all JSON types.
+	// UseNumber() preserves numeric precision by decoding numbers as json.Number
+	// instead of float64, preventing silent data corruption on large integers.
 	var raw interface{}
 	if len(payload) > 0 {
-		if err := json.Unmarshal(payload, &raw); err != nil {
+		dec := json.NewDecoder(bytes.NewReader(payload))
+		dec.UseNumber()
+		if err := dec.Decode(&raw); err != nil {
 			// JSON parsing failed - check if it's valid UTF-8 text
 			if utf8.Valid(payload) {
 				// Treat entire payload as a raw string
@@ -295,7 +300,7 @@ func valueType(v interface{}) string {
 	switch v.(type) {
 	case string:
 		return "string"
-	case float64:
+	case json.Number, float64:
 		return "number"
 	case bool:
 		return "boolean"

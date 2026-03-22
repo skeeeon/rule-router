@@ -185,7 +185,7 @@ func (s *InboundServer) startWorkers(ctx context.Context) {
 					if !ok {
 						return
 					}
-					s.processWebhookWithRecovery(job.path, job.method, job.body, job.headers, workerID)
+					s.processWebhookWithRecovery(ctx, job.path, job.method, job.body, job.headers, workerID)
 				}
 			}
 		}()
@@ -290,7 +290,7 @@ func (s *InboundServer) webhookHandler(path string) http.HandlerFunc {
 
 // processWebhookWithRecovery wraps processWebhook with panic recovery.
 // This ensures a single malformed request cannot crash the entire worker.
-func (s *InboundServer) processWebhookWithRecovery(path, method string, body []byte, headers map[string]string, workerID int) {
+func (s *InboundServer) processWebhookWithRecovery(ctx context.Context, path, method string, body []byte, headers map[string]string, workerID int) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger.Error("panic recovered in inbound HTTP worker",
@@ -306,11 +306,11 @@ func (s *InboundServer) processWebhookWithRecovery(path, method string, body []b
 		}
 	}()
 
-	s.processWebhook(path, method, body, headers)
+	s.processWebhook(ctx, path, method, body, headers)
 }
 
 // processWebhook processes the webhook and publishes to NATS
-func (s *InboundServer) processWebhook(path, method string, body []byte, headers map[string]string) {
+func (s *InboundServer) processWebhook(ctx context.Context, path, method string, body []byte, headers map[string]string) {
 	// Process through rule engine
 	actions, err := s.processor.ProcessHTTP(path, method, body, headers)
 	if err != nil {
@@ -324,7 +324,7 @@ func (s *InboundServer) processWebhook(path, method string, body []byte, headers
 	// Publish all matched actions to NATS
 	for _, action := range actions {
 		if action.NATS != nil {
-			if err := s.publishToNATS(action.NATS); err != nil {
+			if err := s.publishToNATS(ctx, action.NATS); err != nil {
 				s.logger.Error("failed to publish to NATS",
 					"path", path,
 					"method", method,
@@ -352,7 +352,7 @@ func (s *InboundServer) processWebhook(path, method string, body []byte, headers
 }
 
 // publishToNATS publishes a NATS action with retry logic
-func (s *InboundServer) publishToNATS(action *rule.NATSAction) error {
+func (s *InboundServer) publishToNATS(ctx context.Context, action *rule.NATSAction) error {
 	// Prepare payload
 	var payloadBytes []byte
 	if action.Passthrough {
@@ -378,8 +378,8 @@ func (s *InboundServer) publishToNATS(action *rule.NATSAction) error {
 		return s.natsConn.PublishMsg(msg)
 	}
 
-	// JetStream async publish
-	ctx, cancel := context.WithTimeout(context.Background(), s.publishCfg.AckTimeout)
+	// JetStream async publish with timeout derived from parent context
+	ctx, cancel := context.WithTimeout(ctx, s.publishCfg.AckTimeout)
 	defer cancel()
 
 	ackF, err := s.jetstream.PublishMsgAsync(msg)
