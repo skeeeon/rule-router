@@ -1,10 +1,23 @@
 # Changelog
 
-## [0.9.0] - 2026-03-19
+## [0.9.0] - Unreleased
+
+### Features
 - Added HTTP action support to `rule-scheduler` for outbound API calls on cron schedules
 - HTTP actions use configurable retry with exponential backoff and jitter (same logic as `http-gateway`)
 - Extracted shared HTTP executor into `internal/httpclient` package, used by both `rule-scheduler` and `http-gateway`
 - Added `http.client` configuration section to `rule-scheduler.yaml` (timeout, connection pooling, TLS)
+- Added `keyFilter` option for KV cache to selectively watch specific keys per bucket, reducing memory and bandwidth
+- Logger rewritten to slog frontend backed by zap, replacing direct zap usage across all applications
+
+### Improvements
+- JSON decoding now uses `UseNumber()` to preserve numeric precision, preventing silent data corruption on large integers
+- Error comparisons use `errors.Is()` instead of bare `==` or string matching, so wrapped errors are handled correctly
+- Auth manager startup jitter now respects context cancellation, preventing goroutines from hanging during shutdown
+- Gateway NATS publish derives timeout from the worker context instead of `context.Background()`, respecting shutdown signals
+- Added string-splitting cache and parsed KV field cache to reduce repeated allocations in hot paths
+- Tuned log levels: routine KV cache hits and rule index lookups moved from info/warn to debug
+- Structured log fields standardized across broker, gateway, and rule engine
 
 ## [0.8.0] - 2026-03-19
 - Added `schedule-basic` template to `rule-cli new` for cron-based schedule rules
