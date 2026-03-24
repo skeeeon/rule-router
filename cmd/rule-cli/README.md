@@ -18,6 +18,7 @@ This tool streamlines the developer workflow by providing both rapid, template-b
 *   **Batch Testing**: Run a full suite of tests for your entire ruleset.
 *   **Dependency Mocking**: Isolate your tests by providing mock data for NATS KV stores, mock timestamps for time-based rules, and mock signature verification results.
 *   **CI/CD Friendly**: Multiple output formats (human-readable or JSON) for easy integration.
+*   **KV Push**: Push validated rule files to a NATS KV bucket for hot-reload deployments and GitOps workflows.
 *   **Portable & Self-Contained**: A single, dependency-free binary that works on any platform.
 
 -----
@@ -137,6 +138,7 @@ Available Commands:
   check       Run a quick check of a single rule against a single message
   completion  Generate the autocompletion script for the specified shell
   help        Help about any command
+  kv          Manage rules stored in NATS KV
   lint        Validate the syntax and structure of all rule files in a directory
   new         Create a new rule from a template or interactively
   scaffold    Generate a test directory for a given rule file
@@ -228,6 +230,33 @@ rule-cli check --rule rules/webhooks.yaml --message msg.json --rule-index 2
 ```
 
 For multi-rule files, omitting `--rule-index` will list all rules with their triggers so you can pick one.
+
+### `kv push` Command
+
+Push validated rule files to a NATS KV bucket for use with the [KV Rule Store](../../docs/06-kv-rule-store.md) feature.
+
+```bash
+# Push all YAML files in a directory
+rule-cli kv push sensors/ --url nats://localhost:4222
+
+# Push a single file
+rule-cli kv push sensors/tank.yaml --url nats://localhost:4222
+
+# Push with credentials
+rule-cli kv push rules/ --url nats://my-server:4222 --creds /path/to/creds.json
+
+# Preview what would be pushed (validates rules without writing)
+rule-cli kv push sensors/ --dry-run
+
+# Push to a custom bucket name
+rule-cli kv push rules/ --bucket my-rules
+```
+
+File paths are converted to dotted KV keys: `sensors/tank.yaml` becomes `sensors.tank`. Directory pushes are **non-recursive** — push each subdirectory separately for nested structures.
+
+All rules are validated before pushing. If any rule fails validation, the push is aborted.
+
+**» See the [KV Rule Store guide](../../docs/06-kv-rule-store.md) for full details on configuration, GitOps workflows, and how hot-reload works.**
 
 -----
 
@@ -325,12 +354,16 @@ jobs:
       
       - name: Test Rules
         run: ./rule-cli test --rules ./rules --output json > results.json
-      
+
       - name: Upload Test Results
         uses: actions/upload-artifact@v4
         with:
           name: test-results
           path: results.json
+
+      # Optional: Push rules to NATS KV for hot-reload deployments
+      # - name: Push Rules to KV
+      #   run: ./rule-cli kv push ./rules --url ${{ secrets.NATS_URL }} --creds ${{ secrets.NATS_CREDS }}
 ```
 
 -----

@@ -3,6 +3,16 @@
 ## [0.9.0] - Unreleased
 
 ### Features
+- Added **KV Rule Store**: optionally load rules from a NATS KV bucket instead of YAML files, with automatic hot-reload via KV Watch
+- Rules pushed to KV are validated, parsed, and hot-swapped into the processor without restart
+- JetStream consumers and subscriptions are created/removed dynamically as rule subjects change
+- Supported by `rule-router` (NATS trigger rules) and `http-gateway` (both inbound HTTP and outbound NATS-to-HTTP rules)
+- Added `rule-cli kv push` command to upload rule files to a NATS KV bucket with validation and dry-run support
+- File paths are converted to dotted KV keys (e.g., `sensors/tank.yaml` becomes `sensors.tank`)
+- Added `OutboundSubscriber` interface for dynamic outbound subscription management in `http-gateway`
+- Added `Refresh()` to `StreamResolver` for picking up newly created JetStream streams at runtime
+- Added `ProcessForSubscription()` to `Processor` for O(1) rule lookup by trigger subject (bypasses pattern matching index)
+- Configuration: new `kv.rules` section with `enabled`, `bucket`, and `autoProvision` options
 - Added HTTP action support to `rule-scheduler` for outbound API calls on cron schedules
 - HTTP actions use configurable retry with exponential backoff and jitter (same logic as `http-gateway`)
 - Extracted shared HTTP executor into `internal/httpclient` package, used by both `rule-scheduler` and `http-gateway`
