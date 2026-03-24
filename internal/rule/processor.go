@@ -256,8 +256,17 @@ func (p *Processor) GetSubjects() []string {
 
 // GetHTTPPaths returns all unique HTTP paths for route setup
 func (p *Processor) GetHTTPPaths() []string {
-	paths := make([]string, 0, len(p.httpPathIndex))
+	pathSet := make(map[string]bool)
 	for path := range p.httpPathIndex {
+		pathSet[path] = true
+	}
+	if kvMap, ok := p.httpKVRules.Load().(map[string][]*Rule); ok {
+		for path := range kvMap {
+			pathSet[path] = true
+		}
+	}
+	paths := make([]string, 0, len(pathSet))
+	for path := range pathSet {
 		paths = append(paths, path)
 	}
 	return paths
@@ -437,21 +446,34 @@ func (p *Processor) ProcessHTTP(path, method string, payload []byte, headers map
 	return p.evaluateRules(rules, context, "http")
 }
 
-// findHTTPRules finds all HTTP rules matching the path and method
+// findHTTPRules finds all HTTP rules matching the path and method.
+// Checks both file-based httpPathIndex and KV-based httpKVRules.
 func (p *Processor) findHTTPRules(path, method string) []*Rule {
-	rulesForPath, exists := p.httpPathIndex[path]
-	if !exists || len(rulesForPath) == 0 {
+	// Collect rules from both sources
+	var rulesForPath []*Rule
+
+	if fileRules := p.httpPathIndex[path]; len(fileRules) > 0 {
+		rulesForPath = append(rulesForPath, fileRules...)
+	}
+
+	if kvMap, ok := p.httpKVRules.Load().(map[string][]*Rule); ok {
+		if kvRules := kvMap[path]; len(kvRules) > 0 {
+			rulesForPath = append(rulesForPath, kvRules...)
+		}
+	}
+
+	if len(rulesForPath) == 0 {
 		p.logger.Debug("no HTTP rules for path", "path", path)
 		return nil
 	}
-	
+
 	if method == "" {
 		p.logger.Debug("HTTP rule lookup complete (all methods)",
 			"path", path,
 			"matchedRules", len(rulesForPath))
 		return rulesForPath
 	}
-	
+
 	var matching []*Rule
 	for _, rule := range rulesForPath {
 		if rule.Trigger.HTTP.Method == "" || rule.Trigger.HTTP.Method == method {
@@ -462,13 +484,13 @@ func (p *Processor) findHTTPRules(path, method string) []*Rule {
 				"ruleMethod", rule.Trigger.HTTP.Method)
 		}
 	}
-	
+
 	p.logger.Debug("HTTP rule lookup complete",
 		"path", path,
 		"method", method,
 		"totalRulesForPath", len(rulesForPath),
 		"matchedRules", len(matching))
-	
+
 	return matching
 }
 

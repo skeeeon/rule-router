@@ -745,6 +745,25 @@ func (b *NATSBroker) RefreshStreams() error {
 	return b.streamResolver.Refresh(b.ctx)
 }
 
+// CreateOutboundConsumer creates a consumer for a subject and returns the stream and consumer names.
+// Used by the RuleKVManager to create consumers for outbound (NATS trigger → HTTP action) subscriptions.
+func (b *NATSBroker) CreateOutboundConsumer(subject string) (streamName, consumerName string, err error) {
+	if err := b.CreateConsumerForSubject(subject); err != nil {
+		return "", "", fmt.Errorf("failed to create consumer for subject '%s': %w", subject, err)
+	}
+
+	b.consumersMu.RLock()
+	consumerName = b.consumers[subject]
+	b.consumersMu.RUnlock()
+
+	streamName, err = b.streamResolver.FindStreamForSubject(subject)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to find stream for subject '%s': %w", subject, err)
+	}
+
+	return streamName, consumerName, nil
+}
+
 // Close shuts down the broker connections
 func (b *NATSBroker) Close() error {
 	b.logger.Info("closing NATS broker connections")
