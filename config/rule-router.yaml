@@ -118,6 +118,15 @@ kv:
     # - name: "occupancy"
     #   keyFilter: "bldg-a.>"
   
+  # KV-Based Rule Storage (optional)
+  # When enabled, rules are loaded from a NATS KV bucket instead of YAML files.
+  # A watcher hot-reloads rules on any change — no restart needed.
+  # Push rules with: rule-cli kv push <file-or-dir> --url nats://localhost:4222
+  # rules:
+  #   enabled: true
+  #   bucket: "rules"          # KV bucket name (default: "rules")
+  #   autoProvision: false     # Auto-create bucket if it doesn't exist
+
   # Local Cache Configuration - High Performance In-Memory KV Cache
   localCache:
     enabled: true             # Enable in-memory KV caching (default: true)

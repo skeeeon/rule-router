@@ -36,6 +36,7 @@ type RouterApp struct {
 	broker           *broker.NATSBroker
 	base             *BaseApp // Reference to BaseApp for proper shutdown
 	metricsCollector *metrics.MetricsCollector
+	ruleKVManager    *broker.RuleKVManager
 }
 
 // NewRouterApp creates a new rule-router application instance using the pre-built base components.
@@ -53,12 +54,50 @@ func NewRouterApp(base *BaseApp, cfg *config.Config) (*RouterApp, error) {
 	// Initialize subscription manager with processor
 	app.broker.InitializeSubscriptionManager(app.processor)
 
-	// Setup subscriptions for all rule subjects (router-specific logic)
-	if err := app.setupSubscriptions(); err != nil {
-		return nil, fmt.Errorf("failed to setup subscriptions: %w", err)
+	if cfg.KV.Rules.Enabled {
+		// KV rules mode: rules are loaded from KV bucket and watched for changes
+		if err := app.setupKVRules(); err != nil {
+			return nil, fmt.Errorf("failed to setup KV rules: %w", err)
+		}
+	} else {
+		// File-based mode: setup subscriptions for all rule subjects
+		if err := app.setupSubscriptions(); err != nil {
+			return nil, fmt.Errorf("failed to setup subscriptions: %w", err)
+		}
 	}
 
 	return app, nil
+}
+
+// setupKVRules initializes the KV rule manager, watches for rules, and waits for initial sync.
+func (app *RouterApp) setupKVRules() error {
+	kvCfg := app.config.KV.Rules
+
+	app.ruleKVManager = broker.NewRuleKVManager(
+		kvCfg.Bucket,
+		kvCfg.AutoProvision,
+		app.processor,
+		app.broker,
+		app.base.RulesLoader,
+		app.logger,
+	)
+
+	if err := app.ruleKVManager.Watch(context.Background()); err != nil {
+		return fmt.Errorf("failed to start KV rule watcher: %w", err)
+	}
+
+	// Block until initial KV sync completes
+	ctx, cancel := context.WithTimeout(context.Background(), subscriptionSetupTimeout)
+	defer cancel()
+
+	if err := app.ruleKVManager.WaitReady(ctx); err != nil {
+		return fmt.Errorf("timeout waiting for initial KV rule sync: %w", err)
+	}
+
+	app.logger.Info("KV rules loaded and subscriptions configured",
+		"bucket", kvCfg.Bucket)
+
+	return nil
 }
 
 // Run starts the application and waits for shutdown signal.
@@ -86,9 +125,12 @@ func (app *RouterApp) Run(ctx context.Context) error {
 		"subscriptionCount", subCount,
 		"metricsEnabled", app.config.Metrics.Enabled)
 
-	// Start subscription manager
-	if err := subMgr.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start subscription manager: %w", err)
+	// Start subscription manager (only for file-based mode;
+	// in KV mode, subscriptions are started dynamically by RuleKVManager)
+	if !app.config.KV.Rules.Enabled {
+		if err := subMgr.Start(ctx); err != nil {
+			return fmt.Errorf("failed to start subscription manager: %w", err)
+		}
 	}
 
 	app.logger.Info("all subscriptions active and processing messages")
@@ -131,6 +173,11 @@ func (app *RouterApp) Close() error {
 		if err := app.base.ShutdownMetricsServer(shutdownCtx); err != nil {
 			errors = append(errors, err)
 		}
+	}
+
+	// Stop KV rule manager before broker
+	if app.ruleKVManager != nil {
+		app.ruleKVManager.Stop()
 	}
 
 	// Close NATS broker (this will stop subscriptions and clean up)
