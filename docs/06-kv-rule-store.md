@@ -15,7 +15,7 @@ By default, rules are loaded from YAML files in the `rules/` directory at startu
 | **Rule source** | `rules/` directory | NATS KV bucket |
 | **When rules load** | At startup (or SIGHUP reload) | Continuously via KV Watch |
 | **Hot reload** | Requires SIGHUP signal | Automatic on any KV change |
-| **Dynamic subjects** | Requires restart for new subjects | Consumers created/removed automatically |
+| **Dynamic subjects** | Requires restart for new subjects | Consumers/cron jobs created/removed automatically |
 | **Best for** | Simple deployments, local dev | GitOps, multi-team, dynamic environments |
 
 Both modes use the exact same YAML rule format. A rule that works from a file works identically from KV.
@@ -40,9 +40,10 @@ kv:
 
 When `kv.rules.enabled` is `true`, the `rules/` directory is ignored. All rules come from the KV bucket.
 
-This works with all applications that support rules:
+This works with all rule-based applications:
 *   **`rule-router`**: NATS trigger rules are loaded from KV, consumers created dynamically.
 *   **`http-gateway`**: Both inbound (HTTP trigger) and outbound (NATS trigger + HTTP action) rules are loaded from KV. HTTP paths are handled dynamically via a catch-all handler.
+*   **`rule-scheduler`**: Schedule-triggered rules are loaded from KV. Cron jobs are rebuilt automatically when rules change — no restart or SIGHUP needed.
 
 -----
 
@@ -157,6 +158,16 @@ When KV rules are enabled, the application:
    - New rules are parsed, validated, and pushed to the processor.
    - New NATS trigger subjects get JetStream consumers created automatically.
    - Deleted rules have their orphaned consumers and subscriptions cleaned up.
+
+### Scheduler Behavior
+
+For `rule-scheduler`, KV rule changes trigger a cron job rebuild rather than subscription changes. When a KV key containing schedule rules is updated or deleted:
+
+1. All existing KV-sourced cron jobs are removed.
+2. New cron jobs are registered from the updated rule set.
+3. The scheduler continues running — no restart, no gap in execution.
+
+Jobs that are mid-execution when a rebuild occurs are not interrupted.
 
 ### Stream Refresh
 

@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -159,7 +160,7 @@ func (app *RouterApp) Run(ctx context.Context) error {
 func (app *RouterApp) Close() error {
 	app.logger.Info("closing application components")
 
-	var errors []error
+	var errs []error
 
 	// Stop metrics collector
 	if app.metricsCollector != nil {
@@ -171,7 +172,7 @@ func (app *RouterApp) Close() error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), metricsShutdownTimeout)
 		defer cancel()
 		if err := app.base.ShutdownMetricsServer(shutdownCtx); err != nil {
-			errors = append(errors, err)
+			errs = append(errs, err)
 		}
 	}
 
@@ -183,7 +184,7 @@ func (app *RouterApp) Close() error {
 	// Close NATS broker (this will stop subscriptions and clean up)
 	if app.broker != nil {
 		if err := app.broker.Close(); err != nil {
-			errors = append(errors, fmt.Errorf("failed to close NATS broker: %w", err))
+			errs = append(errs, fmt.Errorf("failed to close NATS broker: %w", err))
 		}
 	}
 
@@ -194,8 +195,8 @@ func (app *RouterApp) Close() error {
 		}
 	}
 
-	if len(errors) > 0 {
-		return fmt.Errorf("cleanup errors: %v", errors)
+	if len(errs) > 0 {
+		return fmt.Errorf("cleanup errors: %w", errors.Join(errs...))
 	}
 
 	return nil

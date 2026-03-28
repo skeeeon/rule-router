@@ -6,7 +6,7 @@
 - Added **KV Rule Store**: optionally load rules from a NATS KV bucket instead of YAML files, with automatic hot-reload via KV Watch
 - Rules pushed to KV are validated, parsed, and hot-swapped into the processor without restart
 - JetStream consumers and subscriptions are created/removed dynamically as rule subjects change
-- Supported by `rule-router` (NATS trigger rules) and `http-gateway` (both inbound HTTP and outbound NATS-to-HTTP rules)
+- Supported by `rule-router` (NATS trigger rules), `http-gateway` (both inbound HTTP and outbound NATS-to-HTTP rules), and `rule-scheduler` (cron jobs rebuilt automatically on KV changes)
 - Added `rule-cli kv push` command to upload rule files to a NATS KV bucket with validation and dry-run support
 - File paths are converted to dotted KV keys (e.g., `sensors/tank.yaml` becomes `sensors.tank`)
 - Added `OutboundSubscriber` interface for dynamic outbound subscription management in `http-gateway`

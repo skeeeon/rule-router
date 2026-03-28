@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -19,12 +20,19 @@ import (
 
 // Timeout constants for SchedulerApp operations
 const (
+	// publishTimeout is the maximum time to wait for a single publish operation
+	publishTimeout = 10 * time.Second
+
 	// schedulerMetricsShutdownTimeout is the maximum time to wait for the metrics server to shutdown
 	schedulerMetricsShutdownTimeout = 5 * time.Second
 
-	// publishTimeout is the maximum time to wait for a single publish operation
-	publishTimeout = 10 * time.Second
+	// kvRulesSetupTimeout is the maximum time to wait for the initial KV rule sync
+	kvRulesSetupTimeout = 60 * time.Second
 )
+
+// kvScheduleTag is used to tag cron jobs loaded from KV so they can be
+// removed as a group when KV rules change without affecting file-loaded jobs.
+const kvScheduleTag = "kv-rule"
 
 // Verify SchedulerApp implements lifecycle.Application interface at compile time
 var _ lifecycle.Application = (*SchedulerApp)(nil)
@@ -40,6 +48,7 @@ type SchedulerApp struct {
 	base             *BaseApp
 	scheduler        gocron.Scheduler
 	metricsCollector *metrics.MetricsCollector
+	ruleKVManager    *broker.RuleKVManager
 }
 
 // NewSchedulerApp creates a new rule-scheduler application instance using the pre-built base components.
@@ -56,8 +65,13 @@ func NewSchedulerApp(base *BaseApp, cfg *config.Config) (*SchedulerApp, error) {
 	}
 
 	scheduleRules := app.processor.GetScheduleRules()
+
 	if len(scheduleRules) == 0 {
-		return nil, fmt.Errorf("no schedule-triggered rules found")
+		if cfg.KV.Rules.Enabled {
+			app.logger.Info("no schedule rules loaded yet (KV mode: rules will arrive via KV watch)")
+		} else {
+			return nil, fmt.Errorf("no schedule-triggered rules found")
+		}
 	}
 
 	// Create gocron scheduler
@@ -76,11 +90,18 @@ func NewSchedulerApp(base *BaseApp, cfg *config.Config) (*SchedulerApp, error) {
 
 	app.logger.Info("schedule rules registered", "count", len(scheduleRules))
 
+	if cfg.KV.Rules.Enabled {
+		if err := app.setupKVRules(); err != nil {
+			return nil, fmt.Errorf("failed to setup KV rules: %w", err)
+		}
+	}
+
 	return app, nil
 }
 
-// registerScheduleRule registers a single schedule-triggered rule as a cron job
-func (app *SchedulerApp) registerScheduleRule(r *rule.Rule) error {
+// registerScheduleRule registers a single schedule-triggered rule as a cron job.
+// Extra gocron options can be passed (e.g., WithTags for KV-sourced rules).
+func (app *SchedulerApp) registerScheduleRule(r *rule.Rule, opts ...gocron.JobOption) error {
 	schedule := r.Trigger.Schedule
 
 	// Build cron expression with timezone prefix if specified
@@ -97,6 +118,7 @@ func (app *SchedulerApp) registerScheduleRule(r *rule.Rule) error {
 		gocron.NewTask(func() {
 			app.executeScheduleRule(capturedRule)
 		}),
+		opts...,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to register cron job: %w", err)
@@ -106,6 +128,58 @@ func (app *SchedulerApp) registerScheduleRule(r *rule.Rule) error {
 		"cron", cronExpr)
 
 	return nil
+}
+
+// setupKVRules initializes the KV rule manager, watches for rule changes, and waits for initial sync.
+func (app *SchedulerApp) setupKVRules() error {
+	kvCfg := app.config.KV.Rules
+
+	app.ruleKVManager = broker.NewRuleKVManager(
+		kvCfg.Bucket,
+		kvCfg.AutoProvision,
+		app.processor,
+		app.broker,
+		app.base.RulesLoader,
+		app.logger,
+	)
+
+	// Register callback so cron jobs are rebuilt whenever KV rules change
+	app.ruleKVManager.SetScheduleRebuildFunc(app.rebuildCronJobs)
+
+	if err := app.ruleKVManager.Watch(context.Background()); err != nil {
+		return fmt.Errorf("failed to start KV rule watcher: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), kvRulesSetupTimeout)
+	defer cancel()
+
+	if err := app.ruleKVManager.WaitReady(ctx); err != nil {
+		return fmt.Errorf("timeout waiting for initial KV rule sync: %w", err)
+	}
+
+	app.logger.Info("KV rules loaded and cron jobs configured", "bucket", kvCfg.Bucket)
+	return nil
+}
+
+// rebuildCronJobs removes all existing cron jobs and registers the provided rules.
+// Called by RuleKVManager whenever schedule rules change in the KV bucket.
+// gocron supports adding/removing jobs on a running scheduler, so no restart needed.
+func (app *SchedulerApp) rebuildCronJobs(rules []*rule.Rule) {
+	// Remove all existing KV-sourced jobs, then re-register
+	app.scheduler.RemoveByTags(kvScheduleTag)
+
+	for _, r := range rules {
+		if err := app.registerScheduleRule(r, gocron.WithTags(kvScheduleTag)); err != nil {
+			app.logger.Error("failed to register schedule rule during rebuild",
+				"cron", r.Trigger.Schedule.Cron, "error", err)
+		}
+	}
+
+	app.logger.Info("cron jobs rebuilt from KV rules", "count", len(rules))
+
+	if app.metrics != nil {
+		app.metrics.SetRulesActive(float64(len(rules)))
+	}
 }
 
 // executeScheduleRule processes a schedule-triggered rule and publishes resulting actions
@@ -177,7 +251,8 @@ func (app *SchedulerApp) Run(ctx context.Context) error {
 		"urls", app.config.NATS.URLs,
 		"metricsEnabled", app.config.Metrics.Enabled)
 
-	// Start the cron scheduler
+	// Start the cron scheduler. gocron's Start() is idempotent — safe to call
+	// even if rebuildCronJobs has already been invoked during initial KV sync.
 	app.scheduler.Start()
 
 	app.logger.Info("scheduler started, all cron jobs active")
@@ -205,7 +280,7 @@ func (app *SchedulerApp) Run(ctx context.Context) error {
 func (app *SchedulerApp) Close() error {
 	app.logger.Info("closing application components")
 
-	var errors []error
+	var errs []error
 
 	// Stop metrics collector
 	if app.metricsCollector != nil {
@@ -217,14 +292,19 @@ func (app *SchedulerApp) Close() error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), schedulerMetricsShutdownTimeout)
 		defer cancel()
 		if err := app.base.ShutdownMetricsServer(shutdownCtx); err != nil {
-			errors = append(errors, err)
+			errs = append(errs, err)
 		}
+	}
+
+	// Stop KV rule manager before broker
+	if app.ruleKVManager != nil {
+		app.ruleKVManager.Stop()
 	}
 
 	// Close NATS broker
 	if app.broker != nil {
 		if err := app.broker.Close(); err != nil {
-			errors = append(errors, fmt.Errorf("failed to close NATS broker: %w", err))
+			errs = append(errs, fmt.Errorf("failed to close NATS broker: %w", err))
 		}
 	}
 
@@ -235,8 +315,8 @@ func (app *SchedulerApp) Close() error {
 		}
 	}
 
-	if len(errors) > 0 {
-		return fmt.Errorf("cleanup errors: %v", errors)
+	if len(errs) > 0 {
+		return fmt.Errorf("cleanup errors: %w", errors.Join(errs...))
 	}
 
 	return nil

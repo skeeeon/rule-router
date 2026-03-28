@@ -33,12 +33,18 @@ func run() error {
 	// Create app factory function
 	createApp := func() (lifecycle.Application, error) {
 		// Build the common components using the builder.
-		baseApp, err := app.NewAppBuilder(cfg, rulesPath).
+		builder := app.NewAppBuilder(cfg, rulesPath).
 			WithLogger().
 			WithMetrics().
-			WithNATSBroker().
-			WithRuleProcessor().
-			Build()
+			WithNATSBroker()
+
+		if cfg.KV.Rules.Enabled {
+			builder = builder.WithKVRuleProcessor()
+		} else {
+			builder = builder.WithRuleProcessor()
+		}
+
+		baseApp, err := builder.Build()
 		if err != nil {
 			return nil, err
 		}

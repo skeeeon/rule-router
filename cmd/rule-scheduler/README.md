@@ -10,6 +10,7 @@ Cron-based scheduled publishing to NATS and HTTP endpoints using the shared rule
 - **HTTP Publishing**: Make outbound HTTP requests on a schedule with configurable retry and exponential backoff.
 - **Conditional Execution**: Schedule rules can include conditions (e.g., only unlock doors if building status is "occupied").
 - **Hot Reload**: `SIGHUP` reloads rules and re-registers cron jobs without downtime.
+- **KV Rule Store**: Optionally load rules from a NATS KV bucket with automatic hot-reload. Push rules with `rule-cli kv push` for a GitOps workflow.
 - **Prometheus Metrics**: Action publish tracking and rule activity metrics.
 - **Graceful Shutdown**: Waits for running jobs to complete before exiting.
 
@@ -265,6 +266,41 @@ The scheduler only publishes — it does not subscribe to NATS subjects. This me
 - No `security.verification` needed (no inbound messages to verify)
 - KV is optional (only needed if your schedule rules use KV conditions or templates)
 - `http.client` configures the outbound HTTP client for HTTP actions (timeout, connection pooling, TLS)
+
+## Rule Loading: File vs KV
+
+By default, rules are loaded from YAML files in the `rules/` directory. You can optionally load rules from a NATS KV bucket instead, enabling live updates without restarts.
+
+### File-Based (Default)
+
+```bash
+./rule-scheduler --config config/rule-scheduler.yaml --rules rules/
+```
+
+Rules load at startup. Send `SIGHUP` to reload from disk.
+
+### KV-Based
+
+Enable in your config:
+
+```yaml
+kv:
+  enabled: true
+  rules:
+    enabled: true
+    bucket: "rules"
+    autoProvision: false
+```
+
+With KV rules enabled, the scheduler watches the configured bucket and rebuilds cron jobs automatically when rules change. Push rules with:
+
+```bash
+rule-cli kv push rules/scheduler/ --url nats://localhost:4222
+```
+
+When a KV key is updated or deleted, only the KV-sourced cron jobs are removed and re-registered. Jobs that are mid-execution are not interrupted.
+
+For full details on KV rule storage, GitOps workflows, and the `rule-cli kv push` command, see the [KV Rule Store documentation](./../../docs/06-kv-rule-store.md).
 
 ## Advanced Features
 

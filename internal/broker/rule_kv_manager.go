@@ -24,21 +24,22 @@ type OutboundSubscriber interface {
 // them into the Processor. It also dynamically creates and removes JetStream
 // consumers and subscriptions as trigger subjects change.
 type RuleKVManager struct {
-	kvBucket           string
-	autoProvision      bool
-	processor          *rule.Processor
-	broker             *NATSBroker
-	rulesLoader        *rule.RulesLoader
-	logger             *logger.Logger
-	currentRules       map[string][]rule.Rule // KV key → parsed rules
-	outboundSubscriber OutboundSubscriber
-	mu                 sync.Mutex
-	wg                 sync.WaitGroup
-	ready              chan struct{}
-	readyOnce          sync.Once
-	watcher            jetstream.KeyWatcher
-	watchOnce          sync.Once
-	watchErr           error
+	kvBucket            string
+	autoProvision       bool
+	processor           *rule.Processor
+	broker              *NATSBroker
+	rulesLoader         *rule.RulesLoader
+	logger              *logger.Logger
+	currentRules        map[string][]rule.Rule // KV key → parsed rules
+	outboundSubscriber  OutboundSubscriber
+	scheduleRebuildFunc func([]*rule.Rule)     // optional: called when schedule rules change
+	mu                  sync.Mutex
+	wg                  sync.WaitGroup
+	ready               chan struct{}
+	readyOnce           sync.Once
+	watcher             jetstream.KeyWatcher
+	watchOnce           sync.Once
+	watchErr            error
 }
 
 // NewRuleKVManager creates a new rule KV manager.
@@ -89,7 +90,10 @@ func (m *RuleKVManager) Watch(ctx context.Context) error {
 			return
 		}
 
+		m.mu.Lock()
 		m.watcher = watcher
+		m.mu.Unlock()
+
 		m.wg.Add(1)
 		go func() {
 			defer m.wg.Done()
@@ -112,10 +116,23 @@ func (m *RuleKVManager) WaitReady(ctx context.Context) error {
 	}
 }
 
+// SetScheduleRebuildFunc registers a callback that is invoked whenever the set of
+// schedule-triggered rules changes. The SchedulerApp uses this to rebuild cron jobs
+// without restarting the process.
+func (m *RuleKVManager) SetScheduleRebuildFunc(f func([]*rule.Rule)) {
+	m.mu.Lock()
+	m.scheduleRebuildFunc = f
+	m.mu.Unlock()
+}
+
 // Stop stops the watcher and waits for the goroutine to exit.
 func (m *RuleKVManager) Stop() {
-	if m.watcher != nil {
-		if err := m.watcher.Stop(); err != nil {
+	m.mu.Lock()
+	watcher := m.watcher
+	m.mu.Unlock()
+
+	if watcher != nil {
+		if err := watcher.Stop(); err != nil {
 			m.logger.Error("failed to stop rule KV watcher", "error", err)
 		}
 	}
@@ -177,13 +194,19 @@ func (m *RuleKVManager) handleRulePut(key string, value []byte, revision uint64)
 	previousNATSSubjects := m.collectNATSSubjects(m.currentRules[key])
 	previousHTTPSubjects := m.collectHTTPActionSubjects(m.currentRules[key])
 	m.currentRules[key] = rules
-	m.pushRulesToProcessor()
+	scheduleRules := m.pushRulesToProcessor()
 
 	newNATSSubjects := m.collectNATSSubjects(rules)
 	newHTTPSubjects := m.collectHTTPActionSubjects(rules)
 	outbound := m.outboundSubscriber
+	rebuildFunc := m.scheduleRebuildFunc
 
 	m.mu.Unlock()
+
+	// Notify scheduler to rebuild cron jobs if schedule rules changed
+	if rebuildFunc != nil && len(scheduleRules) > 0 {
+		rebuildFunc(scheduleRules)
+	}
 
 	// Start inbound subscriptions for newly added NATS trigger subjects (outside lock)
 	for subject := range newNATSSubjects {
@@ -224,8 +247,9 @@ func (m *RuleKVManager) handleRuleDelete(key string) {
 
 	oldNATSSubjects := m.collectNATSSubjects(oldRules)
 	oldHTTPSubjects := m.collectHTTPActionSubjects(oldRules)
+	oldHadScheduleRules := m.hasScheduleRules(oldRules)
 	delete(m.currentRules, key)
-	m.pushRulesToProcessor()
+	scheduleRules := m.pushRulesToProcessor()
 
 	// Compute which subjects are still needed by other keys
 	stillNeededNATS := make(map[string]bool)
@@ -239,8 +263,14 @@ func (m *RuleKVManager) handleRuleDelete(key string) {
 		}
 	}
 	outbound := m.outboundSubscriber
+	rebuildFunc := m.scheduleRebuildFunc
 
 	m.mu.Unlock()
+
+	// Rebuild cron jobs only if the deleted key actually had schedule rules
+	if rebuildFunc != nil && oldHadScheduleRules {
+		rebuildFunc(scheduleRules)
+	}
 
 	// Remove inbound subscriptions for subjects no longer needed (outside lock)
 	for subject := range oldNATSSubjects {
@@ -263,9 +293,11 @@ func (m *RuleKVManager) handleRuleDelete(key string) {
 
 // pushRulesToProcessor aggregates all current rules and atomically swaps them
 // in the Processor. Must be called while holding m.mu.
-func (m *RuleKVManager) pushRulesToProcessor() {
+// Returns the collected schedule rules so the caller can invoke the rebuild callback.
+func (m *RuleKVManager) pushRulesToProcessor() []*rule.Rule {
 	natsRules := make(map[string][]*rule.Rule)
 	httpRules := make(map[string][]*rule.Rule)
+	var scheduleRules []*rule.Rule
 
 	for _, rules := range m.currentRules {
 		for i := range rules {
@@ -276,11 +308,16 @@ func (m *RuleKVManager) pushRulesToProcessor() {
 			if r.Trigger.HTTP != nil {
 				httpRules[r.Trigger.HTTP.Path] = append(httpRules[r.Trigger.HTTP.Path], r)
 			}
+			if r.Trigger.Schedule != nil {
+				scheduleRules = append(scheduleRules, r)
+			}
 		}
 	}
 
 	m.processor.ReplaceRules(natsRules)
 	m.processor.ReplaceHTTPRules(httpRules)
+	m.processor.ReplaceScheduleRules(scheduleRules)
+	return scheduleRules
 }
 
 // SetOutboundSubscriber registers an outbound subscriber (e.g., http-gateway's OutboundClient)
@@ -325,6 +362,16 @@ func (m *RuleKVManager) addOutboundSubscription(sub OutboundSubscriber, key, sub
 		m.logger.Error("failed to start outbound subscription",
 			"key", key, "subject", subject, "error", err)
 	}
+}
+
+// hasScheduleRules returns true if any rule in the slice has a schedule trigger.
+func (m *RuleKVManager) hasScheduleRules(rules []rule.Rule) bool {
+	for _, r := range rules {
+		if r.Trigger.Schedule != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // collectNATSSubjects returns the set of trigger subjects for rules with NATS actions

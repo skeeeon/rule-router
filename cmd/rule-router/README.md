@@ -180,6 +180,39 @@ This rule enriches incoming orders with customer data from a KV store, preservin
 
 With `merge: true`, the original message fields are preserved and the overlay fields are added or overwritten. See [Core Concepts](./../../docs/01-core-concepts.md) for full merge semantics.
 
+## Rule Loading: File vs KV
+
+By default, rules are loaded from YAML files in the `rules/` directory. You can optionally load rules from a NATS KV bucket instead, enabling live updates without restarts.
+
+### File-Based (Default)
+
+```bash
+./rule-router --config config/rule-router.yaml --rules rules/
+```
+
+Rules load at startup. Send `SIGHUP` to reload from disk.
+
+### KV-Based
+
+Enable in your config:
+
+```yaml
+kv:
+  enabled: true
+  rules:
+    enabled: true
+    bucket: "rules"
+    autoProvision: false
+```
+
+With KV rules enabled, the router watches the configured bucket and hot-reloads rules on any change. JetStream consumers and subscriptions are created and removed automatically as rule subjects change. Push rules with:
+
+```bash
+rule-cli kv push rules/ --url nats://localhost:4222
+```
+
+For full details on KV rule storage, GitOps workflows, and the `rule-cli kv push` command, see the [KV Rule Store documentation](./../../docs/06-kv-rule-store.md).
+
 ## Testing Rules
 
 Use the standalone `rule-cli` utility for offline validation of your rules.

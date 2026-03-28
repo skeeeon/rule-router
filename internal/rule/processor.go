@@ -38,8 +38,9 @@ type Processor struct {
 
 	// KV-based rule storage: atomically swapped maps for lock-free reads.
 	// These are populated by RuleKVManager when KV rules are enabled.
-	kvRules     atomic.Value // holds map[string][]*Rule — NATS subject → rules
-	httpKVRules atomic.Value // holds map[string][]*Rule — HTTP path → rules
+	kvRules          atomic.Value // holds map[string][]*Rule — NATS subject → rules
+	httpKVRules      atomic.Value // holds map[string][]*Rule — HTTP path → rules
+	kvScheduleRules  atomic.Value // holds []*Rule — schedule-triggered rules from KV
 }
 
 type ProcessorStats struct {
@@ -277,9 +278,20 @@ func (p *Processor) GetAllRules() []*Rule {
 	return p.allRules
 }
 
-// GetScheduleRules returns all schedule-triggered rules
+// GetScheduleRules returns all schedule-triggered rules.
+// Returns KV-loaded schedule rules when set (even if empty); falls back to file-loaded rules.
 func (p *Processor) GetScheduleRules() []*Rule {
+	if kv, ok := p.kvScheduleRules.Load().([]*Rule); ok {
+		return kv
+	}
 	return p.scheduleRules
+}
+
+// ReplaceScheduleRules atomically swaps the KV-loaded schedule rule set.
+// Called by RuleKVManager when KV Watch detects changes to schedule-triggered rules.
+func (p *Processor) ReplaceScheduleRules(rules []*Rule) {
+	p.kvScheduleRules.Store(rules)
+	p.logger.Debug("KV schedule rules replaced", "count", len(rules))
 }
 
 // ReplaceRules atomically swaps the KV-loaded NATS rule set.

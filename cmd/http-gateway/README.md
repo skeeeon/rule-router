@@ -177,6 +177,39 @@ Enrich incoming webhook payloads with metadata before publishing to NATS, withou
 
 With `merge: true`, the entire webhook body is preserved and the overlay fields are added. See [Core Concepts](./../../docs/01-core-concepts.md) for full merge semantics.
 
+## Rule Loading: File vs KV
+
+By default, rules are loaded from YAML files in the `rules/` directory. You can optionally load rules from a NATS KV bucket instead, enabling live updates without restarts.
+
+### File-Based (Default)
+
+```bash
+./http-gateway --config config/http-gateway.yaml --rules rules/
+```
+
+Rules load at startup. Send `SIGHUP` to reload from disk.
+
+### KV-Based
+
+Enable in your config:
+
+```yaml
+kv:
+  enabled: true
+  rules:
+    enabled: true
+    bucket: "rules"
+    autoProvision: false
+```
+
+With KV rules enabled, the gateway watches the configured bucket and hot-reloads rules on any change. Inbound HTTP paths are handled dynamically via a catch-all handler, and outbound NATS-to-HTTP subscriptions are created and removed automatically. Push rules with:
+
+```bash
+rule-cli kv push rules/ --url nats://localhost:4222
+```
+
+For full details on KV rule storage, GitOps workflows, and the `rule-cli kv push` command, see the [KV Rule Store documentation](./../../docs/06-kv-rule-store.md).
+
 ## Architecture
 
 ```
