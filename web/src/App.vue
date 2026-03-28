@@ -11,9 +11,11 @@ import YamlPreview from './components/YamlPreview.vue'
 import RuleCard from './components/RuleCard.vue'
 import KvPushModal from './components/KvPushModal.vue'
 import KvPullModal from './components/KvPullModal.vue'
+import HelpModal from './components/HelpModal.vue'
 
 const showKvModal = ref(false)
 const showKvPull = ref(false)
+const showHelp = ref(false)
 const showDrawer = ref(false)
 const kvPushTarget = ref(null)
 
@@ -136,6 +138,7 @@ function loadFromKV(entries) {
       <h1>Rule Builder</h1>
       <div class="header-actions">
         <button class="header-btn" @click="showKvPull = true">Load from KV</button>
+        <button class="help-toggle" @click="showHelp = true" title="Reference">?</button>
         <button class="theme-toggle" @click="cycleTheme" :title="themeTitle">
           {{ themeIcon }}
         </button>
@@ -228,5 +231,6 @@ function loadFromKV(entries) {
 
     <KvPushModal v-if="showKvModal" :target="kvPushTarget" @close="showKvModal = false" />
     <KvPullModal v-if="showKvPull" @close="showKvPull = false" @load="loadFromKV" />
+    <HelpModal v-if="showHelp" @close="showHelp = false" />
   </div>
 </template>
