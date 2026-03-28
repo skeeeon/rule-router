@@ -1,12 +1,28 @@
 # Changelog
 
-## [0.9.0] - Unreleased
+## [0.10.0] - Unreleased
+
+### Features
+- Added **Rule Builder Web UI** (`web/`): visual rule creation with live YAML preview, multi-file support, and NATS KV push/pull via WebSocket
+- Web UI built with Vue 3 (Vite, composition API SFCs), `@nats-io/nats-core` + `@nats-io/kv` for NATS operations
+- Guided form covers full rule format: all trigger types, recursive conditions with nested groups, all action types with forEach/filter/headers/retry/debounce
+- Per-file rule organization: assign filenames to group rules, download or push individual files or all at once
+- Load existing rules from a NATS KV bucket and edit them in the form
+- Dark mode with system theme detection and manual toggle (persisted to localStorage)
+- Responsive layout with mobile drawer for YAML preview
+- KV rule store support expanded to `rule-scheduler` (cron jobs rebuilt automatically on KV changes)
+
+### Improvements
+- `Close()` methods in all apps now use `errors.Join` for proper error unwrapping
+- `RuleKVManager.Stop()` reads watcher under mutex for thread safety
+
+## [0.9.0] - 2026-03-28
 
 ### Features
 - Added **KV Rule Store**: optionally load rules from a NATS KV bucket instead of YAML files, with automatic hot-reload via KV Watch
 - Rules pushed to KV are validated, parsed, and hot-swapped into the processor without restart
 - JetStream consumers and subscriptions are created/removed dynamically as rule subjects change
-- Supported by `rule-router` (NATS trigger rules), `http-gateway` (both inbound HTTP and outbound NATS-to-HTTP rules), and `rule-scheduler` (cron jobs rebuilt automatically on KV changes)
+- Supported by `rule-router` (NATS trigger rules) and `http-gateway` (both inbound HTTP and outbound NATS-to-HTTP rules)
 - Added `rule-cli kv push` command to upload rule files to a NATS KV bucket with validation and dry-run support
 - File paths are converted to dotted KV keys (e.g., `sensors/tank.yaml` becomes `sensors.tank`)
 - Added `OutboundSubscriber` interface for dynamic outbound subscription management in `http-gateway`
@@ -92,6 +108,7 @@
 - Signature verification
 - Rule-cli utility
 
+[0.10.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.10.0
 [0.9.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.9.0
 [0.8.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.8.0
 [0.7.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.7.0

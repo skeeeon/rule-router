@@ -27,6 +27,8 @@ go.work.sum
 # env file
 .env
 
+# web
+./web/node_modules
 
 .goreleaser.yaml
 # Editor/IDE
