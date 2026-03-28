@@ -87,7 +87,8 @@ function errorFor(path) {
 }
 
 function addRule() {
-  state.rules.push(createRule())
+  const currentFile = activeRule.value?.file || ''
+  state.rules.push(createRule(currentFile))
   state.activeIndex = state.rules.length - 1
   state.showConditions = false
 }

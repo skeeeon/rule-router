@@ -154,7 +154,7 @@ function pushPayloadFields(lines, action, indent) {
   } else if (action.merge && action.payload) {
     lines.push(`${pad}merge: true`)
     pushPayload(lines, action.payload, indent)
-  } else if (action.payload) {
+  } else if (action.payload && action.payload.trim()) {
     pushPayload(lines, action.payload, indent)
   }
 }
@@ -173,10 +173,12 @@ function pushPayload(lines, payload, indent) {
 }
 
 function pushHeaders(lines, headers, indent) {
-  if (!headers || Object.keys(headers).length === 0) return
+  if (!headers) return
+  const entries = Object.entries(headers).filter(([k]) => k.trim())
+  if (entries.length === 0) return
   const pad = ' '.repeat(indent)
   lines.push(`${pad}headers:`)
-  for (const [key, value] of Object.entries(headers)) {
+  for (const [key, value] of entries) {
     lines.push(`${pad}  ${key}: ${yamlString(value)}`)
   }
 }

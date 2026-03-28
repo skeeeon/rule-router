@@ -60,7 +60,7 @@ function validateAction(action, errors) {
       errors.push({ path: 'action.nats.subject', message: 'Subject is required' })
     }
     if (a.passthrough && a.payload) {
-      errors.push({ path: 'action.nats.payload', message: 'Cannot use both passthrough and payload' })
+      errors.push({ path: 'action.nats.payload', message: 'Passthrough is enabled — remove payload or disable passthrough' })
     }
     if (a.forEach) {
       validateForEach(a.forEach, 'action.nats.forEach', errors)
@@ -84,7 +84,7 @@ function validateAction(action, errors) {
       errors.push({ path: 'action.http.method', message: 'Invalid HTTP method' })
     }
     if (a.passthrough && a.payload) {
-      errors.push({ path: 'action.http.payload', message: 'Cannot use both passthrough and payload' })
+      errors.push({ path: 'action.http.payload', message: 'Passthrough is enabled — remove payload or disable passthrough' })
     }
     if (a.forEach) {
       validateForEach(a.forEach, 'action.http.forEach', errors)
@@ -139,6 +139,10 @@ function validateConditionItem(item, prefix, errors) {
       errors.push({ path: `${prefix}.conditions`, message: `${item.operator} operator requires nested conditions` })
     } else {
       validateConditions(item.conditions, `${prefix}.conditions`, errors)
+    }
+  } else if (['in', 'not_in'].includes(item.operator)) {
+    if (!Array.isArray(item.value) || item.value.length === 0) {
+      errors.push({ path: `${prefix}.value`, message: `${item.operator} requires a comma-separated list of values` })
     }
   } else if (item.operator !== 'exists') {
     if (item.value === '' || item.value === null || item.value === undefined) {
