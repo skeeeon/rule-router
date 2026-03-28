@@ -1,5 +1,5 @@
 services:
-  # --- NATS Server with JetStream ---
+  # --- NATS Server with JetStream (optional, use --profile nats) ---
   nats:
     image: nats:2.11-alpine
     command: ["--jetstream", "--store_dir", "/data", "--http_port", "8222"]
@@ -16,6 +16,8 @@ services:
       timeout: 3s
       retries: 3
     restart: unless-stopped
+    profiles:
+      - nats
 
   # --- Rule Router (NATS-to-NATS message routing) ---
   rule-router:
@@ -30,12 +32,9 @@ services:
       - ./config/rule-router.yaml:/config/rule-router.yaml:ro
       - ./rules/router:/rules:ro
     environment:
-      RR_NATS_URLS: "nats://nats:4222"
+      RR_NATS_URLS: "${NATS_URLS:-nats://nats:4222}"
     networks:
       - rule-router-net
-    depends_on:
-      nats:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:2112/metrics"]
       interval: 10s
@@ -57,12 +56,9 @@ services:
       - ./config/http-gateway.yaml:/config/http-gateway.yaml:ro
       - ./rules/http:/rules:ro
     environment:
-      RR_NATS_URLS: "nats://nats:4222"
+      RR_NATS_URLS: "${NATS_URLS:-nats://nats:4222}"
     networks:
       - rule-router-net
-    depends_on:
-      nats:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 10s
@@ -83,12 +79,9 @@ services:
       - ./config/rule-scheduler.yaml:/config/rule-scheduler.yaml:ro
       - ./rules/scheduler:/rules:ro
     environment:
-      RR_NATS_URLS: "nats://nats:4222"
+      RR_NATS_URLS: "${NATS_URLS:-nats://nats:4222}"
     networks:
       - rule-router-net
-    depends_on:
-      nats:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:2114/metrics"]
       interval: 10s
@@ -108,12 +101,9 @@ services:
     volumes:
       - ./config/auth-manager.yaml:/config/auth-manager.yaml:ro
     environment:
-      RR_NATS_URLS: "nats://nats:4222"
+      RR_NATS_URLS: "${NATS_URLS:-nats://nats:4222}"
     networks:
       - rule-router-net
-    depends_on:
-      nats:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:2113/metrics"]
       interval: 10s

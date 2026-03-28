@@ -60,13 +60,32 @@ Detailed documentation on the rule engine's features can be found in the `docs/`
 
 ## Quick Start
 
-### Option A: Docker Compose (Recommended)
+### Option A: Download a Release
 
-The fastest way to get started. Docker Compose brings up all services including a NATS server with JetStream.
+Download pre-built binaries from [GitHub Releases](https://github.com/skeeeon/rule-router/releases) for your platform. Each release includes all applications and the CLI tool.
 
 ```bash
-# Build and start all core services (NATS + all 4 apps)
-docker compose up -d
+# Extract the release archive
+tar -xzf rule-router_<version>_<os>_<arch>.tar.gz
+
+# Run any application
+./rule-router --config config/rule-router.yaml --rules ./rules
+./http-gateway --config config/http-gateway.yaml --rules ./rules
+./rule-scheduler --config config/rule-scheduler.yaml --rules ./rules
+./nats-auth-manager --config config/auth-manager.yaml
+```
+
+A running NATS Server with JetStream enabled is required. See [Configure NATS Streams](#2-configure-nats-streams) below for setup.
+
+### Option B: Docker
+
+#### Docker Compose (with bundled NATS)
+
+Brings up all services including a NATS server with JetStream — no external dependencies needed.
+
+```bash
+# Build and start all apps with a bundled NATS server
+docker compose --profile nats up -d
 
 # Check that everything is healthy
 docker compose ps
@@ -75,7 +94,7 @@ docker compose ps
 docker compose logs -f
 
 # Include the web UI on port 3000
-docker compose --profile web up -d
+docker compose --profile nats --profile web up -d
 
 # Run the CLI tool
 docker compose run --rm rule-cli lint /rules
@@ -84,12 +103,45 @@ docker compose run --rm rule-cli lint /rules
 docker compose down
 ```
 
+#### Docker Compose (with external NATS)
+
+If you already have a NATS server running, start just the applications and point them to it:
+
+```bash
+# Start apps only, pointing to your NATS server
+NATS_URLS=nats://your-nats-host:4222 docker compose up -d
+
+# Or set it in a .env file
+echo 'NATS_URLS=nats://your-nats-host:4222' > .env
+docker compose up -d
+```
+
+#### Building Individual Docker Images
+
+The repository uses a single parameterized `Dockerfile`. Build any application by setting the `APP_NAME` build argument:
+
+```bash
+# Build a single application image
+docker build --build-arg APP_NAME=rule-router -t rule-router .
+docker build --build-arg APP_NAME=http-gateway -t http-gateway .
+docker build --build-arg APP_NAME=rule-scheduler -t rule-scheduler .
+docker build --build-arg APP_NAME=nats-auth-manager -t nats-auth-manager .
+docker build --build-arg APP_NAME=rule-cli -t rule-cli .
+
+# Run an image (mount your config and rules)
+docker run -d \
+  -v ./config/rule-router.yaml:/config/rule-router.yaml:ro \
+  -v ./rules/router:/rules:ro \
+  -p 2112:2112 \
+  rule-router --config /config/rule-router.yaml --rules /rules
+```
+
 **Ports exposed:**
 
 | Service | Port | Description |
 |---|---|---|
-| NATS | 4222 | Client connections |
-| NATS | 8222 | Monitoring dashboard |
+| NATS (optional) | 4222 | Client connections |
+| NATS (optional) | 8222 | Monitoring dashboard |
 | http-gateway | 8080 | Inbound webhooks |
 | rule-router | 2112 | Prometheus metrics |
 | http-gateway | 2113 | Prometheus metrics |
@@ -99,7 +151,7 @@ docker compose down
 
 Configuration files in `config/` and rules in `rules/` are mounted as volumes, so edits are picked up on restart (or via SIGHUP for hot-reload).
 
-### Option B: Build from Source
+### Option C: Build from Source
 
 #### Prerequisites
 
@@ -192,7 +244,7 @@ This rule listens for the internal status messages and routes critical errors to
 
 ### 4. Run the Applications
 
-If using Docker Compose, the services are already running (see [Option A](#option-a-docker-compose-recommended)). For manual runs, you will need separate configuration files (see the `config/` directory for examples).
+If using Docker Compose, the services are already running (see [Option B](#option-b-docker)). For manual runs, you will need separate configuration files (see the `config/` directory for examples).
 
 **Terminal 1: Start the HTTP Gateway**
 ```bash
