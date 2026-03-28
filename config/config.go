@@ -262,10 +262,20 @@ type KVBucketConfig struct {
 	KeyFilter string `json:"keyFilter,omitempty" yaml:"keyFilter,omitempty" mapstructure:"keyFilter"`
 }
 
+// KVRulesConfig configures optional KV-based rule storage.
+// When enabled, rules are loaded from a NATS KV bucket instead of YAML files,
+// and a watcher hot-reloads on any change.
+type KVRulesConfig struct {
+	Enabled       bool   `json:"enabled" yaml:"enabled" mapstructure:"enabled"`
+	Bucket        string `json:"bucket" yaml:"bucket" mapstructure:"bucket"`
+	AutoProvision bool   `json:"autoProvision" yaml:"autoProvision" mapstructure:"autoProvision"`
+}
+
 // KVConfig contains Key-Value store configuration
 type KVConfig struct {
 	Enabled    bool              `json:"enabled" yaml:"enabled" mapstructure:"enabled"`
 	Buckets    []KVBucketConfig  `json:"buckets" yaml:"buckets" mapstructure:"buckets"`
+	Rules      KVRulesConfig     `json:"rules" yaml:"rules" mapstructure:"rules"`
 	LocalCache struct {
 		Enabled bool `json:"enabled" yaml:"enabled" mapstructure:"enabled"`
 	} `json:"localCache" yaml:"localCache" mapstructure:"localCache"`
@@ -336,6 +346,11 @@ func Load(path string) (*Config, error) {
 		if config.KV.Buckets[i].KeyFilter == "" {
 			config.KV.Buckets[i].KeyFilter = ">"
 		}
+	}
+
+	// Default KV rules bucket name
+	if config.KV.Rules.Enabled && config.KV.Rules.Bucket == "" {
+		config.KV.Rules.Bucket = "rules"
 	}
 
 	// Apply defaults that depend on other config values (must run after unmarshal).
@@ -643,6 +658,13 @@ func validateConfig(cfg *Config) error {
 				return fmt.Errorf("duplicate KV bucket name: %q", bucket.Name)
 			}
 			seen[bucket.Name] = true
+		}
+	}
+
+	// KV rules validation
+	if cfg.KV.Rules.Enabled {
+		if cfg.KV.Rules.Bucket == "" {
+			return fmt.Errorf("KV rules bucket name cannot be empty when KV rules are enabled")
 		}
 	}
 

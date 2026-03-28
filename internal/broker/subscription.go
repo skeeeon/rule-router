@@ -62,7 +62,7 @@ type SubscriptionManager struct {
 	processor     *rule.Processor
 	consumerCfg   *config.ConsumerConfig
 	publishCfg    *config.PublishConfig
-	subscriptions []*Subscription
+	subscriptions map[string]*Subscription
 	wg            sync.WaitGroup
 	mu            sync.RWMutex
 }
@@ -98,7 +98,7 @@ func NewSubscriptionManager(
 		processor:     processor,
 		consumerCfg:   consumerConfig,
 		publishCfg:    publishConfig,
-		subscriptions: make([]*Subscription, 0),
+		subscriptions: make(map[string]*Subscription),
 	}
 }
 
@@ -130,18 +130,63 @@ func (sm *SubscriptionManager) AddSubscription(ctx context.Context, streamName, 
 		consumerCfg:  sm.consumerCfg,
 	}
 
-	// Only hold the lock for the actual slice append
+	// Only hold the lock for the map insert
 	sm.mu.Lock()
-	sm.subscriptions = append(sm.subscriptions, sub)
+	sm.subscriptions[subject] = sub
 	sm.mu.Unlock()
 
-	sm.logger.Info("subscription added",
+	sm.logger.Debug("subscription added",
 		"stream", streamName,
 		"consumer", consumerName,
 		"subject", subject,
 		"workers", workers)
 
 	return nil
+}
+
+// AddAndStartSubscription creates a consumer handle and immediately starts
+// the iterator and worker pool. Used by RuleKVManager to add subscriptions
+// at runtime without a separate Start() call.
+func (sm *SubscriptionManager) AddAndStartSubscription(ctx context.Context, streamName, consumerName, subject string, workers int) error {
+	sm.mu.RLock()
+	_, exists := sm.subscriptions[subject]
+	sm.mu.RUnlock()
+	if exists {
+		sm.logger.Debug("subscription already exists, skipping", "subject", subject)
+		return nil
+	}
+
+	if err := sm.AddSubscription(ctx, streamName, consumerName, subject, workers); err != nil {
+		return err
+	}
+
+	sm.mu.RLock()
+	sub := sm.subscriptions[subject]
+	sm.mu.RUnlock()
+
+	return sm.startSubscription(ctx, sub)
+}
+
+// RemoveSubscription stops and removes a subscription by subject.
+// Stops the iterator and cancels the context so workers drain naturally.
+func (sm *SubscriptionManager) RemoveSubscription(subject string) {
+	sm.mu.Lock()
+	sub, exists := sm.subscriptions[subject]
+	if !exists {
+		sm.mu.Unlock()
+		return
+	}
+	delete(sm.subscriptions, subject)
+	sm.mu.Unlock()
+
+	if sub.iterator != nil {
+		sub.iterator.Stop()
+	}
+	if sub.cancel != nil {
+		sub.cancel()
+	}
+
+	sm.logger.Debug("subscription removed", "subject", subject)
 }
 
 // Start begins consuming messages from all subscriptions using Messages() iterator.
@@ -308,7 +353,7 @@ func (sm *SubscriptionManager) processMessageWithRecovery(ctx context.Context, m
 	}()
 
 	// Process the message through the rule engine
-	if err := sm.processMessage(ctx, msg); err != nil {
+	if err := sm.processMessage(ctx, msg, subject); err != nil {
 		sm.logger.Error("failed to process message",
 			"subject", subject,
 			"workerID", workerID,
@@ -350,7 +395,7 @@ func (sm *SubscriptionManager) processMessageWithRecovery(ctx context.Context, m
 }
 
 // processMessage handles a single message through the rule engine.
-func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream.Msg) error {
+func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream.Msg, triggerSubject string) error {
 	start := time.Now()
 	if sm.metrics != nil {
 		sm.metrics.IncMessagesTotal("received")
@@ -368,8 +413,9 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 		}
 	}
 
-	// Process through rule engine (uses ProcessNATS internally via backward compatibility layer)
-	actions, err := sm.processor.ProcessWithSubject(msg.Subject(), msg.Data(), headers)
+	// Process through rule engine using O(1) KV rule lookup by trigger subject,
+	// falling back to index-based pattern matching if no KV rules are loaded.
+	actions, err := sm.processor.ProcessForSubscription(triggerSubject, msg.Subject(), msg.Data(), headers)
 	if err != nil {
 		// This error will be caught by the caller (processMessageWithRecovery) and handled appropriately.
 		return fmt.Errorf("rule processing failed: %w", err)
@@ -541,8 +587,6 @@ func (sm *SubscriptionManager) publishCore(ctx context.Context, action *rule.NAT
 // Stop gracefully shuts down all subscriptions.
 func (sm *SubscriptionManager) Stop() error {
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
 	sm.logger.Info("stopping all subscriptions", "count", len(sm.subscriptions))
 
 	// Step 1: Stop all iterators gracefully (drains pending messages)
@@ -560,8 +604,9 @@ func (sm *SubscriptionManager) Stop() error {
 			sub.cancel()
 		}
 	}
+	sm.mu.Unlock()
 
-	// Step 3: Wait for all workers to finish
+	// Step 3: Wait for all workers to finish (outside lock to avoid deadlock)
 	sm.logger.Debug("waiting for all workers to finish")
 	sm.wg.Wait()
 

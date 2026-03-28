@@ -105,36 +105,43 @@ func (l *RulesLoader) LoadFromFile(filePath string) ([]Rule, error) {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
 
+	return l.ParseAndValidateYAML(data, filePath)
+}
+
+// ParseAndValidateYAML parses YAML bytes into rules, expands env vars, and validates.
+// source is used for error messages (e.g. KV key name or file path).
+// This is the shared parsing pipeline used by both file-based and KV-based rule loading.
+func (l *RulesLoader) ParseAndValidateYAML(data []byte, source string) ([]Rule, error) {
 	var rules []Rule
 	if err := yaml.Unmarshal(data, &rules); err != nil {
 		return nil, fmt.Errorf("failed to parse YAML: %w", err)
 	}
 
 	if len(rules) == 0 {
-		l.logger.Warn("rule file contains no rules", "file", filePath)
+		l.logger.Warn("rule source contains no rules", "source", source)
 		return rules, nil
 	}
 
-	l.logger.Debug("parsed rules from file",
-		"file", filePath,
+	l.logger.Debug("parsed rules from source",
+		"source", source,
 		"ruleCount", len(rules))
 
 	// Expand environment variables before validation
 	for i := range rules {
-		if err := l.expandEnvironmentVariables(&rules[i], filePath, i); err != nil {
-			return nil, fmt.Errorf("rule %d in %s: failed to expand environment variables: %w", i, filePath, err)
+		if err := l.expandEnvironmentVariables(&rules[i], source, i); err != nil {
+			return nil, fmt.Errorf("rule %d in %s: failed to expand environment variables: %w", i, source, err)
 		}
 	}
 
 	// Validate after expansion
 	for i := range rules {
-		if err := l.validateRule(&rules[i], filePath, i); err != nil {
-			return nil, fmt.Errorf("rule %d in %s is invalid: %w", i, filePath, err)
+		if err := l.validateRule(&rules[i], source, i); err != nil {
+			return nil, fmt.Errorf("rule %d in %s is invalid: %w", i, source, err)
 		}
 	}
 
 	l.logger.Debug("all rules validated successfully",
-		"file", filePath,
+		"source", source,
 		"ruleCount", len(rules))
 
 	return rules, nil

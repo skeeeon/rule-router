@@ -24,6 +24,7 @@ type BaseApp struct {
 	Metrics       *metrics.Metrics
 	Broker        *broker.NATSBroker
 	Processor     *rule.Processor
+	RulesLoader   *rule.RulesLoader
 	MetricsServer *http.Server
 	Collector     *metrics.MetricsCollector
 
@@ -198,6 +199,44 @@ func (b *AppBuilder) WithRuleProcessor() *AppBuilder {
 		"totalRules", len(rules),
 		"maxForEachIterations", b.cfg.ForEach.MaxIterations)
 	
+	return b
+}
+
+// WithKVRuleProcessor creates a Processor without loading rules from files.
+// Rules are loaded at runtime via KV Watch. Used when kv.rules.enabled is true.
+func (b *AppBuilder) WithKVRuleProcessor() *AppBuilder {
+	if b.err != nil {
+		return b
+	}
+
+	kvBuckets := []string{}
+	if b.cfg.KV.Enabled {
+		kvBuckets = b.cfg.KV.BucketNames()
+	}
+
+	b.base.RulesLoader = rule.NewRulesLoader(b.base.Logger, kvBuckets)
+
+	var kvContext *rule.KVContext
+	if b.cfg.KV.Enabled && b.base.Broker != nil {
+		kvStores := b.base.Broker.GetKVStores()
+		localKVCache := b.base.Broker.GetLocalKVCache()
+		kvContext = rule.NewKVContext(kvStores, b.base.Logger, localKVCache)
+	}
+
+	var sigVerification *rule.SignatureVerification
+	if b.cfg.Security.Verification.Enabled {
+		sigVerification = rule.NewSignatureVerification(
+			b.cfg.Security.Verification.Enabled,
+			b.cfg.Security.Verification.PublicKeyHeader,
+			b.cfg.Security.Verification.SignatureHeader,
+		)
+	}
+
+	b.base.Processor = rule.NewProcessor(b.base.Logger, b.base.Metrics, kvContext, sigVerification)
+	b.base.Processor.SetMaxForEachIterations(b.cfg.ForEach.MaxIterations)
+
+	b.base.Logger.Info("KV rule processor initialized (rules loaded via KV Watch)")
+
 	return b
 }
 

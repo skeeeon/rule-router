@@ -40,7 +40,7 @@ type OutboundClient struct {
 	jetstream     jetstream.JetStream
 	httpExecutor  *httpclient.HTTPExecutor
 	consumerCfg   *ConsumerConfig
-	subscriptions []*OutboundSubscription
+	subscriptions map[string]*OutboundSubscription
 	wg            sync.WaitGroup
 	mu            sync.RWMutex
 }
@@ -83,7 +83,7 @@ func NewOutboundClient(
 		processor:     processor,
 		jetstream:     js,
 		consumerCfg:   consumerCfg,
-		subscriptions: make([]*OutboundSubscription, 0),
+		subscriptions: make(map[string]*OutboundSubscription),
 		httpExecutor:  httpclient.NewHTTPExecutor(httpClientCfg, logger, metrics),
 	}
 }
@@ -92,8 +92,10 @@ func NewOutboundClient(
 func (c *OutboundClient) GetSubscriptions() []*OutboundSubscription {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	subs := make([]*OutboundSubscription, len(c.subscriptions))
-	copy(subs, c.subscriptions)
+	subs := make([]*OutboundSubscription, 0, len(c.subscriptions))
+	for _, sub := range c.subscriptions {
+		subs = append(subs, sub)
+	}
 	return subs
 }
 
@@ -124,18 +126,63 @@ func (c *OutboundClient) AddSubscription(ctx context.Context, streamName, consum
 		logger:       c.logger,
 	}
 
-	// Only hold the lock for the actual slice append
+	// Only hold the lock for the map insert
 	c.mu.Lock()
-	c.subscriptions = append(c.subscriptions, sub)
+	c.subscriptions[subject] = sub
 	c.mu.Unlock()
 
-	c.logger.Info("outbound subscription added",
+	c.logger.Debug("outbound subscription added",
 		"stream", streamName,
 		"consumer", consumerName,
 		"subject", subject,
 		"workers", workers)
 
 	return nil
+}
+
+// AddAndStartSubscription creates a subscription and immediately starts
+// the iterator and worker pool. Used by RuleKVManager to add subscriptions
+// at runtime without a separate Start() call.
+func (c *OutboundClient) AddAndStartSubscription(ctx context.Context, streamName, consumerName, subject string, workers int) error {
+	c.mu.RLock()
+	_, exists := c.subscriptions[subject]
+	c.mu.RUnlock()
+	if exists {
+		c.logger.Debug("outbound subscription already exists, skipping", "subject", subject)
+		return nil
+	}
+
+	if err := c.AddSubscription(ctx, streamName, consumerName, subject, workers); err != nil {
+		return err
+	}
+
+	c.mu.RLock()
+	sub := c.subscriptions[subject]
+	c.mu.RUnlock()
+
+	return c.startSubscription(ctx, sub)
+}
+
+// RemoveSubscription stops and removes an outbound subscription by subject.
+// Stops the iterator and cancels the context so workers drain naturally.
+func (c *OutboundClient) RemoveSubscription(subject string) {
+	c.mu.Lock()
+	sub, exists := c.subscriptions[subject]
+	if !exists {
+		c.mu.Unlock()
+		return
+	}
+	delete(c.subscriptions, subject)
+	c.mu.Unlock()
+
+	if sub.iterator != nil {
+		sub.iterator.Stop()
+	}
+	if sub.cancel != nil {
+		sub.cancel()
+	}
+
+	c.logger.Debug("outbound subscription removed", "subject", subject)
 }
 
 // Start begins consuming messages and making HTTP requests
@@ -299,7 +346,7 @@ func (c *OutboundClient) processMessageWithRecovery(ctx context.Context, msg jet
 	}()
 
 	// Process the message
-	if err := c.processMessage(ctx, msg); err != nil {
+	if err := c.processMessage(ctx, msg, subject); err != nil {
 		c.logger.Error("failed to process outbound message",
 			"subject", subject,
 			"workerID", workerID,
@@ -329,8 +376,9 @@ func (c *OutboundClient) processMessageWithRecovery(ctx context.Context, msg jet
 	}
 }
 
-// processMessage processes a NATS message and makes HTTP requests
-func (c *OutboundClient) processMessage(ctx context.Context, msg jetstream.Msg) error {
+// processMessage processes a NATS message and makes HTTP requests.
+// triggerSubject is the trigger pattern for O(1) KV rule lookup.
+func (c *OutboundClient) processMessage(ctx context.Context, msg jetstream.Msg, triggerSubject string) error {
 	start := time.Now()
 	if c.metrics != nil {
 		c.metrics.IncMessagesTotal("received")
@@ -350,8 +398,9 @@ func (c *OutboundClient) processMessage(ctx context.Context, msg jetstream.Msg) 
 		}
 	}
 
-	// Process through rule engine
-	actions, err := c.processor.ProcessNATS(msg.Subject(), msg.Data(), headers)
+	// Process through rule engine using O(1) KV rule lookup by trigger subject,
+	// falling back to index-based pattern matching if no KV rules are loaded.
+	actions, err := c.processor.ProcessForSubscription(triggerSubject, msg.Subject(), msg.Data(), headers)
 	if err != nil {
 		return fmt.Errorf("rule processing failed: %w", err)
 	}
@@ -394,8 +443,6 @@ func (c *OutboundClient) processMessage(ctx context.Context, msg jetstream.Msg) 
 // Stop gracefully shuts down all outbound subscriptions
 func (c *OutboundClient) Stop() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	c.logger.Info("stopping outbound client", "subscriptions", len(c.subscriptions))
 
 	// Step 1: Stop all iterators gracefully (drains pending messages)
@@ -413,8 +460,9 @@ func (c *OutboundClient) Stop() error {
 			sub.cancel()
 		}
 	}
+	c.mu.Unlock()
 
-	// Step 3: Wait for all workers to finish
+	// Step 3: Wait for all workers to finish (outside lock)
 	c.logger.Debug("waiting for all outbound workers to finish")
 	c.wg.Wait()
 

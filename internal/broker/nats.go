@@ -708,6 +708,62 @@ func (b *NATSBroker) Publish(ctx context.Context, action *rule.NATSAction) error
 	}
 }
 
+// AddAndStartSubscription creates a consumer and immediately starts a pull subscription.
+// Used by RuleKVManager to dynamically add subscriptions at runtime.
+func (b *NATSBroker) AddAndStartSubscription(subject string) error {
+	if b.subscriptionMgr == nil {
+		return fmt.Errorf("subscription manager not initialized")
+	}
+
+	if err := b.CreateConsumerForSubject(subject); err != nil {
+		return fmt.Errorf("failed to create consumer for subject '%s': %w", subject, err)
+	}
+
+	b.consumersMu.RLock()
+	consumerName := b.consumers[subject]
+	b.consumersMu.RUnlock()
+
+	streamName, err := b.streamResolver.FindStreamForSubject(subject)
+	if err != nil {
+		return fmt.Errorf("failed to find stream for subject '%s': %w", subject, err)
+	}
+
+	workers := b.config.NATS.Consumers.WorkerCount
+	return b.subscriptionMgr.AddAndStartSubscription(b.ctx, streamName, consumerName, subject, workers)
+}
+
+// RemoveSubscription stops and removes a subscription for the given subject.
+func (b *NATSBroker) RemoveSubscription(subject string) {
+	if b.subscriptionMgr != nil {
+		b.subscriptionMgr.RemoveSubscription(subject)
+	}
+}
+
+// RefreshStreams re-discovers all JetStream streams.
+// Used to pick up streams created after initial startup.
+func (b *NATSBroker) RefreshStreams() error {
+	return b.streamResolver.Refresh(b.ctx)
+}
+
+// CreateOutboundConsumer creates a consumer for a subject and returns the stream and consumer names.
+// Used by the RuleKVManager to create consumers for outbound (NATS trigger → HTTP action) subscriptions.
+func (b *NATSBroker) CreateOutboundConsumer(subject string) (streamName, consumerName string, err error) {
+	if err := b.CreateConsumerForSubject(subject); err != nil {
+		return "", "", fmt.Errorf("failed to create consumer for subject '%s': %w", subject, err)
+	}
+
+	b.consumersMu.RLock()
+	consumerName = b.consumers[subject]
+	b.consumersMu.RUnlock()
+
+	streamName, err = b.streamResolver.FindStreamForSubject(subject)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to find stream for subject '%s': %w", subject, err)
+	}
+
+	return streamName, consumerName, nil
+}
+
 // Close shuts down the broker connections
 func (b *NATSBroker) Close() error {
 	b.logger.Info("closing NATS broker connections")

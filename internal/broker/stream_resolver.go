@@ -4,14 +4,20 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
 	"rule-router/internal/logger"
+	"rule-router/internal/rule"
 )
+
+// ErrNoStreamFound indicates no stream was found for a given subject.
+var ErrNoStreamFound = errors.New("no stream found")
 
 // Timeout constants for stream resolver operations
 const (
@@ -26,6 +32,7 @@ type StreamResolver struct {
 	streams    []StreamInfo
 	logger     *logger.Logger
 	discovered bool
+	mu         sync.RWMutex
 }
 
 // StreamInfo holds comprehensive information about a JetStream stream
@@ -75,16 +82,74 @@ func (sr *StreamResolver) Discover(ctx context.Context) error {
 
 	streamNames := make([]string, 0)
 
-	// Iterate over stream info
+	newStreams, streamNames, err := sr.listStreams(streamLister)
+	if err != nil {
+		return err
+	}
+
+	if len(newStreams) == 0 {
+		sr.logger.Warn("no JetStream streams found - rules will fail to initialize")
+		return fmt.Errorf("no JetStream streams found - please create streams before starting rule-router")
+	}
+
+	sr.mu.Lock()
+	sr.streams = newStreams
+	sr.discovered = true
+	sr.mu.Unlock()
+
+	// Log comprehensive discovery summary
+	memCount, fileCount, mirrorCount, sourceCount := sr.countStreamTypes(newStreams)
+	sr.logger.Info("stream discovery complete",
+		"totalStreams", len(newStreams),
+		"streamNames", streamNames,
+		"memoryStreams", memCount,
+		"fileStreams", fileCount,
+		"mirrorStreams", mirrorCount,
+		"sourcedStreams", sourceCount)
+
+	return nil
+}
+
+// Refresh re-discovers all JetStream streams, replacing the previous stream list.
+// This is used to pick up streams created after initial startup.
+func (sr *StreamResolver) Refresh(ctx context.Context) error {
+	sr.logger.Debug("refreshing JetStream stream list")
+
+	discoverCtx, cancel := context.WithTimeout(ctx, streamDiscoveryTimeout)
+	defer cancel()
+
+	streamLister := sr.jetStream.ListStreams(discoverCtx)
+
+	newStreams, streamNames, err := sr.listStreams(streamLister)
+	if err != nil {
+		return err
+	}
+
+	sr.mu.Lock()
+	sr.streams = newStreams
+	sr.discovered = true
+	sr.mu.Unlock()
+
+	sr.logger.Debug("stream refresh complete",
+		"totalStreams", len(newStreams),
+		"streamNames", streamNames)
+
+	return nil
+}
+
+// listStreams iterates over a stream lister and collects StreamInfo entries.
+func (sr *StreamResolver) listStreams(streamLister jetstream.StreamInfoLister) ([]StreamInfo, []string, error) {
+	newStreams := make([]StreamInfo, 0)
+	streamNames := make([]string, 0)
+
 	for info := range streamLister.Info() {
 		streamNames = append(streamNames, info.Config.Name)
 
 		streamInfo := StreamInfo{
 			Name:    info.Config.Name,
-			Storage: info.Config.Storage, // Memory or File
+			Storage: info.Config.Storage,
 		}
 
-		// Primary stream: has Config.Subjects defined
 		if len(info.Config.Subjects) > 0 {
 			streamInfo.Subjects = info.Config.Subjects
 			sr.logger.Debug("discovered primary stream",
@@ -94,14 +159,11 @@ func (sr *StreamResolver) Discover(ctx context.Context) error {
 				"messages", info.State.Msgs)
 		}
 
-		// Mirror stream: read filter from mirror configuration
 		if info.Config.Mirror != nil {
 			streamInfo.IsMirror = true
-
-			// Mirror filter subject (defaults to ">" if not specified)
 			filter := info.Config.Mirror.FilterSubject
 			if filter == "" {
-				filter = ">" // Default: mirror everything from source
+				filter = ">"
 			}
 			streamInfo.MirrorFilter = filter
 
@@ -113,7 +175,6 @@ func (sr *StreamResolver) Discover(ctx context.Context) error {
 				"messages", info.State.Msgs)
 		}
 
-		// Sourced stream: read filters from each source
 		if len(info.Config.Sources) > 0 {
 			streamInfo.IsSource = true
 			streamInfo.SourceFilters = make([]string, 0, len(info.Config.Sources))
@@ -121,7 +182,7 @@ func (sr *StreamResolver) Discover(ctx context.Context) error {
 			for _, source := range info.Config.Sources {
 				filter := source.FilterSubject
 				if filter == "" {
-					filter = ">" // Default: source everything
+					filter = ">"
 				}
 				streamInfo.SourceFilters = append(streamInfo.SourceFilters, filter)
 
@@ -133,45 +194,49 @@ func (sr *StreamResolver) Discover(ctx context.Context) error {
 			}
 		}
 
-		// Store the stream info
-		sr.streams = append(sr.streams, streamInfo)
+		newStreams = append(newStreams, streamInfo)
 
-		// Summary log for this stream
-		sr.logger.Info("stream discovered",
+		sr.logger.Debug("stream discovered",
 			"name", streamInfo.Name,
 			"storage", streamInfo.Storage,
 			"type", sr.getStreamType(streamInfo),
 			"filterCount", sr.getFilterCount(streamInfo))
 	}
 
-	// Check for errors during iteration
 	if streamLister.Err() != nil {
-		return fmt.Errorf("error during stream discovery: %w", streamLister.Err())
+		return nil, nil, fmt.Errorf("error during stream discovery: %w", streamLister.Err())
 	}
 
-	if len(sr.streams) == 0 {
-		sr.logger.Warn("no JetStream streams found - rules will fail to initialize")
-		return fmt.Errorf("no JetStream streams found - please create streams before starting rule-router")
+	return newStreams, streamNames, nil
+}
+
+// countStreamTypes counts streams by type from a slice (avoids holding locks).
+func (sr *StreamResolver) countStreamTypes(streams []StreamInfo) (mem, file, mirror, source int) {
+	for _, s := range streams {
+		if s.Storage == jetstream.MemoryStorage {
+			mem++
+		} else {
+			file++
+		}
+		if s.IsMirror {
+			mirror++
+		}
+		if s.IsSource {
+			source++
+		}
 	}
-
-	sr.discovered = true
-
-	// Log comprehensive discovery summary
-	sr.logger.Info("stream discovery complete",
-		"totalStreams", len(sr.streams),
-		"streamNames", streamNames,
-		"memoryStreams", sr.countByStorage(jetstream.MemoryStorage),
-		"fileStreams", sr.countByStorage(jetstream.FileStorage),
-		"mirrorStreams", sr.countMirrors(),
-		"sourcedStreams", sr.countSources())
-
-	return nil
+	return
 }
 
 // FindStreamForSubject finds the optimal stream for the given subject by collecting
 // all potential matches and sorting them by a series of explicit priority rules.
 func (sr *StreamResolver) FindStreamForSubject(subject string) (string, error) {
-	if !sr.discovered {
+	sr.mu.RLock()
+	streams := sr.streams
+	discovered := sr.discovered
+	sr.mu.RUnlock()
+
+	if !discovered {
 		return "", fmt.Errorf("streams not discovered - call Discover() first")
 	}
 
@@ -181,7 +246,7 @@ func (sr *StreamResolver) FindStreamForSubject(subject string) (string, error) {
 	var matches []streamMatch
 
 	// Check each stream and its subject filters
-	for _, stream := range sr.streams {
+	for _, stream := range streams {
 		// Check primary stream subjects
 		for _, filter := range stream.Subjects {
 			if sr.subjectMatches(subject, filter) {
@@ -233,8 +298,8 @@ func (sr *StreamResolver) FindStreamForSubject(subject string) (string, error) {
 	if len(matches) == 0 {
 		// No stream found
 		availableFilters := sr.getAllSubjectFilters()
-		return "", fmt.Errorf("no stream found for subject '%s' - available stream filters: %v",
-			subject, availableFilters)
+		return "", fmt.Errorf("%w for subject '%s' - available stream filters: %v",
+			ErrNoStreamFound, subject, availableFilters)
 	}
 
 	// If only one stream matches, no need to sort.
@@ -527,8 +592,12 @@ func (sr *StreamResolver) isSystemStream(name string) bool {
 
 // getAllSubjectFilters returns all subject filters from all streams for error messages
 func (sr *StreamResolver) getAllSubjectFilters() []string {
+	sr.mu.RLock()
+	streams := sr.streams
+	sr.mu.RUnlock()
+
 	filters := make([]string, 0)
-	for _, stream := range sr.streams {
+	for _, stream := range streams {
 		// Primary subjects
 		for _, subject := range stream.Subjects {
 			filters = append(filters, fmt.Sprintf("%s (stream: %s, storage: %s)",
@@ -550,18 +619,26 @@ func (sr *StreamResolver) getAllSubjectFilters() []string {
 
 // GetStreams returns all discovered streams (useful for debugging/logging)
 func (sr *StreamResolver) GetStreams() []StreamInfo {
+	sr.mu.RLock()
+	defer sr.mu.RUnlock()
 	return sr.streams
 }
 
 // GetStreamCount returns the number of discovered streams
 func (sr *StreamResolver) GetStreamCount() int {
+	sr.mu.RLock()
+	defer sr.mu.RUnlock()
 	return len(sr.streams)
 }
 
 // ValidateSubjects checks if all given subjects can be mapped to streams
 // Returns an error with detailed information about unmapped subjects
 func (sr *StreamResolver) ValidateSubjects(subjects []string) error {
-	if !sr.discovered {
+	sr.mu.RLock()
+	discovered := sr.discovered
+	sr.mu.RUnlock()
+
+	if !discovered {
 		return fmt.Errorf("streams not discovered - call Discover() first")
 	}
 
@@ -611,33 +688,29 @@ func (sr *StreamResolver) getFilterCount(stream StreamInfo) int {
 	return count
 }
 
-func (sr *StreamResolver) countByStorage(storage jetstream.StorageType) int {
-	count := 0
-	for _, stream := range sr.streams {
-		if stream.Storage == storage {
-			count++
-		}
-	}
-	return count
-}
+// ValidateRulesHaveStreams validates that rules reference subjects covered by
+// existing JetStream streams. Returns a slice of errors — one per missing mapping.
+func (sr *StreamResolver) ValidateRulesHaveStreams(rules []rule.Rule) []error {
+	sr.mu.RLock()
+	discovered := sr.discovered
+	sr.mu.RUnlock()
 
-func (sr *StreamResolver) countMirrors() int {
-	count := 0
-	for _, stream := range sr.streams {
-		if stream.IsMirror {
-			count++
-		}
+	if !discovered {
+		return []error{fmt.Errorf("streams not discovered — call Discover() first")}
 	}
-	return count
-}
 
-func (sr *StreamResolver) countSources() int {
-	count := 0
-	for _, stream := range sr.streams {
-		if stream.IsSource {
-			count++
+	var errs []error
+
+	for _, r := range rules {
+		if r.Trigger.NATS != nil {
+			if _, err := sr.FindStreamForSubject(r.Trigger.NATS.Subject); err != nil {
+				errs = append(errs, fmt.Errorf(
+					"no stream found for trigger subject %q — create a stream with a matching subject filter before pushing this rule",
+					r.Trigger.NATS.Subject))
+			}
 		}
 	}
-	return count
+
+	return errs
 }
 

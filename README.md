@@ -27,6 +27,7 @@ The platform is designed for performance, security, and flexibility in event-dri
     *   **Dynamic Conditions**: Evaluate message payloads, headers, NATS subjects, and HTTP paths.
     *   **Templating**: Construct new message payloads, subjects, URLs, and headers using data from the trigger.
     *   **Key-Value Integration**: Enrich messages with data from NATS KV stores, with an optional local cache for a ~25x performance boost.
+    *   **KV Rule Store**: Optionally store rules in a NATS KV bucket with automatic hot-reload on any change. Push rules with `rule-cli kv push` for a GitOps workflow.
     *   **Time-Based Logic**: Create rules that only run at certain times of day, on specific days, or within a time window.
     *   **Debounce / Throttle**: Optional per-rule fire-first suppression on triggers and/or actions with configurable time windows and template-based keys.
 *   **Cryptographic Security**: Verify message integrity and authenticity using NATS NKey signatures.
@@ -34,7 +35,7 @@ The platform is designed for performance, security, and flexibility in event-dri
 
 ## Core Concepts
 
-The platform uses a simple `Trigger -> Conditions -> Action` model defined in YAML files.
+The platform uses a simple `Trigger -> Conditions -> Action` model defined in YAML files, loaded from the local filesystem or a NATS KV bucket.
 
 *   **Triggers** define what starts a rule (e.g., a NATS message on `sensors.>`, an HTTP POST to `/webhooks/github`, or a cron schedule).
 *   **Conditions** define the logic to determine if the action should run (e.g., `temperature > 30`).
@@ -51,6 +52,8 @@ Detailed documentation on the rule engine's features can be found in the `docs/`
 *   **[03 - Array Processing](./docs/03-array-processing.md)**: Guide to using `forEach` and array operators (`any`, `all`, `none`).
 *   **[04 - Primitive & Array Root Messages](./docs/04-primitive-messages.md)**: How to handle non-object JSON payloads.
 *   **[05 - Security](./docs/05-security.md)**: Guide to Cryptographic Signature Verification.
+*   **[06 - KV Rule Store](./docs/06-kv-rule-store.md)**: Store rules in NATS KV with hot-reload and GitOps push workflow.
+*   **[Rule Builder Web UI](./web/README.md)**: Visual rule creation, live YAML preview, and NATS KV push/pull.
 
 ---
 
@@ -187,6 +190,8 @@ You will see the message appear on the `alerts.>` subscription, having been proc
 *   **`cmd/nats-auth-manager`**: A standalone service that handles OAuth2 and custom API authentication, storing tokens in NATS KV for use by other services. [**» View Auth Manager README**](./cmd/nats-auth-manager/README.md)
 
 *   **`cmd/rule-cli`**: A powerful command-line utility for linting, scaffolding, and testing your rules offline, enabling CI/CD and ensuring rule correctness. [**» View CLI README**](./cmd/rule-cli/README.md)
+
+*   **`web`**: A visual rule builder web UI. Build rules with a guided form, preview YAML in real time, and push directly to NATS KV via WebSocket. Supports dark mode and responsive mobile layout. [**» View Web UI README**](./web/README.md)
 
 ## Monitoring
 

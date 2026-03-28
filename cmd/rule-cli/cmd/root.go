@@ -10,4 +10,5 @@ func AddCommands(root *cobra.Command) {
 	root.AddCommand(testCmd)
 	root.AddCommand(scaffoldCmd)
 	root.AddCommand(checkCmd)
+	root.AddCommand(kvCmd)
 }
