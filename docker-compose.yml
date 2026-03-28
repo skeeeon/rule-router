@@ -1,0 +1,154 @@
+services:
+  # --- NATS Server with JetStream ---
+  nats:
+    image: nats:2.11-alpine
+    command: ["--jetstream", "--store_dir", "/data", "--http_port", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats-data:/data
+    networks:
+      - rule-router-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  # --- Rule Router (NATS-to-NATS message routing) ---
+  rule-router:
+    build:
+      context: .
+      args:
+        APP_NAME: rule-router
+    command: ["--config", "/config/rule-router.yaml", "--rules", "/rules"]
+    ports:
+      - "2112:2112"
+    volumes:
+      - ./config/rule-router.yaml:/config/rule-router.yaml:ro
+      - ./rules/router:/rules:ro
+    environment:
+      RR_NATS_URLS: "nats://nats:4222"
+    networks:
+      - rule-router-net
+    depends_on:
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:2112/metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # --- HTTP Gateway (HTTP <-> NATS) ---
+  http-gateway:
+    build:
+      context: .
+      args:
+        APP_NAME: http-gateway
+    command: ["--config", "/config/http-gateway.yaml", "--rules", "/rules"]
+    ports:
+      - "8080:8080"
+      - "2113:2112"
+    volumes:
+      - ./config/http-gateway.yaml:/config/http-gateway.yaml:ro
+      - ./rules/http:/rules:ro
+    environment:
+      RR_NATS_URLS: "nats://nats:4222"
+    networks:
+      - rule-router-net
+    depends_on:
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # --- Rule Scheduler (cron-based publishing) ---
+  rule-scheduler:
+    build:
+      context: .
+      args:
+        APP_NAME: rule-scheduler
+    command: ["--config", "/config/rule-scheduler.yaml", "--rules", "/rules"]
+    ports:
+      - "2114:2114"
+    volumes:
+      - ./config/rule-scheduler.yaml:/config/rule-scheduler.yaml:ro
+      - ./rules/scheduler:/rules:ro
+    environment:
+      RR_NATS_URLS: "nats://nats:4222"
+    networks:
+      - rule-router-net
+    depends_on:
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:2114/metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # --- NATS Auth Manager (OAuth2/token management) ---
+  nats-auth-manager:
+    build:
+      context: .
+      args:
+        APP_NAME: nats-auth-manager
+    command: ["--config", "/config/auth-manager.yaml"]
+    ports:
+      - "2115:2113"
+    volumes:
+      - ./config/auth-manager.yaml:/config/auth-manager.yaml:ro
+    environment:
+      RR_NATS_URLS: "nats://nats:4222"
+    networks:
+      - rule-router-net
+    depends_on:
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:2113/metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # --- Rule CLI (on-demand tool) ---
+  rule-cli:
+    build:
+      context: .
+      args:
+        APP_NAME: rule-cli
+    volumes:
+      - ./rules:/rules:ro
+    networks:
+      - rule-router-net
+    profiles:
+      - cli
+
+  # --- Web UI (rule builder) ---
+  web:
+    image: nginx:alpine
+    ports:
+      - "3000:80"
+    volumes:
+      - ./web/dist:/usr/share/nginx/html:ro
+    networks:
+      - rule-router-net
+    profiles:
+      - web
+
+volumes:
+  nats-data:
+
+networks:
+  rule-router-net:
+    driver: bridge

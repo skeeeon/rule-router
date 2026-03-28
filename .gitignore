@@ -29,6 +29,8 @@ go.work.sum
 
 # web
 node_modules/
+dist/
+.vite/
 
 .goreleaser.yaml
 # Editor/IDE

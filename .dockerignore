@@ -1,0 +1,43 @@
+# Version control
+.git
+.gitignore
+
+# Documentation
+*.md
+docs/
+LICENSE
+
+# IDE/editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test artifacts
+*.test
+*.out
+coverage.*
+*.coverprofile
+
+# Web frontend (not needed in Go build context)
+web/node_modules/
+web/dist/
+web/.vite/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Environment
+.env
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib

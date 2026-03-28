@@ -54,19 +54,61 @@ Detailed documentation on the rule engine's features can be found in the `docs/`
 *   **[05 - Security](./docs/05-security.md)**: Guide to Cryptographic Signature Verification.
 *   **[06 - KV Rule Store](./docs/06-kv-rule-store.md)**: Store rules in NATS KV with hot-reload and GitOps push workflow.
 *   **[Rule Builder Web UI](./web/README.md)**: Visual rule creation, live YAML preview, and NATS KV push/pull.
+*   **[Docker Deployment](#quick-start)**: Docker Compose setup for local development and deployment.
 
 ---
 
 ## Quick Start
 
-### Prerequisites
+### Option A: Docker Compose (Recommended)
 
-*   Go 1.23+
+The fastest way to get started. Docker Compose brings up all services including a NATS server with JetStream.
+
+```bash
+# Build and start all core services (NATS + all 4 apps)
+docker compose up -d
+
+# Check that everything is healthy
+docker compose ps
+
+# View logs
+docker compose logs -f
+
+# Include the web UI on port 3000
+docker compose --profile web up -d
+
+# Run the CLI tool
+docker compose run --rm rule-cli lint /rules
+
+# Tear down (add -v to also remove NATS data)
+docker compose down
+```
+
+**Ports exposed:**
+
+| Service | Port | Description |
+|---|---|---|
+| NATS | 4222 | Client connections |
+| NATS | 8222 | Monitoring dashboard |
+| http-gateway | 8080 | Inbound webhooks |
+| rule-router | 2112 | Prometheus metrics |
+| http-gateway | 2113 | Prometheus metrics |
+| rule-scheduler | 2114 | Prometheus metrics |
+| nats-auth-manager | 2115 | Prometheus metrics |
+| web (optional) | 3000 | Rule Builder UI |
+
+Configuration files in `config/` and rules in `rules/` are mounted as volumes, so edits are picked up on restart (or via SIGHUP for hot-reload).
+
+### Option B: Build from Source
+
+#### Prerequisites
+
+*   Go 1.26+
 *   A running NATS Server with JetStream enabled.
 
-### 1. Build the Binaries
+#### 1. Build the Binaries
 
-From the root of the repository, build both applications:
+From the root of the repository:
 
 ```bash
 # Build the NATS-to-NATS router
@@ -77,6 +119,12 @@ go build -o rule-scheduler ./cmd/rule-scheduler
 
 # Build the HTTP Gateway
 go build -o http-gateway ./cmd/http-gateway
+
+# Build the auth manager
+go build -o nats-auth-manager ./cmd/nats-auth-manager
+
+# Build the CLI
+go build -o rule-cli ./cmd/rule-cli
 ```
 
 ### 2. Configure NATS Streams
@@ -144,7 +192,7 @@ This rule listens for the internal status messages and routes critical errors to
 
 ### 4. Run the Applications
 
-You will need two separate configuration files (see the `config/` directory for examples).
+If using Docker Compose, the services are already running (see [Option A](#option-a-docker-compose-recommended)). For manual runs, you will need separate configuration files (see the `config/` directory for examples).
 
 **Terminal 1: Start the HTTP Gateway**
 ```bash
