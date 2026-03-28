@@ -831,19 +831,50 @@ button:disabled {
   margin: 0;
 }
 
-.preview-actions {
+.copy-btn {
+  padding: 4px 12px;
+  font-size: 11px;
+  border-color: var(--border);
+  color: var(--text-muted);
+}
+
+.copy-btn:hover {
+  color: var(--text-secondary);
+}
+
+.copy-btn.success {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+/* Action toolbar at bottom of preview */
+.preview-toolbar {
   display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
   gap: 6px;
 }
 
-.preview-actions button {
-  padding: 5px 12px;
-  font-size: 12px;
+.toolbar-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 4px;
 }
 
-.preview-actions button.success {
-  color: var(--success);
-  border-color: var(--success);
+.preview-toolbar button {
+  padding: 6px 14px;
+  font-size: 12px;
 }
 
 /* File tabs in preview */
@@ -1303,12 +1334,21 @@ button:disabled {
     max-width: calc(100vw - 32px);
   }
 
-  .preview-actions {
-    flex-wrap: wrap;
+  .preview-toolbar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
   }
 
-  .preview-actions button {
-    flex: 1;
+  .toolbar-group {
+    display: contents;
+  }
+
+  .toolbar-divider {
+    display: none;
+  }
+
+  .preview-toolbar button {
     text-align: center;
   }
 }

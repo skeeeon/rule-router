@@ -9,6 +9,7 @@ const emit = defineEmits(['push', 'push-all'])
 
 const activeTab = ref(0)
 const copied = ref(false)
+const hasMultiple = computed(() => props.files.length > 1)
 
 const activeFile = computed(() => props.files[activeTab.value] || props.files[0])
 
@@ -72,23 +73,16 @@ function pushAll() {
 
 <template>
   <div class="yaml-preview">
+    <!-- Header: title + copy -->
     <div class="preview-header">
       <h2>YAML Preview</h2>
-      <div class="preview-actions">
-        <button @click="copyToClipboard" :class="{ success: copied }">
-          {{ copied ? 'Copied' : 'Copy' }}
-        </button>
-        <button @click="download">Download</button>
-        <template v-if="files.length > 1">
-          <button @click="downloadAll">Download All</button>
-          <button @click="pushAll">Push All</button>
-        </template>
-        <button @click="pushFile">Push to KV</button>
-      </div>
+      <button class="copy-btn" @click="copyToClipboard" :class="{ success: copied }">
+        {{ copied ? 'Copied' : 'Copy' }}
+      </button>
     </div>
 
     <!-- File tabs -->
-    <div v-if="files.length > 1" class="preview-tabs">
+    <div v-if="hasMultiple" class="preview-tabs">
       <button
         v-for="(f, i) in files"
         :key="f.file"
@@ -100,6 +94,20 @@ function pushAll() {
       </button>
     </div>
 
+    <!-- YAML content -->
     <pre class="yaml-code"><code>{{ activeFile?.yaml || '# Build a rule to see the YAML preview' }}</code></pre>
+
+    <!-- Action toolbar -->
+    <div class="preview-toolbar">
+      <div class="toolbar-group">
+        <button @click="download">Download</button>
+        <button @click="pushFile">Push to KV</button>
+      </div>
+      <div v-if="hasMultiple" class="toolbar-group">
+        <span class="toolbar-divider"></span>
+        <button @click="downloadAll">Download All</button>
+        <button @click="pushAll">Push All</button>
+      </div>
+    </div>
   </div>
 </template>
