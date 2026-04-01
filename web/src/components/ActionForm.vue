@@ -1,13 +1,45 @@
 <script setup>
+import { ref, inject, nextTick } from 'vue'
 import { createDebounce, createRetry, createConditions } from '../utils/state.js'
 import HeadersEditor from './HeadersEditor.vue'
 import DebounceEditor from './DebounceEditor.vue'
 import ConditionsBuilder from './ConditionsBuilder.vue'
+import FieldSuggestInput from './FieldSuggestInput.vue'
 
 const props = defineProps({
   action: Object,
   errorFor: Function,
 })
+
+const inspectedFields = inject('inspectedFields', ref([]))
+
+const natsPayloadEl = ref(null)
+const httpPayloadEl = ref(null)
+
+// Track last known cursor position so chip clicks insert at the right spot
+const cursorPositions = { nats: null, http: null }
+
+function saveCursor(e, which) {
+  cursorPositions[which] = { start: e.target.selectionStart, end: e.target.selectionEnd }
+}
+
+function insertField(path, which, target, key) {
+  const tag = `{${path}}`
+  const val = target[key] || ''
+  const pos = cursorPositions[which]
+  const start = pos ? pos.start : val.length
+  const end = pos ? pos.end : val.length
+  target[key] = val.slice(0, start) + tag + val.slice(end)
+  const newPos = start + tag.length
+  cursorPositions[which] = { start: newPos, end: newPos }
+  const el = (which === 'nats' ? natsPayloadEl : httpPayloadEl).value
+  if (el) {
+    nextTick(() => {
+      el.focus()
+      el.setSelectionRange(newPos, newPos)
+    })
+  }
+}
 
 function toggleOption(target, key, factory) {
   if (target[key]) {
@@ -50,11 +82,23 @@ function toggleOption(target, key, factory) {
 
       <div v-if="!action.nats.passthrough" class="field">
         <label>Payload</label>
+        <div v-if="inspectedFields.length" class="field-chips">
+          <button
+            v-for="f in inspectedFields.filter(f => f.type !== 'object')"
+            :key="f.path"
+            class="field-chip"
+            @click="insertField(f.path, 'nats', action.nats, 'payload')"
+            :title="f.sample"
+          >{<span>{{ f.path }}</span>}</button>
+        </div>
         <textarea
+          ref="natsPayloadEl"
           v-model="action.nats.payload"
           rows="6"
           placeholder='{"alert": "High temperature!", "temp": {temperature}}'
           :class="{ error: errorFor('action.nats.payload') }"
+          @keyup="saveCursor($event, 'nats')"
+          @mouseup="saveCursor($event, 'nats')"
         ></textarea>
         <span class="field-error" v-if="errorFor('action.nats.payload')">
           {{ errorFor('action.nats.payload').message }}
@@ -79,11 +123,11 @@ function toggleOption(target, key, factory) {
 
       <div v-if="action.nats.forEach" class="field">
         <label>forEach Array Field</label>
-        <input
+        <FieldSuggestInput
           v-model="action.nats.forEach"
           placeholder="{events}"
-          :class="{ error: errorFor('action.nats.forEach') }"
-        >
+          :error="!!errorFor('action.nats.forEach')"
+        />
         <span class="field-error" v-if="errorFor('action.nats.forEach')">
           {{ errorFor('action.nats.forEach').message }}
         </span>
@@ -140,11 +184,23 @@ function toggleOption(target, key, factory) {
 
       <div v-if="!action.http.passthrough" class="field">
         <label>Payload</label>
+        <div v-if="inspectedFields.length" class="field-chips">
+          <button
+            v-for="f in inspectedFields.filter(f => f.type !== 'object')"
+            :key="f.path"
+            class="field-chip"
+            @click="insertField(f.path, 'http', action.http, 'payload')"
+            :title="f.sample"
+          >{<span>{{ f.path }}</span>}</button>
+        </div>
         <textarea
+          ref="httpPayloadEl"
           v-model="action.http.payload"
           rows="6"
           placeholder='{"alert": "{message}", "source": "{@subject}"}'
           :class="{ error: errorFor('action.http.payload') }"
+          @keyup="saveCursor($event, 'http')"
+          @mouseup="saveCursor($event, 'http')"
         ></textarea>
       </div>
 
@@ -170,7 +226,11 @@ function toggleOption(target, key, factory) {
 
       <div v-if="action.http.forEach" class="field">
         <label>forEach Array Field</label>
-        <input v-model="action.http.forEach" placeholder="{events}">
+        <FieldSuggestInput
+          v-model="action.http.forEach"
+          placeholder="{events}"
+          :error="false"
+        />
       </div>
 
       <div v-if="action.http.forEach">

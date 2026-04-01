@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, computed, ref, onMounted } from 'vue'
+import { reactive, computed, ref, provide, onMounted } from 'vue'
 import { createRule, createConditions, groupRulesByFile } from './utils/state.js'
 import { rulesToYaml } from './utils/yaml.js'
 import { validateRule } from './utils/validate.js'
@@ -12,6 +12,10 @@ import RuleCard from './components/RuleCard.vue'
 import KvPushModal from './components/KvPushModal.vue'
 import KvPullModal from './components/KvPullModal.vue'
 import HelpModal from './components/HelpModal.vue'
+import MessageInspector from './components/MessageInspector.vue'
+
+const inspectedFields = ref([])
+provide('inspectedFields', inspectedFields)
 
 const showKvModal = ref(false)
 const showKvPull = ref(false)
@@ -130,6 +134,7 @@ function loadFromKV(entries) {
   state.showConditions = !!rules[0].conditions
   showKvPull.value = false
 }
+
 </script>
 
 <template>
@@ -175,6 +180,8 @@ function loadFromKV(entries) {
                 title="Remove rule"
               >&times;</button>
             </div>
+
+            <MessageInspector v-model="inspectedFields" />
 
             <div class="section">
               <h2>Trigger</h2>

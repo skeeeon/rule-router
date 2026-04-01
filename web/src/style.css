@@ -1302,6 +1302,233 @@ button:disabled {
   overflow-x: auto;
 }
 
+/* ── Message Inspector ─────────────────────────────── */
+
+.message-inspector {
+  margin-bottom: 16px;
+}
+
+.inspector-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.inspector-toggle:hover {
+  background: var(--bg-hover);
+  box-shadow: var(--shadow-sm);
+}
+
+.message-inspector.expanded .inspector-toggle {
+  border-radius: 8px 8px 0 0;
+  border-bottom-color: transparent;
+}
+
+.inspector-toggle-icon {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.inspector-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: var(--accent-bg);
+  color: var(--accent-text);
+  border: 1px solid var(--accent-border);
+}
+
+.inspector-body {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  padding: 16px;
+}
+
+.inspector-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-input);
+  border-radius: 6px;
+  background: var(--bg-inset);
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 13px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.inspector-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(74, 144, 217, 0.1);
+}
+
+.inspector-input::placeholder {
+  color: var(--text-placeholder);
+}
+
+.inspector-error {
+  font-size: 12px;
+  color: var(--error-text);
+  margin-top: 6px;
+}
+
+.inspector-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.inspector-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.inspector-field:hover {
+  background: var(--accent-bg-hover);
+}
+
+.inspector-field .field-path {
+  font-size: 12px;
+  color: var(--accent-text);
+}
+
+.inspector-field .field-type {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.inspector-field.copied {
+  background: var(--success-bg);
+  border-color: var(--success);
+}
+
+.inspector-field.copied .field-type {
+  color: var(--success-text);
+  font-weight: 600;
+}
+
+
+/* ── Field Suggest (autocomplete input) ───────────── */
+
+.field-suggest-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.field-suggest-wrap input {
+  width: 100%;
+}
+
+.suggest-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  box-shadow: var(--shadow-md);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.suggest-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-primary);
+  transition: background 0.08s ease;
+}
+
+.suggest-item:hover,
+.suggest-item.active {
+  background: var(--accent-bg);
+}
+
+.suggest-item code {
+  color: var(--accent-text);
+  font-size: 12px;
+}
+
+.suggest-type {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.field-suggest-wrap input.warn {
+  border-color: #e8a735;
+  box-shadow: 0 0 0 3px rgba(232, 167, 53, 0.1);
+}
+
+.field-warn-hint {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  color: #c89020;
+  pointer-events: none;
+  letter-spacing: 0.3px;
+}
+
+/* ── Field Chips (payload insert bar) ─────────────── */
+
+.field-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.field-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  border-radius: 3px;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 11px;
+  color: var(--accent-text);
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.field-chip:hover {
+  background: var(--accent-bg-hover);
+}
+
 /* ── Hint text ──────────────────────────────────────── */
 
 .hint {

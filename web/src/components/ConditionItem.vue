@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { VALID_OPERATORS, ARRAY_OPERATORS } from '../utils/validate.js'
 import { createConditions } from '../utils/state.js'
 import ConditionsBuilder from './ConditionsBuilder.vue'
+import FieldSuggestInput from './FieldSuggestInput.vue'
 
 const LIST_OPERATORS = ['in', 'not_in']
 
@@ -59,11 +60,11 @@ function onOperatorChange() {
   <div class="condition-item">
     <div class="condition-row">
       <div class="field compact">
-        <input
+        <FieldSuggestInput
           v-model="item.field"
           placeholder="{field}"
-          :class="{ error: errorFor(`${prefix}.field`) }"
-        >
+          :error="!!errorFor(`${prefix}.field`)"
+        />
         <span class="field-error" v-if="errorFor(`${prefix}.field`)">
           {{ errorFor(`${prefix}.field`).message }}
         </span>
