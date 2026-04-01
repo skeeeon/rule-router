@@ -1507,19 +1507,19 @@ button:disabled {
 .field-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 6px;
+  gap: 6px;
+  margin-bottom: 8px;
 }
 
 .field-chip {
   display: inline-flex;
   align-items: center;
-  padding: 2px 8px;
+  gap: 6px;
+  padding: 4px 10px;
   background: var(--accent-bg);
   border: 1px solid var(--accent-border);
-  border-radius: 3px;
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
-  font-size: 11px;
+  border-radius: 4px;
+  font-size: 12px;
   color: var(--accent-text);
   cursor: pointer;
   transition: background 0.1s ease;
@@ -1527,6 +1527,13 @@ button:disabled {
 
 .field-chip:hover {
   background: var(--accent-bg-hover);
+}
+
+.field-chip .chip-type {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 /* ── Hint text ──────────────────────────────────────── */

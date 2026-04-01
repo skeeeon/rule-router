@@ -41,6 +41,11 @@ function insertField(path, which, target, key) {
   }
 }
 
+function typeLabel(type) {
+  const labels = { string: 'str', number: 'num', boolean: 'bool', array: 'arr', null: 'null' }
+  return labels[type] || type
+}
+
 function toggleOption(target, key, factory) {
   if (target[key]) {
     target[key] = null
@@ -84,12 +89,12 @@ function toggleOption(target, key, factory) {
         <label>Payload</label>
         <div v-if="inspectedFields.length" class="field-chips">
           <button
-            v-for="f in inspectedFields.filter(f => f.type !== 'object')"
+            v-for="f in inspectedFields"
             :key="f.path"
             class="field-chip"
             @click="insertField(f.path, 'nats', action.nats, 'payload')"
             :title="f.sample"
-          >{<span>{{ f.path }}</span>}</button>
+          ><code>{<span>{{ f.path }}</span>}</code><span class="chip-type">{{ typeLabel(f.type) }}</span></button>
         </div>
         <textarea
           ref="natsPayloadEl"
@@ -186,12 +191,12 @@ function toggleOption(target, key, factory) {
         <label>Payload</label>
         <div v-if="inspectedFields.length" class="field-chips">
           <button
-            v-for="f in inspectedFields.filter(f => f.type !== 'object')"
+            v-for="f in inspectedFields"
             :key="f.path"
             class="field-chip"
             @click="insertField(f.path, 'http', action.http, 'payload')"
             :title="f.sample"
-          >{<span>{{ f.path }}</span>}</button>
+          ><code>{<span>{{ f.path }}</span>}</code><span class="chip-type">{{ typeLabel(f.type) }}</span></button>
         </div>
         <textarea
           ref="httpPayloadEl"
