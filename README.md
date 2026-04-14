@@ -2,12 +2,14 @@
 
 A high-performance, rule-based messaging platform for NATS, providing an internal message router, cron-based scheduled publishing, a bidirectional HTTP gateway, and an automated token manager for secure API integration.
 
-This monorepo contains four primary, interoperable applications built on a shared, powerful rule engine:
+**`rule-router`** is a single unified binary with three selectable features, plus a companion auth manager:
 
-*   **`rule-router`**: A high-throughput NATS-to-NATS message router for internal, event-driven workflows.
-*   **`rule-scheduler`**: A cron-based scheduler that publishes to NATS and HTTP endpoints on configurable schedules, with full conditions, KV support, and HTTP retry logic.
-*   **`http-gateway`**: A bidirectional bridge for integrating external systems with your NATS fabric via webhooks (HTTP → NATS) and outbound API calls (NATS → HTTP).
-*   **`nats-auth-manager`**: A standalone utility that securely manages and refreshes API tokens (OAuth2, etc.), storing them in NATS KV for use by the `http-gateway` on outbound webhooks.
+*   **Router** (default): A high-throughput NATS-to-NATS message router for internal, event-driven workflows.
+*   **Scheduler**: A cron-based scheduler that publishes to NATS and HTTP endpoints on configurable schedules, with full conditions, KV support, and HTTP retry logic.
+*   **Gateway**: A bidirectional bridge for integrating external systems with your NATS fabric via webhooks (HTTP → NATS) and outbound API calls (NATS → HTTP).
+*   **`nats-auth-manager`**: A standalone utility that securely manages and refreshes API tokens (OAuth2, etc.), storing them in NATS KV for use by the gateway on outbound webhooks.
+
+Features are enabled via config (`features.router`, `features.gateway`, `features.scheduler`) or environment variables (`RR_FEATURES_GATEWAY=true`). Multiple features can run in a single process.
 
 ---
 
@@ -68,10 +70,22 @@ Download pre-built binaries from [GitHub Releases](https://github.com/skeeeon/ru
 # Extract the release archive
 tar -xzf rule-router_<version>_<os>_<arch>.tar.gz
 
-# Run any application
+# Run with router feature (default)
 ./rule-router --config config/rule-router.yaml --rules ./rules
-./http-gateway --config config/http-gateway.yaml --rules ./rules
-./rule-scheduler --config config/rule-scheduler.yaml --rules ./rules
+
+# Run with gateway feature
+RR_FEATURES_ROUTER=false RR_FEATURES_GATEWAY=true \
+  ./rule-router --config config/http-gateway.yaml --rules ./rules
+
+# Run with scheduler feature
+RR_FEATURES_ROUTER=false RR_FEATURES_SCHEDULER=true \
+  ./rule-router --config config/rule-scheduler.yaml --rules ./rules
+
+# Run all features in a single process
+RR_FEATURES_GATEWAY=true RR_FEATURES_SCHEDULER=true \
+  ./rule-router --config config/rule-router.yaml --rules ./rules
+
+# Run the auth manager (separate binary)
 ./nats-auth-manager --config config/auth-manager.yaml
 ```
 
@@ -116,24 +130,32 @@ echo 'NATS_URLS=nats://your-nats-host:4222' > .env
 docker compose up -d
 ```
 
-#### Building Individual Docker Images
+#### Building Docker Images
 
-The repository uses a single parameterized `Dockerfile`. Build any application by setting the `APP_NAME` build argument:
+The repository uses a single parameterized `Dockerfile`. The `rule-router` image includes all three features (router, gateway, scheduler) — select which to enable at runtime via config or environment variables:
 
 ```bash
-# Build a single application image
+# Build the rule-router image (includes all features)
 docker build --build-arg APP_NAME=rule-router -t rule-router .
-docker build --build-arg APP_NAME=http-gateway -t http-gateway .
-docker build --build-arg APP_NAME=rule-scheduler -t rule-scheduler .
+
+# Build companion images
 docker build --build-arg APP_NAME=nats-auth-manager -t nats-auth-manager .
 docker build --build-arg APP_NAME=rule-cli -t rule-cli .
 
-# Run an image (mount your config and rules)
+# Run as router (default)
 docker run -d \
   -v ./config/rule-router.yaml:/config/rule-router.yaml:ro \
   -v ./rules/router:/rules:ro \
   -p 2112:2112 \
   rule-router --config /config/rule-router.yaml --rules /rules
+
+# Run as gateway
+docker run -d \
+  -e RR_FEATURES_ROUTER=false -e RR_FEATURES_GATEWAY=true \
+  -v ./config/http-gateway.yaml:/config/http-gateway.yaml:ro \
+  -v ./rules/http:/rules:ro \
+  -p 8080:8080 -p 2112:2112 \
+  rule-router --config /config/http-gateway.yaml --rules /rules
 ```
 
 **Ports exposed:**
@@ -142,10 +164,8 @@ docker run -d \
 |---|---|---|
 | NATS (optional) | 4222 | Client connections |
 | NATS (optional) | 8222 | Monitoring dashboard |
-| http-gateway | 8080 | Inbound webhooks |
+| rule-router (gateway) | 8080 | Inbound webhooks |
 | rule-router | 2112 | Prometheus metrics |
-| http-gateway | 2113 | Prometheus metrics |
-| rule-scheduler | 2114 | Prometheus metrics |
 | nats-auth-manager | 2115 | Prometheus metrics |
 | web (optional) | 3000 | Rule Builder UI |
 
@@ -163,14 +183,8 @@ Configuration files in `config/` and rules in `rules/` are mounted as volumes, s
 From the root of the repository:
 
 ```bash
-# Build the NATS-to-NATS router
+# Build the unified rule-router binary (includes router, gateway, and scheduler features)
 go build -o rule-router ./cmd/rule-router
-
-# Build the cron scheduler
-go build -o rule-scheduler ./cmd/rule-scheduler
-
-# Build the HTTP Gateway
-go build -o http-gateway ./cmd/http-gateway
 
 # Build the auth manager
 go build -o nats-auth-manager ./cmd/nats-auth-manager
@@ -195,7 +209,7 @@ nats stream add ALERTS --subjects "alerts.>"
 
 Create a `rules/` directory with two rule files.
 
-**`rules/http_ingress.yaml`** (For `http-gateway`)
+**`rules/http_ingress.yaml`** (For the gateway feature)
 This rule listens for inbound webhooks at `/webhooks/devices` and publishes a standardized message to NATS.
 
 ```yaml
@@ -221,7 +235,7 @@ This rule listens for inbound webhooks at `/webhooks/devices` and publishes a st
         }
 ```
 
-**`rules/internal_routing.yaml`** (For `rule-router`)
+**`rules/internal_routing.yaml`** (For the router feature)
 This rule listens for the internal status messages and routes critical errors to a dedicated alerts subject.
 
 ```yaml
@@ -244,15 +258,20 @@ This rule listens for the internal status messages and routes critical errors to
 
 ### 4. Run the Applications
 
-If using Docker Compose, the services are already running (see [Option B](#option-b-docker)). For manual runs, you will need separate configuration files (see the `config/` directory for examples).
+If using Docker Compose, the services are already running (see [Option B](#option-b-docker)). For manual runs, you can run both features in a single process or separately.
 
-**Terminal 1: Start the HTTP Gateway**
+**Option 1: Single process with both features**
 ```bash
-./http-gateway --config config/http-gateway.yaml --rules ./rules
+RR_FEATURES_GATEWAY=true ./rule-router --config config/rule-router.yaml --rules ./rules
 ```
 
-**Terminal 2: Start the Rule Router**
+**Option 2: Separate processes**
 ```bash
+# Terminal 1: Start the gateway
+RR_FEATURES_ROUTER=false RR_FEATURES_GATEWAY=true \
+  ./rule-router --config config/http-gateway.yaml --rules ./rules
+
+# Terminal 2: Start the router
 ./rule-router --config config/rule-router.yaml --rules ./rules
 ```
 
@@ -281,11 +300,7 @@ You will see the message appear on the `alerts.>` subscription, having been proc
 
 ## Applications
 
-*   **`cmd/rule-router`**: A dedicated NATS-to-NATS message router. Ideal for high-performance, internal event stream processing, filtering, and enrichment. [**» View Router README**](./cmd/rule-router/README.md)
-
-*   **`cmd/rule-scheduler`**: A cron-based scheduler that publishes to NATS and HTTP endpoints on configurable schedules. Ideal for time-driven automation like access control, periodic health checks, scheduled webhooks, and API calls. [**» View Scheduler README**](./cmd/rule-scheduler/README.md)
-
-*   **`cmd/http-gateway`**: A bidirectional HTTP-to-NATS gateway. Perfect for integrating with third-party webhooks and for triggering external APIs from NATS events. [**» View Gateway README**](./cmd/http-gateway/README.md)
+*   **`cmd/rule-router`**: The unified binary containing three features — **router** (NATS-to-NATS message routing), **gateway** (bidirectional HTTP-NATS integration), and **scheduler** (cron-based publishing). Enable features via config or env vars. [**» View README**](./cmd/rule-router/README.md)
 
 *   **`cmd/nats-auth-manager`**: A standalone service that handles OAuth2 and custom API authentication, storing tokens in NATS KV for use by other services. [**» View Auth Manager README**](./cmd/nats-auth-manager/README.md)
 
@@ -295,7 +310,7 @@ You will see the message appear on the `alerts.>` subscription, having been proc
 
 ## Monitoring
 
-All applications expose a Prometheus metrics endpoint (rule-router on `:2112`, http-gateway on `:2113`, rule-scheduler on `:2114`). Key metrics include:
+All features expose a shared Prometheus metrics endpoint (default `:2112`). Key metrics include:
 
 **Message Processing:**
 *   `messages_total`: Total messages processed by status.

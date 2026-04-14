@@ -1,11 +1,14 @@
-//file: cmd/rule-router/main.go
+// file: cmd/rule-router/main.go
 
 package main
 
 import (
+	"context"
+	"fmt"
 	"strings"
+	"time"
 
-	flag "github.com/spf13/pflag" // Use pflag aliased as flag
+	flag "github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"rule-router/config"
 	"rule-router/internal/app"
@@ -30,9 +33,22 @@ func run() error {
 	}
 	defer appLogger.Sync()
 
+	// Log enabled features
+	var features []string
+	if cfg.Features.Router {
+		features = append(features, "router")
+	}
+	if cfg.Features.Gateway {
+		features = append(features, "gateway")
+	}
+	if cfg.Features.Scheduler {
+		features = append(features, "scheduler")
+	}
+	appLogger.Info("enabled features", "features", features)
+
 	// Create app factory function
 	createApp := func() (lifecycle.Application, error) {
-		// Build the common components using the builder.
+		// Build the common components using the builder
 		builder := app.NewAppBuilder(cfg, rulesPath).
 			WithLogger().
 			WithMetrics().
@@ -40,7 +56,7 @@ func run() error {
 
 		// Choose rule loading strategy: KV-based or file-based
 		if cfg.KV.Rules.Enabled {
-			builder = builder.WithKVRuleProcessor()
+			builder = builder.WithKVRuleProcessor().WithKVRuleManager()
 		} else {
 			builder = builder.WithRuleProcessor()
 		}
@@ -50,8 +66,49 @@ func run() error {
 			return nil, err
 		}
 
-		// Create the specific application with the common base.
-		return app.NewRouterApp(baseApp, cfg)
+		// Create enabled feature apps
+		var apps []lifecycle.Application
+
+		if cfg.Features.Router {
+			routerApp, err := app.NewRouterApp(baseApp, cfg)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create router: %w", err)
+			}
+			apps = append(apps, routerApp)
+		}
+
+		if cfg.Features.Gateway {
+			gatewayApp, err := app.NewGatewayApp(baseApp, cfg)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create gateway: %w", err)
+			}
+			apps = append(apps, gatewayApp)
+		}
+
+		if cfg.Features.Scheduler {
+			schedulerApp, err := app.NewSchedulerApp(baseApp, cfg)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create scheduler: %w", err)
+			}
+			apps = append(apps, schedulerApp)
+		}
+
+		// Wait for KV rules to sync after all callbacks are registered
+		if cfg.KV.Rules.Enabled && baseApp.RuleKVManager != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			if err := baseApp.RuleKVManager.WaitReady(ctx); err != nil {
+				return nil, fmt.Errorf("timeout waiting for initial KV rule sync: %w", err)
+			}
+		}
+
+		// Single feature: wrap with BaseApp cleanup
+		if len(apps) == 1 {
+			return app.NewCompositeApp(apps, baseApp), nil
+		}
+
+		// Multiple features: CompositeApp handles concurrency + cleanup
+		return app.NewCompositeApp(apps, baseApp), nil
 	}
 
 	// Run with reload support (handles SIGHUP automatically)

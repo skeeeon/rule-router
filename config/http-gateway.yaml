@@ -1,7 +1,12 @@
 # file: config/http-gateway.yaml
 
-# Sample HTTP Gateway Configuration
-# This config extends the base config with HTTP-specific settings
+# HTTP Gateway Configuration
+# Uses the unified rule-router binary with gateway feature enabled
+
+features:
+  router: false
+  gateway: true
+  scheduler: false
 
 # HTTP Server and Client Configuration
 http:

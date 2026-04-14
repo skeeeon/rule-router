@@ -295,7 +295,7 @@ action:
 
 ## KV-Sourced Arrays
 
-ForEach can source its array from a NATS KV store instead of the message payload. This enables **fan-out patterns** — especially useful for `rule-scheduler`, where there is no incoming message.
+ForEach can source its array from a NATS KV store instead of the message payload. This enables **fan-out patterns** — especially useful for the scheduler feature, where there is no incoming message.
 
 **Syntax:** Use `{@kv.bucket.key}` as the forEach field. The KV value must be a JSON array.
 

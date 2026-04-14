@@ -1,6 +1,10 @@
 # Rule Scheduler Configuration
-# Publishes templated messages to NATS on cron schedules
-# Uses the same rule format as rule-router with schedule triggers
+# Uses the unified rule-router binary with scheduler feature enabled
+
+features:
+  router: false
+  gateway: false
+  scheduler: true
 
 # NATS Server Connection
 nats:

@@ -1,8 +1,12 @@
 # Rule Router
 
-Rule Router is a high-performance NATS-to-NATS message router that evaluates JSON messages against configurable rules and publishes templated actions. It is a core component of the Rule-Based Messaging Platform and shares its powerful rule engine with the `http-gateway`.
+Rule Router is a unified binary containing three features built on a shared, high-performance rule engine:
 
-This application is purpose-built for internal, high-throughput message routing, filtering, enrichment, and security validation within your NATS infrastructure.
+*   **Router** (default) — NATS-to-NATS message routing, filtering, and enrichment
+*   **Gateway** — Bidirectional HTTP-NATS integration (inbound webhooks, outbound API calls)
+*   **Scheduler** — Cron-based scheduled publishing to NATS and HTTP endpoints
+
+Features are enabled via config (`features.router`, `features.gateway`, `features.scheduler`) or environment variables (`RR_FEATURES_GATEWAY=true`). Multiple features can run in a single process with shared NATS connections, metrics, and KV cache.
 
 ## Features
 

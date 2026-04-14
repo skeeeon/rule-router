@@ -40,10 +40,10 @@ kv:
 
 When `kv.rules.enabled` is `true`, the `rules/` directory is ignored. All rules come from the KV bucket.
 
-This works with all rule-based applications:
-*   **`rule-router`**: NATS trigger rules are loaded from KV, consumers created dynamically.
-*   **`http-gateway`**: Both inbound (HTTP trigger) and outbound (NATS trigger + HTTP action) rules are loaded from KV. HTTP paths are handled dynamically via a catch-all handler.
-*   **`rule-scheduler`**: Schedule-triggered rules are loaded from KV. Cron jobs are rebuilt automatically when rules change — no restart or SIGHUP needed.
+This works with all features:
+*   **Router**: NATS trigger rules are loaded from KV, consumers created dynamically.
+*   **Gateway**: Both inbound (HTTP trigger) and outbound (NATS trigger + HTTP action) rules are loaded from KV. HTTP paths are handled dynamically via a catch-all handler.
+*   **Scheduler**: Schedule-triggered rules are loaded from KV. Cron jobs are rebuilt automatically when rules change — no restart or SIGHUP needed.
 
 -----
 
@@ -161,7 +161,7 @@ When KV rules are enabled, the application:
 
 ### Scheduler Behavior
 
-For `rule-scheduler`, KV rule changes trigger a cron job rebuild rather than subscription changes. When a KV key containing schedule rules is updated or deleted:
+For the scheduler feature, KV rule changes trigger a cron job rebuild rather than subscription changes. When a KV key containing schedule rules is updated or deleted:
 
 1. All existing KV-sourced cron jobs are removed.
 2. New cron jobs are registered from the updated rule set.

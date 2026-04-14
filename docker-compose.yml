@@ -20,6 +20,7 @@ services:
       - nats
 
   # --- Rule Router (NATS-to-NATS message routing) ---
+  # All three services use the same binary; features are toggled via env vars.
   rule-router:
     build:
       context: .
@@ -47,7 +48,7 @@ services:
     build:
       context: .
       args:
-        APP_NAME: http-gateway
+        APP_NAME: rule-router
     command: ["--config", "/config/http-gateway.yaml", "--rules", "/rules"]
     ports:
       - "8080:8080"
@@ -57,6 +58,8 @@ services:
       - ./rules/http:/rules:ro
     environment:
       RR_NATS_URLS: "${NATS_URLS:-nats://nats:4222}"
+      RR_FEATURES_ROUTER: "false"
+      RR_FEATURES_GATEWAY: "true"
     networks:
       - rule-router-net
     healthcheck:
@@ -71,7 +74,7 @@ services:
     build:
       context: .
       args:
-        APP_NAME: rule-scheduler
+        APP_NAME: rule-router
     command: ["--config", "/config/rule-scheduler.yaml", "--rules", "/rules"]
     ports:
       - "2114:2114"
@@ -80,6 +83,8 @@ services:
       - ./rules/scheduler:/rules:ro
     environment:
       RR_NATS_URLS: "${NATS_URLS:-nats://nats:4222}"
+      RR_FEATURES_ROUTER: "false"
+      RR_FEATURES_SCHEDULER: "true"
     networks:
       - rule-router-net
     healthcheck:

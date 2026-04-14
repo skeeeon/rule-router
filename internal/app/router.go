@@ -4,12 +4,10 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	"rule-router/config"
-	"rule-router/internal/broker"
 	"rule-router/internal/lifecycle"
 	"rule-router/internal/logger"
 	"rule-router/internal/metrics"
@@ -18,9 +16,6 @@ import (
 
 // Timeout constants for RouterApp operations
 const (
-	// metricsShutdownTimeout is the maximum time to wait for the metrics server to shutdown
-	metricsShutdownTimeout = 5 * time.Second
-
 	// subscriptionSetupTimeout is the maximum time to wait for all subscriptions to be configured
 	subscriptionSetupTimeout = 60 * time.Second
 )
@@ -28,77 +23,38 @@ const (
 // Verify RouterApp implements lifecycle.Application interface at compile time
 var _ lifecycle.Application = (*RouterApp)(nil)
 
-// RouterApp represents the rule-router application with all its components including KV support
+// RouterApp represents the rule-router application with all its components
 type RouterApp struct {
-	config           *config.Config
-	logger           *logger.Logger
-	metrics          *metrics.Metrics
-	processor        *rule.Processor
-	broker           *broker.NATSBroker
-	base             *BaseApp // Reference to BaseApp for proper shutdown
-	metricsCollector *metrics.MetricsCollector
-	ruleKVManager    *broker.RuleKVManager
+	config    *config.Config
+	logger    *logger.Logger
+	metrics   *metrics.Metrics
+	processor *rule.Processor
+	base      *BaseApp
 }
 
 // NewRouterApp creates a new rule-router application instance using the pre-built base components.
+// In KV mode, the caller must have already started base.RuleKVManager via the builder.
 func NewRouterApp(base *BaseApp, cfg *config.Config) (*RouterApp, error) {
 	app := &RouterApp{
-		config:           cfg,
-		logger:           base.Logger.With("component", "router"),
-		metrics:          base.Metrics,
-		processor:        base.Processor,
-		broker:           base.Broker,
-		base:             base,
-		metricsCollector: base.Collector,
+		config:    cfg,
+		logger:    base.Logger.With("component", "router"),
+		metrics:   base.Metrics,
+		processor: base.Processor,
+		base:      base,
 	}
 
 	// Initialize subscription manager with processor
-	app.broker.InitializeSubscriptionManager(app.processor)
+	base.Broker.InitializeSubscriptionManager(app.processor)
 
-	if cfg.KV.Rules.Enabled {
-		// KV rules mode: rules are loaded from KV bucket and watched for changes
-		if err := app.setupKVRules(); err != nil {
-			return nil, fmt.Errorf("failed to setup KV rules: %w", err)
-		}
-	} else {
+	if !cfg.KV.Rules.Enabled {
 		// File-based mode: setup subscriptions for all rule subjects
 		if err := app.setupSubscriptions(); err != nil {
 			return nil, fmt.Errorf("failed to setup subscriptions: %w", err)
 		}
 	}
+	// KV mode: subscriptions are managed by base.RuleKVManager (no router-specific callback needed)
 
 	return app, nil
-}
-
-// setupKVRules initializes the KV rule manager, watches for rules, and waits for initial sync.
-func (app *RouterApp) setupKVRules() error {
-	kvCfg := app.config.KV.Rules
-
-	app.ruleKVManager = broker.NewRuleKVManager(
-		kvCfg.Bucket,
-		kvCfg.AutoProvision,
-		app.processor,
-		app.broker,
-		app.base.RulesLoader,
-		app.logger,
-	)
-
-	if err := app.ruleKVManager.Watch(context.Background()); err != nil {
-		return fmt.Errorf("failed to start KV rule watcher: %w", err)
-	}
-
-	// Block until initial KV sync completes
-	ctx, cancel := context.WithTimeout(context.Background(), subscriptionSetupTimeout)
-	defer cancel()
-
-	if err := app.ruleKVManager.WaitReady(ctx); err != nil {
-		return fmt.Errorf("timeout waiting for initial KV rule sync: %w", err)
-	}
-
-	app.logger.Info("KV rules loaded and subscriptions configured",
-		"bucket", kvCfg.Bucket)
-
-	return nil
 }
 
 // Run starts the application and waits for shutdown signal.
@@ -106,7 +62,7 @@ func (app *RouterApp) setupKVRules() error {
 // to avoid double registration which causes unpredictable behavior.
 func (app *RouterApp) Run(ctx context.Context) error {
 	// Get subscription count
-	subMgr := app.broker.GetSubscriptionManager()
+	subMgr := app.base.Broker.GetSubscriptionManager()
 	subCount := subMgr.GetSubscriptionCount()
 
 	// Log configuration summary for transparency
@@ -156,49 +112,10 @@ func (app *RouterApp) Run(ctx context.Context) error {
 	return nil
 }
 
-// Close gracefully shuts down all application components
+// Close gracefully shuts down router-specific resources.
+// Shared resources (metrics, broker, logger) are cleaned up by BaseApp.Close().
 func (app *RouterApp) Close() error {
-	app.logger.Info("closing application components")
-
-	var errs []error
-
-	// Stop metrics collector
-	if app.metricsCollector != nil {
-		app.metricsCollector.Stop()
-	}
-
-	// Shutdown metrics server and wait for goroutine to exit
-	if app.base != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), metricsShutdownTimeout)
-		defer cancel()
-		if err := app.base.ShutdownMetricsServer(shutdownCtx); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	// Stop KV rule manager before broker
-	if app.ruleKVManager != nil {
-		app.ruleKVManager.Stop()
-	}
-
-	// Close NATS broker (this will stop subscriptions and clean up)
-	if app.broker != nil {
-		if err := app.broker.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("failed to close NATS broker: %w", err))
-		}
-	}
-
-	// Sync logger
-	if app.logger != nil {
-		if err := app.logger.Sync(); err != nil {
-			app.logger.Debug("logger sync completed", "error", err)
-		}
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("cleanup errors: %w", errors.Join(errs...))
-	}
-
+	app.logger.Info("closing router components")
 	return nil
 }
 
@@ -208,7 +125,7 @@ func (app *RouterApp) setupSubscriptions() error {
 	subjects := app.processor.GetSubjects()
 	app.logger.Info("setting up subscriptions for rule subjects", "subjectCount", len(subjects))
 
-	if err := app.broker.ValidateSubjects(subjects); err != nil {
+	if err := app.base.Broker.ValidateSubjects(subjects); err != nil {
 		return fmt.Errorf("stream validation failed: %w", err)
 	}
 
@@ -224,11 +141,11 @@ func (app *RouterApp) setupSubscriptions() error {
 
 		app.logger.Debug("setting up subscription for subject", "subject", subject)
 
-		if err := app.broker.CreateConsumerForSubject(subject); err != nil {
+		if err := app.base.Broker.CreateConsumerForSubject(subject); err != nil {
 			return fmt.Errorf("failed to create consumer for subject '%s': %w", subject, err)
 		}
 
-		if err := app.broker.AddSubscription(subject); err != nil {
+		if err := app.base.Broker.AddSubscription(subject); err != nil {
 			return fmt.Errorf("failed to add subscription for subject '%s': %w", subject, err)
 		}
 

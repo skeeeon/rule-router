@@ -1,6 +1,6 @@
 # Core Concepts
 
-All applications in this repository are configured using a shared rule syntax. A **rule** is a YAML object composed of a `trigger`, optional `conditions`, and an `action`.
+All features of rule-router are configured using a shared rule syntax. A **rule** is a YAML object composed of a `trigger`, optional `conditions`, and an `action`.
 
 ```yaml
 # A rule is defined by a trigger, optional conditions, and an action.
@@ -16,14 +16,14 @@ All applications in this repository are configured using a shared rule syntax. A
 
 A trigger defines the event that initiates a rule evaluation. Each rule has exactly one trigger type.
 
-**NATS Trigger** (`rule-router`, `http-gateway`): Evaluates a message from a NATS subject.
+**NATS Trigger** (router, gateway features): Evaluates a message from a NATS subject.
 ```yaml
 trigger:
   nats:
     subject: "sensors.temperature.>" # Supports wildcards
 ```
 
-**HTTP Trigger** (`http-gateway`): Evaluates an incoming HTTP request.
+**HTTP Trigger** (gateway feature): Evaluates an incoming HTTP request.
 ```yaml
 trigger:
   http:
@@ -31,7 +31,7 @@ trigger:
     method: "POST"             # Optional, defaults to all methods
 ```
 
-**Schedule Trigger** (`rule-scheduler`): Fires on a cron schedule.
+**Schedule Trigger** (scheduler feature): Fires on a cron schedule.
 ```yaml
 trigger:
   schedule:
@@ -39,7 +39,7 @@ trigger:
     timezone: "America/New_York"   # Optional IANA timezone, defaults to system local
 ```
 
-Schedule-triggered rules have no incoming message payload. Conditions can use time variables (`{@time.*}`, `{@day.*}`, `{@date.*}`) and KV lookups (`{@kv.*}`), but not message fields or header/subject context. Schedule rules support both NATS and HTTP actions — HTTP actions include configurable retry with exponential backoff. See the [Rule Scheduler README](../cmd/rule-scheduler/README.md) for details.
+Schedule-triggered rules have no incoming message payload. Conditions can use time variables (`{@time.*}`, `{@day.*}`, `{@date.*}`) and KV lookups (`{@kv.*}`), but not message fields or header/subject context. Schedule rules support both NATS and HTTP actions — HTTP actions include configurable retry with exponential backoff.
 
 ## 2. Conditions (The "When")
 

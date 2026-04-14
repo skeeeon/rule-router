@@ -4,12 +4,10 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	"rule-router/config"
-	"rule-router/internal/broker"
 	"rule-router/internal/gateway"
 	"rule-router/internal/lifecycle"
 	"rule-router/internal/logger"
@@ -19,9 +17,6 @@ import (
 
 // Timeout constants for GatewayApp operations
 const (
-	// gatewayMetricsShutdownTimeout is the maximum time to wait for the metrics server to shutdown
-	gatewayMetricsShutdownTimeout = 5 * time.Second
-
 	// outboundSetupTimeout is the maximum time to wait for outbound subscriptions to be configured
 	outboundSetupTimeout = 60 * time.Second
 )
@@ -31,33 +26,24 @@ var _ lifecycle.Application = (*GatewayApp)(nil)
 
 // GatewayApp represents the http-gateway application with all its components
 type GatewayApp struct {
-	config           *config.Config
-	logger           *logger.Logger
-	metrics          *metrics.Metrics
-	processor        *rule.Processor
-	broker           *broker.NATSBroker
-	inboundServer    *gateway.InboundServer
-	outboundClient   *gateway.OutboundClient
-	base             *BaseApp // Reference to BaseApp for proper shutdown
-	metricsCollector *metrics.MetricsCollector
-	ruleKVManager    *broker.RuleKVManager
+	config         *config.Config
+	logger         *logger.Logger
+	metrics        *metrics.Metrics
+	processor      *rule.Processor
+	inboundServer  *gateway.InboundServer
+	outboundClient *gateway.OutboundClient
+	base           *BaseApp
 }
 
 // NewGatewayApp creates a new http-gateway application instance using the pre-built base components.
+// In KV mode, the caller must have already started base.RuleKVManager via the builder.
 func NewGatewayApp(base *BaseApp, cfg *config.Config) (*GatewayApp, error) {
 	app := &GatewayApp{
-		config:           cfg,
-		logger:           base.Logger.With("component", "gateway-app"),
-		metrics:          base.Metrics,
-		processor:        base.Processor,
-		broker:           base.Broker,
-		base:             base,
-		metricsCollector: base.Collector,
-	}
-
-	// Validate gateway-specific configuration requirements
-	if cfg.HTTP.Server.Address == "" {
-		return nil, fmt.Errorf("HTTP server address is required for http-gateway")
+		config:    cfg,
+		logger:    base.Logger.With("component", "gateway-app"),
+		metrics:   base.Metrics,
+		processor: base.Processor,
+		base:      base,
 	}
 
 	// Setup inbound server (HTTP → NATS)
@@ -72,13 +58,8 @@ func NewGatewayApp(base *BaseApp, cfg *config.Config) (*GatewayApp, error) {
 		// Create outbound client (will be dynamically populated by KV manager)
 		app.setupOutboundClientEmpty()
 
-		// Setup KV rules: watcher + initial sync
-		if err := app.setupKVRules(); err != nil {
-			return nil, fmt.Errorf("failed to setup KV rules: %w", err)
-		}
-
 		// Register outbound client as subscriber for HTTP action rules
-		app.ruleKVManager.SetOutboundSubscriber(app.outboundClient)
+		base.RuleKVManager.SetOutboundSubscriber(app.outboundClient)
 	} else {
 		// File-based mode: setup outbound subscriptions from loaded rules
 		if err := app.setupOutboundClient(); err != nil {
@@ -105,41 +86,12 @@ func (app *GatewayApp) setupOutboundClientEmpty() {
 		app.logger,
 		app.metrics,
 		app.processor,
-		app.broker.GetJetStream(),
+		app.base.Broker.GetJetStream(),
 		consumerConfig,
 		&app.config.HTTP.Client,
 	)
 
 	app.logger.Info("outbound client created (KV mode, subscriptions managed dynamically)")
-}
-
-// setupKVRules initializes the KV rule manager, watches for rules, and waits for initial sync.
-func (app *GatewayApp) setupKVRules() error {
-	kvCfg := app.config.KV.Rules
-
-	app.ruleKVManager = broker.NewRuleKVManager(
-		kvCfg.Bucket,
-		kvCfg.AutoProvision,
-		app.processor,
-		app.broker,
-		app.base.RulesLoader,
-		app.logger,
-	)
-
-	if err := app.ruleKVManager.Watch(context.Background()); err != nil {
-		return fmt.Errorf("failed to start KV rule watcher: %w", err)
-	}
-
-	// Block until initial KV sync completes
-	ctx, cancel := context.WithTimeout(context.Background(), outboundSetupTimeout)
-	defer cancel()
-
-	if err := app.ruleKVManager.WaitReady(ctx); err != nil {
-		return fmt.Errorf("timeout waiting for initial KV rule sync: %w", err)
-	}
-
-	app.logger.Info("KV rules loaded", "bucket", kvCfg.Bucket)
-	return nil
 }
 
 // Run starts the application and waits for shutdown signal.
@@ -211,49 +163,10 @@ func (app *GatewayApp) Run(ctx context.Context) error {
 	return nil
 }
 
-// Close gracefully shuts down all application components
+// Close gracefully shuts down gateway-specific resources.
+// Shared resources (metrics, broker, logger) are cleaned up by BaseApp.Close().
 func (app *GatewayApp) Close() error {
-	app.logger.Info("closing application components")
-
-	var errs []error
-
-	// Stop metrics collector
-	if app.metricsCollector != nil {
-		app.metricsCollector.Stop()
-	}
-
-	// Shutdown metrics server and wait for goroutine to exit
-	if app.base != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), gatewayMetricsShutdownTimeout)
-		defer cancel()
-		if err := app.base.ShutdownMetricsServer(shutdownCtx); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	// Stop KV rule manager before broker
-	if app.ruleKVManager != nil {
-		app.ruleKVManager.Stop()
-	}
-
-	// Close NATS broker
-	if app.broker != nil {
-		if err := app.broker.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("failed to close NATS broker: %w", err))
-		}
-	}
-
-	// Sync logger
-	if app.logger != nil {
-		if err := app.logger.Sync(); err != nil {
-			app.logger.Debug("logger sync completed", "error", err)
-		}
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("cleanup errors: %w", errors.Join(errs...))
-	}
-
+	app.logger.Info("closing gateway components")
 	return nil
 }
 
@@ -281,8 +194,8 @@ func (app *GatewayApp) setupInboundServer() error {
 		app.logger,
 		app.metrics,
 		app.processor,
-		app.broker.GetJetStream(),
-		app.broker.GetNATSConn(),
+		app.base.Broker.GetJetStream(),
+		app.base.Broker.GetNATSConn(),
 		serverConfig,
 		publishConfig,
 	)
@@ -307,7 +220,7 @@ func (app *GatewayApp) setupOutboundClient() error {
 		app.logger,
 		app.metrics,
 		app.processor,
-		app.broker.GetJetStream(),
+		app.base.Broker.GetJetStream(),
 		consumerConfig,
 		&app.config.HTTP.Client,
 	)
@@ -328,15 +241,15 @@ func (app *GatewayApp) setupOutboundClient() error {
 			}
 			outboundSubjects[subject] = true
 
-			if err := app.broker.CreateConsumerForSubject(subject); err != nil {
+			if err := app.base.Broker.CreateConsumerForSubject(subject); err != nil {
 				return fmt.Errorf("failed to create consumer for subject '%s': %w", subject, err)
 			}
 
-			streamName, err := app.broker.FindStreamForSubject(subject)
+			streamName, err := app.base.Broker.FindStreamForSubject(subject)
 			if err != nil {
 				return fmt.Errorf("failed to find stream for subject '%s': %w", subject, err)
 			}
-			consumerName := app.broker.GetConsumerName(subject)
+			consumerName := app.base.Broker.GetConsumerName(subject)
 
 			workers := app.config.NATS.Consumers.WorkerCount
 			if err := app.outboundClient.AddSubscription(setupCtx, streamName, consumerName, subject, workers); err != nil {
