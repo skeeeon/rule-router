@@ -43,9 +43,6 @@ func NewRouterApp(base *BaseApp, cfg *config.Config) (*RouterApp, error) {
 		base:      base,
 	}
 
-	// Initialize subscription manager with processor
-	base.Broker.InitializeSubscriptionManager(app.processor)
-
 	if !cfg.KV.Rules.Enabled {
 		// File-based mode: setup subscriptions for all rule subjects
 		if err := app.setupSubscriptions(); err != nil {
@@ -82,14 +79,6 @@ func (app *RouterApp) Run(ctx context.Context) error {
 		"subscriptionCount", subCount,
 		"metricsEnabled", app.config.Metrics.Enabled)
 
-	// Start subscription manager (only for file-based mode;
-	// in KV mode, subscriptions are started dynamically by RuleKVManager)
-	if !app.config.KV.Rules.Enabled {
-		if err := subMgr.Start(ctx); err != nil {
-			return fmt.Errorf("failed to start subscription manager: %w", err)
-		}
-	}
-
 	app.logger.Info("all subscriptions active and processing messages")
 
 	// Update metrics
@@ -101,12 +90,6 @@ func (app *RouterApp) Run(ctx context.Context) error {
 	// Wait for shutdown signal
 	<-ctx.Done()
 	app.logger.Info("shutting down gracefully...")
-
-	// Stop subscription manager
-	if err := subMgr.Stop(); err != nil {
-		app.logger.Error("failed to stop subscription manager", "error", err)
-		return err
-	}
 
 	app.logger.Info("shutdown complete")
 	return nil

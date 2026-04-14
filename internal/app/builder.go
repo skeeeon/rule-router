@@ -270,10 +270,17 @@ func (b *AppBuilder) WithKVRuleManager() *AppBuilder {
 }
 
 // Build finalizes the construction and returns the BaseApp.
+// Initializes the SubscriptionManager so it's available to all features.
 func (b *AppBuilder) Build() (*BaseApp, error) {
 	if b.err != nil {
 		return nil, b.err
 	}
+
+	// Initialize SubscriptionManager for all features that need NATS-trigger subscriptions
+	if b.base.Broker != nil && b.base.Processor != nil {
+		b.base.Broker.InitializeSubscriptionManager(b.base.Processor)
+	}
+
 	return b.base, nil
 }
 
@@ -318,6 +325,16 @@ func (base *BaseApp) Close() error {
 	defer cancel()
 	if err := base.ShutdownMetricsServer(shutdownCtx); err != nil {
 		errs = append(errs, err)
+	}
+
+	// Stop subscription manager
+	if base.Broker != nil {
+		subMgr := base.Broker.GetSubscriptionManager()
+		if subMgr != nil {
+			if err := subMgr.Stop(); err != nil {
+				errs = append(errs, fmt.Errorf("failed to stop subscription manager: %w", err))
+			}
+		}
 	}
 
 	// Stop KV rule manager

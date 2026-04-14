@@ -9,6 +9,7 @@ import (
 
 	"rule-router/config"
 	"rule-router/internal/gateway"
+	"rule-router/internal/httpclient"
 	"rule-router/internal/lifecycle"
 	"rule-router/internal/logger"
 	"rule-router/internal/metrics"
@@ -24,15 +25,16 @@ const (
 // Verify GatewayApp implements lifecycle.Application interface at compile time
 var _ lifecycle.Application = (*GatewayApp)(nil)
 
-// GatewayApp represents the http-gateway application with all its components
+// GatewayApp represents the http-gateway application with all its components.
+// Outbound NATS-trigger+HTTP-action rules are handled by the shared SubscriptionManager
+// with an injected HTTP executor — no separate OutboundClient needed.
 type GatewayApp struct {
-	config         *config.Config
-	logger         *logger.Logger
-	metrics        *metrics.Metrics
-	processor      *rule.Processor
-	inboundServer  *gateway.InboundServer
-	outboundClient *gateway.OutboundClient
-	base           *BaseApp
+	config        *config.Config
+	logger        *logger.Logger
+	metrics       *metrics.Metrics
+	processor     *rule.Processor
+	inboundServer *gateway.InboundServer
+	base          *BaseApp
 }
 
 // NewGatewayApp creates a new http-gateway application instance using the pre-built base components.
@@ -46,6 +48,11 @@ func NewGatewayApp(base *BaseApp, cfg *config.Config) (*GatewayApp, error) {
 		base:      base,
 	}
 
+	// Wire HTTP executor into the shared SubscriptionManager so it can handle
+	// NATS-trigger + HTTP-action rules alongside NATS-trigger + NATS-action rules.
+	httpExec := httpclient.NewHTTPExecutor(&cfg.HTTP.Client, base.Logger, base.Metrics)
+	base.Broker.GetSubscriptionManager().SetHTTPExecutor(httpExec)
+
 	// Setup inbound server (HTTP → NATS)
 	if err := app.setupInboundServer(); err != nil {
 		return nil, fmt.Errorf("failed to setup inbound server: %w", err)
@@ -54,60 +61,26 @@ func NewGatewayApp(base *BaseApp, cfg *config.Config) (*GatewayApp, error) {
 	if cfg.KV.Rules.Enabled {
 		// KV rules mode: inbound uses catch-all handler, outbound managed by KV manager
 		app.inboundServer.SetKVMode(true)
-
-		// Create outbound client (will be dynamically populated by KV manager)
-		app.setupOutboundClientEmpty()
-
-		// Register outbound client as subscriber for HTTP action rules
-		base.RuleKVManager.SetOutboundSubscriber(app.outboundClient)
+		// KV manager handles outbound subscriptions via broker.AddAndStartSubscription
 	} else {
-		// File-based mode: setup outbound subscriptions from loaded rules
-		if err := app.setupOutboundClient(); err != nil {
-			return nil, fmt.Errorf("failed to setup outbound client: %w", err)
+		// File-based mode: setup outbound subscriptions for NATS-trigger + HTTP-action rules
+		if err := app.setupOutboundSubscriptions(); err != nil {
+			return nil, fmt.Errorf("failed to setup outbound subscriptions: %w", err)
 		}
 	}
 
 	return app, nil
 }
 
-// setupOutboundClientEmpty creates the outbound client without setting up subscriptions.
-// Subscriptions are managed dynamically by RuleKVManager in KV rules mode.
-func (app *GatewayApp) setupOutboundClientEmpty() {
-	consumerConfig := &gateway.ConsumerConfig{
-		WorkerCount:    app.config.NATS.Consumers.WorkerCount,
-		FetchBatchSize: app.config.NATS.Consumers.FetchBatchSize,
-		FetchTimeout:   app.config.NATS.Consumers.FetchTimeout,
-		MaxAckPending:  app.config.NATS.Consumers.MaxAckPending,
-		AckWaitTimeout: app.config.NATS.Consumers.AckWaitTimeout,
-		MaxDeliver:     app.config.NATS.Consumers.MaxDeliver,
-	}
-
-	app.outboundClient = gateway.NewOutboundClient(
-		app.logger,
-		app.metrics,
-		app.processor,
-		app.base.Broker.GetJetStream(),
-		consumerConfig,
-		&app.config.HTTP.Client,
-	)
-
-	app.logger.Info("outbound client created (KV mode, subscriptions managed dynamically)")
-}
-
 // Run starts the application and waits for shutdown signal.
-// Note: Signal handling is managed by lifecycle.RunWithReload() - do not add signal handling here
-// to avoid double registration which causes unpredictable behavior.
 func (app *GatewayApp) Run(ctx context.Context) error {
-	// Get HTTP paths and outbound subscription count
 	httpPaths := app.processor.GetHTTPPaths()
-	outboundSubCount := len(app.outboundClient.GetSubscriptions())
 
-	// Log configuration summary for transparency
+	// Log configuration summary
 	allRules := app.processor.GetAllRules()
 	app.logger.Info("configuration summary",
 		"totalRules", len(allRules),
 		"inboundHttpPaths", httpPaths,
-		"outboundSubscriptions", outboundSubCount,
 		"inboundWorkers", app.config.HTTP.Server.InboundWorkerCount,
 		"inboundQueueSize", app.config.HTTP.Server.InboundQueueSize,
 		"kvEnabled", app.config.KV.Enabled,
@@ -123,17 +96,8 @@ func (app *GatewayApp) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to start inbound server: %w", err)
 	}
 
-	// Start outbound client (only for file-based mode;
-	// in KV mode, subscriptions are started dynamically by RuleKVManager)
-	if !app.config.KV.Rules.Enabled {
-		if err := app.outboundClient.Start(ctx); err != nil {
-			return fmt.Errorf("failed to start outbound client: %w", err)
-		}
-	}
-
 	app.logger.Info("http-gateway started successfully",
-		"inboundPaths", httpPaths,
-		"outboundSubjects", outboundSubCount)
+		"inboundPaths", httpPaths)
 
 	// Update metrics
 	if app.metrics != nil {
@@ -154,11 +118,6 @@ func (app *GatewayApp) Run(ctx context.Context) error {
 		app.logger.Error("failed to stop inbound server", "error", err)
 	}
 
-	// Stop outbound client
-	if err := app.outboundClient.Stop(); err != nil {
-		app.logger.Error("failed to stop outbound client", "error", err)
-	}
-
 	app.logger.Info("shutdown complete")
 	return nil
 }
@@ -171,7 +130,6 @@ func (app *GatewayApp) Close() error {
 }
 
 // setupInboundServer configures the server for handling HTTP -> NATS traffic.
-// This is gateway-specific logic.
 func (app *GatewayApp) setupInboundServer() error {
 	serverConfig := &gateway.ServerConfig{
 		Address:             app.config.HTTP.Server.Address,
@@ -204,40 +162,17 @@ func (app *GatewayApp) setupInboundServer() error {
 	return nil
 }
 
-// setupOutboundClient configures the client for handling NATS -> HTTP traffic.
-// This is gateway-specific logic.
-func (app *GatewayApp) setupOutboundClient() error {
-	consumerConfig := &gateway.ConsumerConfig{
-		WorkerCount:    app.config.NATS.Consumers.WorkerCount,
-		FetchBatchSize: app.config.NATS.Consumers.FetchBatchSize,
-		FetchTimeout:   app.config.NATS.Consumers.FetchTimeout,
-		MaxAckPending:  app.config.NATS.Consumers.MaxAckPending,
-		AckWaitTimeout: app.config.NATS.Consumers.AckWaitTimeout,
-		MaxDeliver:     app.config.NATS.Consumers.MaxDeliver,
-	}
-
-	app.outboundClient = gateway.NewOutboundClient(
-		app.logger,
-		app.metrics,
-		app.processor,
-		app.base.Broker.GetJetStream(),
-		consumerConfig,
-		&app.config.HTTP.Client,
-	)
-
-	// Find all rules with NATS trigger + HTTP action to create subscriptions
+// setupOutboundSubscriptions creates subscriptions for NATS-trigger + HTTP-action rules
+// on the shared SubscriptionManager. Same pattern as router's setupSubscriptions.
+func (app *GatewayApp) setupOutboundSubscriptions() error {
 	allRules := app.processor.GetAllRules()
 	outboundSubjects := make(map[string]bool)
-
-	// Create a context with timeout for subscription setup
-	setupCtx, cancel := context.WithTimeout(context.Background(), outboundSetupTimeout)
-	defer cancel()
 
 	for _, r := range allRules {
 		if r.Trigger.NATS != nil && r.Action.HTTP != nil {
 			subject := r.Trigger.NATS.Subject
 			if outboundSubjects[subject] {
-				continue // Already processed
+				continue
 			}
 			outboundSubjects[subject] = true
 
@@ -245,21 +180,12 @@ func (app *GatewayApp) setupOutboundClient() error {
 				return fmt.Errorf("failed to create consumer for subject '%s': %w", subject, err)
 			}
 
-			streamName, err := app.base.Broker.FindStreamForSubject(subject)
-			if err != nil {
-				return fmt.Errorf("failed to find stream for subject '%s': %w", subject, err)
-			}
-			consumerName := app.base.Broker.GetConsumerName(subject)
-
-			workers := app.config.NATS.Consumers.WorkerCount
-			if err := app.outboundClient.AddSubscription(setupCtx, streamName, consumerName, subject, workers); err != nil {
-				return fmt.Errorf("failed to add outbound subscription for '%s': %w", subject, err)
+			if err := app.base.Broker.AddSubscription(subject); err != nil {
+				return fmt.Errorf("failed to add subscription for subject '%s': %w", subject, err)
 			}
 		}
 	}
 
-	app.logger.Info("outbound client configured", "subscriptions", len(outboundSubjects))
+	app.logger.Info("outbound subscriptions configured", "count", len(outboundSubjects))
 	return nil
 }
-
-

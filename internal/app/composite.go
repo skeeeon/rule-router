@@ -26,9 +26,19 @@ func NewCompositeApp(apps []lifecycle.Application, base *BaseApp) *CompositeApp 
 	return &CompositeApp{apps: apps, base: base}
 }
 
-// Run starts all sub-apps concurrently. If any app returns an error,
-// the context is cancelled and all apps shut down.
+// Run starts the shared SubscriptionManager (file-based mode), then launches
+// all sub-apps concurrently. If any app returns an error, the context is
+// cancelled and all apps shut down.
 func (c *CompositeApp) Run(ctx context.Context) error {
+	// Start the shared SubscriptionManager for file-based rules.
+	// In KV mode, subscriptions are started dynamically by RuleKVManager.
+	subMgr := c.base.Broker.GetSubscriptionManager()
+	if subMgr.GetSubscriptionCount() > 0 {
+		if err := subMgr.Start(ctx); err != nil {
+			return fmt.Errorf("failed to start subscription manager: %w", err)
+		}
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
