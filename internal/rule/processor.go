@@ -3,6 +3,7 @@
 package rule
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -70,6 +71,34 @@ type forEachArrayData struct {
 	items     []interface{}
 	fieldPath string
 }
+
+// forEachActionConfig holds the common forEach fields from either action type.
+type forEachActionConfig struct {
+	ForEach     string
+	forEachPath []string
+	Filter      *Conditions
+	Passthrough bool
+	Merge       bool
+	Payload     string
+	Headers     map[string]string
+	MetricsType string // "nats" or "http"
+}
+
+// forEachPayload is the result of payload processing for one element.
+type forEachPayload struct {
+	Text        string // set in template mode
+	Raw         []byte // set in passthrough or merge mode
+	Passthrough bool   // true means use Raw
+}
+
+// forEachElementError lets callbacks report typed errors for metrics.
+type forEachElementError struct {
+	ErrorType string
+	Err       error
+}
+
+func (e *forEachElementError) Error() string { return e.Err.Error() }
+func (e *forEachElementError) Unwrap() error { return e.Err }
 
 // extractForEachArray extracts and validates the array for forEach processing.
 // This is shared logic between NATS and HTTP forEach handlers.
@@ -715,166 +744,24 @@ func ensureObject(item interface{}) map[string]interface{} {
 }
 
 // processNATSActionWithForEach processes a NATS action with forEach iteration
-// Reuses element context for both filter and templating
 func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *EvaluationContext) ([]*Action, error) {
-	start := time.Now()
-
-	p.logger.Debug("processing NATS action with forEach",
-		"forEachField", action.ForEach)
-
-	// Extract and validate the forEach array
-	arrayData, err := p.extractForEachArray(action.ForEach, action.forEachPath, context)
-	if err != nil {
-		return nil, err
+	cfg := forEachActionConfig{
+		ForEach: action.ForEach, forEachPath: action.forEachPath,
+		Filter: action.Filter, Passthrough: action.Passthrough,
+		Merge: action.Merge, Payload: action.Payload,
+		Headers: action.Headers, MetricsType: "nats",
 	}
-
-	// Track detailed results
-	result := &ForEachResult{
-		TotalElements: len(arrayData.items),
-		Errors:        make([]ElementError, 0),
-	}
-
-	var actions []*Action
-
-	for i, item := range arrayData.items {
-		// Wrap primitives, pass objects through
-		itemMap := ensureObject(item)
-
-		// Create context once and reuse for both filter and templating
-		elementContext := p.createElementContext(itemMap, context)
-
-		// Apply filter if present (using the same context)
-		if action.Filter != nil {
-			if !p.evaluator.Evaluate(action.Filter, elementContext) {
-				result.FilteredElements++
-				continue
-			}
-		}
-
-		// Template the action (reusing the same context)
-		actionResult := &NATSAction{
-			Passthrough: action.Passthrough,
-			Merge:       action.Merge,
-		}
-
-		subject, err := p.templater.Execute(action.Subject, elementContext)
+	return p.processActionForEach(cfg, context, func(elemCtx *EvaluationContext, pl forEachPayload, headers map[string]string, _ int) (*Action, error) {
+		subject, err := p.templater.Execute(action.Subject, elemCtx)
 		if err != nil {
-			p.logger.Error("failed to template subject for forEach element",
-				"field", action.ForEach,
-				"index", i,
-				"error", err)
-			result.FailedElements++
-			result.Errors = append(result.Errors, ElementError{
-				Index:     i,
-				ErrorType: "template_subject_failed",
-				Error:     err,
-			})
-			continue
+			return nil, &forEachElementError{ErrorType: "template_subject_failed", Err: err}
 		}
-		actionResult.Subject = subject
-
-		if action.Passthrough {
-			// Handle marshal errors gracefully
-			rawPayload, err := safeMarshal(itemMap)
-			if err != nil {
-				p.logger.Error("failed to marshal element for passthrough",
-					"field", action.ForEach,
-					"index", i,
-					"error", err)
-				result.FailedElements++
-				result.Errors = append(result.Errors, ElementError{
-					Index:     i,
-					ErrorType: "marshal_failed",
-					Error:     err,
-				})
-				continue
-			}
-			actionResult.RawPayload = rawPayload
-		} else if action.Merge {
-			mergedBytes, err := p.applyMerge(action.Payload, itemMap, elementContext)
-			if err != nil {
-				p.logger.Error("failed to merge payload for forEach element",
-					"field", action.ForEach,
-					"index", i,
-					"error", err)
-				result.FailedElements++
-				result.Errors = append(result.Errors, ElementError{
-					Index:     i,
-					ErrorType: "merge_payload_failed",
-					Error:     err,
-				})
-				continue
-			}
-			actionResult.RawPayload = mergedBytes
-			actionResult.Passthrough = true // signals publisher to use RawPayload
-		} else {
-			payload, err := p.templater.Execute(action.Payload, elementContext)
-			if err != nil {
-				p.logger.Error("failed to template payload for forEach element",
-					"field", action.ForEach,
-					"index", i,
-					"error", err)
-				result.FailedElements++
-				result.Errors = append(result.Errors, ElementError{
-					Index:     i,
-					ErrorType: "template_payload_failed",
-					Error:     err,
-				})
-				continue
-			}
-			actionResult.Payload = payload
-		}
-
-		actionResult.Headers, err = p.templateHeaders(action.Headers, elementContext)
-		if err != nil {
-			p.logger.Error("failed to template headers for forEach element",
-				"field", action.ForEach,
-				"index", i,
-				"error", err)
-			result.FailedElements++
-			result.Errors = append(result.Errors, ElementError{
-				Index:     i,
-				ErrorType: "template_headers_failed",
-				Error:     err,
-			})
-			continue
-		}
-
-		actions = append(actions, &Action{NATS: actionResult})
-		result.ProcessedElements++
-	}
-
-	duration := time.Since(start).Seconds()
-
-	// Record comprehensive metrics
-	if p.metrics != nil {
-		p.metrics.IncForEachIterations("nats", result.TotalElements)
-		p.metrics.IncForEachFiltered("nats", result.FilteredElements)
-		p.metrics.IncForEachActionsGenerated("nats", result.ProcessedElements)
-		p.metrics.ObserveForEachDuration("nats", duration)
-		
-		// Track error types
-		for _, elemErr := range result.Errors {
-			p.metrics.IncForEachElementErrors("nats", elemErr.ErrorType)
-		}
-	}
-
-	logFields := []any{
-		"field", action.ForEach,
-		"totalElements", result.TotalElements,
-		"processedElements", result.ProcessedElements,
-		"filteredElements", result.FilteredElements,
-		"failedElements", result.FailedElements,
-		"actionsGenerated", len(actions),
-		"duration", fmt.Sprintf("%.3fs", duration),
-	}
-	if result.FailedElements > 0 {
-		p.logger.Warn("forEach processing complete with failures", logFields...)
-	} else {
-		p.logger.Debug("forEach processing complete", logFields...)
-	}
-
-	return actions, nil
+		return &Action{NATS: &NATSAction{
+			Subject: subject, Passthrough: pl.Passthrough,
+			Merge: action.Merge, Payload: pl.Text,
+			RawPayload: pl.Raw, Headers: headers,
+		}}, nil
+	})
 }
 
 // processHTTPAction processes an HTTP action with template substitution
@@ -928,20 +815,50 @@ func (p *Processor) processHTTPAction(action *HTTPAction, context *EvaluationCon
 }
 
 // processHTTPActionWithForEach processes an HTTP action with forEach iteration
-// Reuses element context for both filter and templating
 func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *EvaluationContext) ([]*Action, error) {
+	cfg := forEachActionConfig{
+		ForEach: action.ForEach, forEachPath: action.forEachPath,
+		Filter: action.Filter, Passthrough: action.Passthrough,
+		Merge: action.Merge, Payload: action.Payload,
+		Headers: action.Headers, MetricsType: "http",
+	}
+	return p.processActionForEach(cfg, context, func(elemCtx *EvaluationContext, pl forEachPayload, headers map[string]string, _ int) (*Action, error) {
+		url, err := p.templater.Execute(action.URL, elemCtx)
+		if err != nil {
+			return nil, &forEachElementError{ErrorType: "template_url_failed", Err: err}
+		}
+		method, err := p.templater.Execute(action.Method, elemCtx)
+		if err != nil {
+			return nil, &forEachElementError{ErrorType: "template_method_failed", Err: err}
+		}
+		return &Action{HTTP: &HTTPAction{
+			URL: url, Method: method, Passthrough: pl.Passthrough,
+			Merge: action.Merge, Payload: pl.Text,
+			RawPayload: pl.Raw, Headers: headers,
+			Retry: action.Retry,
+		}}, nil
+	})
+}
+
+// processActionForEach is the shared forEach loop for both NATS and HTTP actions.
+// It handles array extraction, filtering, payload processing, error tracking,
+// metrics, and logging. The buildAction callback handles action-type-specific
+// templating (e.g., subject for NATS, url+method for HTTP).
+func (p *Processor) processActionForEach(
+	cfg forEachActionConfig,
+	context *EvaluationContext,
+	buildAction func(elemCtx *EvaluationContext, pl forEachPayload, headers map[string]string, index int) (*Action, error),
+) ([]*Action, error) {
 	start := time.Now()
 
-	p.logger.Debug("processing HTTP action with forEach",
-		"forEachField", action.ForEach)
+	p.logger.Debug("processing action with forEach",
+		"forEachField", cfg.ForEach, "type", cfg.MetricsType)
 
-	// Extract and validate the forEach array
-	arrayData, err := p.extractForEachArray(action.ForEach, action.forEachPath, context)
+	arrayData, err := p.extractForEachArray(cfg.ForEach, cfg.forEachPath, context)
 	if err != nil {
 		return nil, err
 	}
 
-	// Track detailed results
 	result := &ForEachResult{
 		TotalElements: len(arrayData.items),
 		Errors:        make([]ElementError, 0),
@@ -950,147 +867,79 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 	var actions []*Action
 
 	for i, item := range arrayData.items {
-		// Wrap primitives, pass objects through
 		itemMap := ensureObject(item)
+		elementContext := context.WithElement(itemMap)
 
-		// Create context once and reuse for both filter and templating
-		elementContext := p.createElementContext(itemMap, context)
-
-		// Apply filter if present (using the same context)
-		if action.Filter != nil {
-			if !p.evaluator.Evaluate(action.Filter, elementContext) {
+		// Apply filter if present
+		if cfg.Filter != nil {
+			if !p.evaluator.Evaluate(cfg.Filter, elementContext) {
 				result.FilteredElements++
 				continue
 			}
 		}
 
-		// Template the action (reusing the same context)
-		actionResult := &HTTPAction{
-			Passthrough: action.Passthrough,
-			Merge:       action.Merge,
-			Retry:       action.Retry,
-		}
-
-		url, err := p.templater.Execute(action.URL, elementContext)
-		if err != nil {
-			p.logger.Error("failed to template URL for forEach element",
-				"field", action.ForEach,
-				"index", i,
-				"error", err)
-			result.FailedElements++
-			result.Errors = append(result.Errors, ElementError{
-				Index:     i,
-				ErrorType: "template_url_failed",
-				Error:     err,
-			})
-			continue
-		}
-		actionResult.URL = url
-
-		method, err := p.templater.Execute(action.Method, elementContext)
-		if err != nil {
-			p.logger.Error("failed to template method for forEach element",
-				"field", action.ForEach,
-				"index", i,
-				"error", err)
-			result.FailedElements++
-			result.Errors = append(result.Errors, ElementError{
-				Index:     i,
-				ErrorType: "template_method_failed",
-				Error:     err,
-			})
-			continue
-		}
-		actionResult.Method = method
-
-		if action.Passthrough {
-			// Handle marshal errors gracefully
+		// Process payload (shared across action types)
+		var pl forEachPayload
+		if cfg.Passthrough {
 			rawPayload, err := safeMarshal(itemMap)
 			if err != nil {
-				p.logger.Error("failed to marshal element for passthrough",
-					"field", action.ForEach,
-					"index", i,
-					"error", err)
-				result.FailedElements++
-				result.Errors = append(result.Errors, ElementError{
-					Index:     i,
-					ErrorType: "marshal_failed",
-					Error:     err,
-				})
+				p.logElementError(result, i, "marshal_failed", cfg.ForEach, err)
 				continue
 			}
-			actionResult.RawPayload = rawPayload
-		} else if action.Merge {
-			mergedBytes, err := p.applyMerge(action.Payload, itemMap, elementContext)
+			pl = forEachPayload{Raw: rawPayload, Passthrough: true}
+		} else if cfg.Merge {
+			mergedBytes, err := p.applyMerge(cfg.Payload, itemMap, elementContext)
 			if err != nil {
-				p.logger.Error("failed to merge payload for forEach element",
-					"field", action.ForEach,
-					"index", i,
-					"error", err)
-				result.FailedElements++
-				result.Errors = append(result.Errors, ElementError{
-					Index:     i,
-					ErrorType: "merge_payload_failed",
-					Error:     err,
-				})
+				p.logElementError(result, i, "merge_payload_failed", cfg.ForEach, err)
 				continue
 			}
-			actionResult.RawPayload = mergedBytes
-			actionResult.Passthrough = true // signals publisher to use RawPayload
+			pl = forEachPayload{Raw: mergedBytes, Passthrough: true}
 		} else {
-			payload, err := p.templater.Execute(action.Payload, elementContext)
+			payload, err := p.templater.Execute(cfg.Payload, elementContext)
 			if err != nil {
-				p.logger.Error("failed to template payload for forEach element",
-					"field", action.ForEach,
-					"index", i,
-					"error", err)
-				result.FailedElements++
-				result.Errors = append(result.Errors, ElementError{
-					Index:     i,
-					ErrorType: "template_payload_failed",
-					Error:     err,
-				})
+				p.logElementError(result, i, "template_payload_failed", cfg.ForEach, err)
 				continue
 			}
-			actionResult.Payload = payload
+			pl = forEachPayload{Text: payload}
 		}
 
-		actionResult.Headers, err = p.templateHeaders(action.Headers, elementContext)
+		// Template headers
+		headers, err := p.templateHeaders(cfg.Headers, elementContext)
 		if err != nil {
-			p.logger.Error("failed to template headers for forEach element",
-				"field", action.ForEach,
-				"index", i,
-				"error", err)
-			result.FailedElements++
-			result.Errors = append(result.Errors, ElementError{
-				Index:     i,
-				ErrorType: "template_headers_failed",
-				Error:     err,
-			})
+			p.logElementError(result, i, "template_headers_failed", cfg.ForEach, err)
 			continue
 		}
 
-		actions = append(actions, &Action{HTTP: actionResult})
+		// Build the action-type-specific result
+		action, err := buildAction(elementContext, pl, headers, i)
+		if err != nil {
+			var elemErr *forEachElementError
+			if errors.As(err, &elemErr) {
+				p.logElementError(result, i, elemErr.ErrorType, cfg.ForEach, elemErr.Err)
+			} else {
+				p.logElementError(result, i, "action_build_failed", cfg.ForEach, err)
+			}
+			continue
+		}
+
+		actions = append(actions, action)
 		result.ProcessedElements++
 	}
 
 	duration := time.Since(start).Seconds()
 
-	// Record comprehensive metrics
 	if p.metrics != nil {
-		p.metrics.IncForEachIterations("http", result.TotalElements)
-		p.metrics.IncForEachFiltered("http", result.FilteredElements)
-		p.metrics.IncForEachActionsGenerated("http", result.ProcessedElements)
-		p.metrics.ObserveForEachDuration("http", duration)
-		
-		// Track error types
+		p.metrics.IncForEachIterations(cfg.MetricsType, result.TotalElements)
+		p.metrics.IncForEachFiltered(cfg.MetricsType, result.FilteredElements)
+		p.metrics.IncForEachActionsGenerated(cfg.MetricsType, result.ProcessedElements)
+		p.metrics.ObserveForEachDuration(cfg.MetricsType, duration)
 		for _, elemErr := range result.Errors {
-			p.metrics.IncForEachElementErrors("http", elemErr.ErrorType)
+			p.metrics.IncForEachElementErrors(cfg.MetricsType, elemErr.ErrorType)
 		}
 	}
 
 	logFields := []any{
-		"field", action.ForEach,
+		"field", cfg.ForEach,
 		"totalElements", result.TotalElements,
 		"processedElements", result.ProcessedElements,
 		"filteredElements", result.FilteredElements,
@@ -1107,10 +956,14 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 	return actions, nil
 }
 
-// createElementContext creates a context for array element processing.
-// Uses EvaluationContext.WithElement to avoid duplication.
-func (p *Processor) createElementContext(element map[string]interface{}, originalContext *EvaluationContext) *EvaluationContext {
-	return originalContext.WithElement(element)
+// logElementError records a per-element failure in the ForEachResult and logs it.
+func (p *Processor) logElementError(result *ForEachResult, index int, errorType string, field string, err error) {
+	p.logger.Error("forEach element processing failed",
+		"field", field, "index", index, "errorType", errorType, "error", err)
+	result.FailedElements++
+	result.Errors = append(result.Errors, ElementError{
+		Index: index, ErrorType: errorType, Error: err,
+	})
 }
 
 // templateHeaders templates all header values
