@@ -168,15 +168,6 @@ func setupTestKVContext(t *testing.T) (*KVContext, *LocalKVCache) {
 }
 
 func TestNewKVContext(t *testing.T) {
-	t.Run("panics with nil logger", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("Expected NewKVContext to panic with a nil logger, but it did not")
-			}
-		}()
-		NewKVContext(nil, nil, nil)
-	})
-
 	t.Run("initializes successfully", func(t *testing.T) {
 		kvCtx, _ := setupTestKVContext(t)
 		if kvCtx == nil {

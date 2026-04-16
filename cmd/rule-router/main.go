@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -15,6 +16,9 @@ import (
 	"rule-router/internal/lifecycle"
 	"rule-router/internal/logger"
 )
+
+// version is set at build time via -ldflags "-X main.version=..."
+var version = "dev"
 
 func main() {
 	if err := run(); err != nil {
@@ -44,7 +48,7 @@ func run() error {
 	if cfg.Features.Scheduler {
 		features = append(features, "scheduler")
 	}
-	appLogger.Info("enabled features", "features", features)
+	appLogger.Info("rule-router starting", "version", version, "features", features)
 
 	// Create app factory function
 	createApp := func() (lifecycle.Application, error) {
@@ -114,6 +118,7 @@ func parseFlags() (*config.Config, string) {
 	// Define flags
 	configPath := flag.String("config", "config/rule-router.yaml", "path to config file (YAML or JSON)")
 	rulesPath := flag.String("rules", "rules", "path to rules directory")
+	showVersion := flag.Bool("version", false, "print version and exit")
 
 	// Define override flags
 	flag.String("nats-urls", "", "Comma-separated NATS server URLs to override config")
@@ -123,6 +128,11 @@ func parseFlags() (*config.Config, string) {
 	flag.String("log-level", "", "Override log level (debug, info, warn, error)")
 
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println("rule-router", version)
+		os.Exit(0)
+	}
 
 	// Bind flags to Viper
 	v := viper.GetViper()

@@ -8,9 +8,13 @@ import (
 	"rule-router/cmd/rule-cli/cmd"
 )
 
+// version is set at build time via -ldflags "-X main.version=..."
+var version = "dev"
+
 var rootCmd = &cobra.Command{
-	Use:   "rule-cli",
-	Short: "A CLI for creating, testing, and managing rules for the rule-router and http-gateway.",
+	Use:     "rule-cli",
+	Version: version,
+	Short:   "A CLI for creating, testing, and managing rules for the rule-router and http-gateway.",
 	Long: `rule-cli is a comprehensive command-line tool that helps you build, validate,
 and test your rule files in an offline environment. It supports the full rule
 syntax, including NATS/HTTP triggers, array operations, and dependency mocking.`,

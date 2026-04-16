@@ -37,10 +37,6 @@ type KVContext struct {
 // NewKVContext creates a KV context backed by local cache only.
 // The stores parameter is accepted for API compatibility but ignored in WASM.
 func NewKVContext(stores interface{}, logger *logger.Logger, localCache *LocalKVCache) *KVContext {
-	if logger == nil {
-		panic("KVContext requires a logger")
-	}
-
 	kvCtx := &KVContext{
 		logger:     logger.With("component", "kv"),
 		localCache: localCache,

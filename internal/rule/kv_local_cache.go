@@ -18,11 +18,6 @@ type LocalKVCache struct {
 
 // NewLocalKVCache creates a new local KV cache instance
 func NewLocalKVCache(logger *logger.Logger) *LocalKVCache {
-	if logger == nil {
-		// Defensive programming - should never happen but be safe
-		panic("LocalKVCache requires a logger")
-	}
-
 	cache := &LocalKVCache{
 		cache:   make(map[string]map[string]interface{}),
 		logger:  logger,

@@ -49,11 +49,6 @@ type KVContext struct {
 
 // NewKVContext creates a new KV context with the provided KV stores and optional local cache
 func NewKVContext(stores map[string]jetstream.KeyValue, logger *logger.Logger, localCache *LocalKVCache) *KVContext {
-	if logger == nil {
-		// This should never happen in practice, but be defensive
-		panic("KVContext requires a logger")
-	}
-
 	kvCtx := &KVContext{
 		stores:     make(map[string]jetstream.KeyValue),
 		logger:     logger.With("component", "kv"),

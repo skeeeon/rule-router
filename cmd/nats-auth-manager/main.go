@@ -25,6 +25,9 @@ const (
 	shutdownTimeout = 10 * time.Second
 )
 
+// version is set at build time via -ldflags "-X main.version=..."
+var version = "dev"
+
 func main() {
 	if err := run(); err != nil {
 		logger.NewBootstrapLogger().Fatal("application error", "error", err)
@@ -34,7 +37,13 @@ func main() {
 func run() error {
 	// Parse flags
 	configPath := flag.String("config", "config/auth-manager.yaml", "path to config file")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println("nats-auth-manager", version)
+		os.Exit(0)
+	}
 
 	// Load configuration
 	cfg, err := authmgr.Load(*configPath)
@@ -49,7 +58,7 @@ func run() error {
 	}
 	defer appLogger.Sync()
 
-	appLogger.Info("nats-auth-manager starting", "version", "1.0.0")
+	appLogger.Info("nats-auth-manager starting", "version", version)
 
 	// Initialize metrics
 	var metrics *authmgr.Metrics
