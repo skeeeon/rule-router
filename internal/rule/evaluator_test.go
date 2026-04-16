@@ -1558,6 +1558,7 @@ func TestArrayOperator_ShortCircuitBehavior(t *testing.T) {
 func BenchmarkEvaluateCondition_Simple(b *testing.B) {
 	evaluator := newTestEvaluator()
 	condition := Condition{Field: "{temperature}", Operator: "gt", Value: 25}
+	prepareCondition(&condition)
 	context := newTestContext(map[string]interface{}{"temperature": 30}, "test.subject")
 
 	b.ResetTimer()
@@ -1587,6 +1588,7 @@ func BenchmarkEvaluateConditions_Complex(b *testing.B) {
 		"user":        map[string]interface{}{"profile": map[string]interface{}{"tier": "standard"}},
 	}
 	context := newTestContext(data, "sensors.temperature")
+	PrepareConditions(&conditions)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1598,6 +1600,7 @@ func BenchmarkEvaluateConditions_Complex(b *testing.B) {
 func BenchmarkEvaluateCondition_VariableComparison(b *testing.B) {
 	evaluator := newTestEvaluator()
 	condition := Condition{Field: "{temperature}", Operator: "gt", Value: "{threshold}"}
+	prepareCondition(&condition)
 	context := newTestContext(map[string]interface{}{"temperature": 105, "threshold": 100}, "test.subject")
 
 	b.ResetTimer()
