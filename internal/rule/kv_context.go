@@ -1,5 +1,7 @@
 // file: internal/rule/kv_context.go
 
+//go:build !js
+
 package rule
 
 import (

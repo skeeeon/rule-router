@@ -1,5 +1,7 @@
 // file: internal/metrics/collector.go
 
+//go:build !js
+
 package metrics
 
 import (

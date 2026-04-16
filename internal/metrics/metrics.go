@@ -1,5 +1,7 @@
 // file: internal/metrics/metrics.go
 
+//go:build !js
+
 package metrics
 
 import (

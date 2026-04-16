@@ -1,7 +1,7 @@
 // Parse YAML rule files back into form state objects.
 
 import YAML from 'yaml'
-import { createRule, createNATSAction, createHTTPAction } from './state.js'
+import { createRule, createNATSAction, createHTTPAction, uid } from './state.js'
 
 // Parse a YAML string into an array of form-state rule objects.
 // Each rule gets the given filename assigned.
@@ -59,6 +59,7 @@ function rawToRule(raw, file) {
 
 function rawToConditions(raw) {
   return {
+    id: uid(),
     operator: raw.operator || 'and',
     items: (raw.items || []).map(rawToConditionItem),
     groups: (raw.groups || []).map(rawToConditions),
@@ -67,6 +68,7 @@ function rawToConditions(raw) {
 
 function rawToConditionItem(raw) {
   const item = {
+    id: uid(),
     field: raw.field || '',
     operator: raw.operator || 'eq',
     value: raw.value ?? '',

@@ -1,6 +1,6 @@
 <script setup>
-import { reactive, computed, ref, provide, onMounted } from 'vue'
-import { createRule, createConditions, groupRulesByFile } from './utils/state.js'
+import { reactive, computed, ref, provide, onMounted, watch } from 'vue'
+import { createRule, createConditions, groupRulesByFile, uid } from './utils/state.js'
 import { rulesToYaml } from './utils/yaml.js'
 import { validateRule } from './utils/validate.js'
 import { parseYamlToRules } from './utils/parse.js'
@@ -13,6 +13,7 @@ import KvPushModal from './components/KvPushModal.vue'
 import KvPullModal from './components/KvPullModal.vue'
 import HelpModal from './components/HelpModal.vue'
 import MessageInspector from './components/MessageInspector.vue'
+import RuleTester from './components/RuleTester.vue'
 
 const inspectedFields = ref([])
 provide('inspectedFields', inspectedFields)
@@ -35,9 +36,15 @@ function cycleTheme() {
 }
 
 function applyTheme(t) {
-  document.documentElement.removeAttribute('data-theme')
-  if (t === 'light' || t === 'dark') {
-    document.documentElement.setAttribute('data-theme', t)
+  const root = document.documentElement
+  if (t === 'dark') {
+    root.classList.add('dark')
+  } else if (t === 'light') {
+    root.classList.remove('dark')
+  } else {
+    // System preference
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+    root.classList.toggle('dark', prefersDark)
   }
 }
 
@@ -53,13 +60,56 @@ const themeTitle = computed(() => {
   return 'Theme: System (click to switch)'
 })
 
-onMounted(() => applyTheme(theme.value))
+// React to OS dark mode changes when theme is 'system'
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  if (theme.value === 'system') applyTheme('system')
+})
 
 const state = reactive({
   rules: [createRule()],
   activeIndex: 0,
   showConditions: false,
 })
+
+// Assign IDs to a rule tree loaded from JSON (which has no IDs)
+function assignIds(rule) {
+  rule.id = uid()
+  if (rule.conditions) assignConditionIds(rule.conditions)
+  if (rule.action?.nats?.filter) assignConditionIds(rule.action.nats.filter)
+  if (rule.action?.http?.filter) assignConditionIds(rule.action.http.filter)
+  return rule
+}
+
+function assignConditionIds(cond) {
+  cond.id = uid()
+  if (cond.items) cond.items.forEach(item => {
+    item.id = uid()
+    if (item.conditions) assignConditionIds(item.conditions)
+  })
+  if (cond.groups) cond.groups.forEach(g => assignConditionIds(g))
+}
+
+// Restore from localStorage on mount
+onMounted(() => {
+  applyTheme(theme.value)
+  try {
+    const saved = localStorage.getItem('ruleBuilder.rules')
+    if (saved) {
+      const rules = JSON.parse(saved).map(assignIds)
+      if (rules.length > 0) {
+        state.rules = rules
+        state.showConditions = !!rules[0].conditions
+      }
+    }
+  } catch { /* ignore corrupt data */ }
+})
+
+// Auto-save rules to localStorage on change
+watch(() => state.rules, (rules) => {
+  try {
+    localStorage.setItem('ruleBuilder.rules', JSON.stringify(rules))
+  } catch { /* quota exceeded — ignore */ }
+}, { deep: true })
 
 const activeRule = computed(() => state.rules[state.activeIndex])
 
@@ -71,6 +121,14 @@ const files = computed(() => {
     yaml: rulesToYaml(g.rules),
     ruleCount: g.rules.length,
   }))
+})
+
+// YAML for the active rule's file group (used by the tester)
+const activeFileYaml = computed(() => {
+  if (!activeRule.value) return ''
+  const file = activeRule.value.file || 'untitled'
+  const group = files.value.find(f => f.file === file)
+  return group?.yaml || ''
 })
 
 function openKvPush(target) {
@@ -99,6 +157,14 @@ function addRule() {
   state.showConditions = false
 }
 
+function duplicateRule(index) {
+  const clone = JSON.parse(JSON.stringify(state.rules[index]))
+  assignIds(clone)
+  state.rules.splice(index + 1, 0, clone)
+  state.activeIndex = index + 1
+  state.showConditions = !!clone.conditions
+}
+
 function removeRule(index) {
   if (state.rules.length <= 1) return
   state.rules.splice(index, 1)
@@ -119,6 +185,13 @@ function toggleConditions() {
   } else if (!state.showConditions) {
     activeRule.value.conditions = null
   }
+}
+
+function resetRules() {
+  state.rules = [createRule()]
+  state.activeIndex = 0
+  state.showConditions = false
+  localStorage.removeItem('ruleBuilder.rules')
 }
 
 // Load rules pulled from KV into the builder, replacing current state.
@@ -142,6 +215,7 @@ function loadFromKV(entries) {
     <header class="app-header">
       <h1>Rule Builder</h1>
       <div class="header-actions">
+        <button class="header-btn" @click="resetRules" title="Clear all rules and start fresh">New</button>
         <button class="header-btn" @click="showKvPull = true">Load from KV</button>
         <button class="help-toggle" @click="showHelp = true" title="Reference">?</button>
         <button class="theme-toggle" @click="cycleTheme" :title="themeTitle">
@@ -152,7 +226,7 @@ function loadFromKV(entries) {
 
     <div class="app-layout">
       <div class="builder-panel">
-        <div v-for="(rule, i) in state.rules" :key="i">
+        <div v-for="(rule, i) in state.rules" :key="rule.id">
           <!-- Collapsed card for non-active rules -->
           <RuleCard
             v-if="i !== state.activeIndex"
@@ -160,6 +234,7 @@ function loadFromKV(entries) {
             :index="i"
             @edit="editRule(i)"
             @remove="removeRule(i)"
+            @duplicate="duplicateRule(i)"
           />
 
           <!-- Expanded editor for the active rule -->
@@ -208,6 +283,8 @@ function loadFromKV(entries) {
               <h2>Action</h2>
               <ActionForm :action="rule.action" :error-for="errorFor" />
             </div>
+
+            <RuleTester :rule="rule" :yaml="activeFileYaml" />
           </div>
         </div>
 

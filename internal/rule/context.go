@@ -4,13 +4,11 @@ package rule
 
 import (
 	"bytes"
-	"encoding/base64"
 	"strings"
 	"sync"
 	"unicode/utf8"
 
 	json "github.com/goccy/go-json"
-	"github.com/nats-io/nkeys"
 
 	"rule-router/internal/logger"
 )
@@ -313,85 +311,4 @@ func valueType(v interface{}) string {
 	}
 }
 
-// verifySignature performs NKey signature verification with lazy evaluation
-// This method is thread-safe and only runs once per message, only when requested
-func (c *EvaluationContext) verifySignature() {
-	c.sigMu.Lock()
-	defer c.sigMu.Unlock()
-
-	// Already checked - return immediately
-	if c.sigChecked {
-		return
-	}
-	c.sigChecked = true
-
-	// Feature not enabled
-	if c.sigVerification == nil || !c.sigVerification.Enabled {
-		return
-	}
-
-	// No headers present
-	if c.Headers == nil {
-		return
-	}
-
-	// Extract public key and signature from headers
-	pubKeyStr := c.Headers[c.sigVerification.PublicKeyHeader]
-	sigBase64 := c.Headers[c.sigVerification.SignatureHeader]
-
-	if pubKeyStr == "" || sigBase64 == "" {
-		if c.logger != nil {
-			c.logger.Debug("signature verification skipped: missing headers",
-				"pubKeyHeader", c.sigVerification.PublicKeyHeader,
-				"sigHeader", c.sigVerification.SignatureHeader)
-		}
-		return
-	}
-
-	// Store the public key for @signature.pubkey access
-	c.signerPublicKey = pubKeyStr
-
-	// Decode the Base64 signature
-	sig, err := base64.StdEncoding.DecodeString(sigBase64)
-	if err != nil {
-		if c.logger != nil {
-			c.logger.Debug("signature verification failed: invalid base64",
-				"error", err)
-		}
-		return
-	}
-
-	// Create a public-key-only user from the header
-	user, err := nkeys.FromPublicKey(pubKeyStr)
-	if err != nil {
-		if c.logger != nil {
-			c.logger.Debug("signature verification failed: invalid public key",
-				"pubkey", pubKeyStr[:16]+"...",
-				"error", err)
-		}
-		return
-	}
-
-	// Verify the signature against the raw message payload
-	if err := user.Verify(c.RawPayload, sig); err == nil {
-		c.sigValid = true
-		if c.logger != nil {
-			var contextType string
-			if c.Subject != nil {
-				contextType = "nats"
-			} else if c.HTTP != nil {
-				contextType = "http"
-			}
-			c.logger.Info("signature verified successfully",
-				"pubkey", pubKeyStr[:16]+"...",
-				"contextType", contextType)
-		}
-	} else {
-		if c.logger != nil {
-			c.logger.Warn("signature verification failed",
-				"pubkey", pubKeyStr[:16]+"...",
-				"error", err.Error())
-		}
-	}
-}
 
