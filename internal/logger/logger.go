@@ -1,5 +1,7 @@
 // file: internal/logger/logger.go
 
+//go:build !js
+
 package logger
 
 import (

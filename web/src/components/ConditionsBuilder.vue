@@ -41,7 +41,7 @@ function removeGroup(index) {
     <div class="condition-list">
       <ConditionItem
         v-for="(item, i) in modelValue.items"
-        :key="i"
+        :key="item.id"
         :item="item"
         :error-for="errorFor"
         :prefix="`${prefix}.items.${i}`"
@@ -51,7 +51,7 @@ function removeGroup(index) {
     </div>
 
     <!-- Nested groups -->
-    <div v-for="(group, i) in modelValue.groups" :key="'g' + i" class="condition-group">
+    <div v-for="(group, i) in modelValue.groups" :key="group.id" class="condition-group">
       <div class="group-header">
         <span class="group-label">Group</span>
         <button class="remove-btn" @click="removeGroup(i)" title="Remove group">&times;</button>

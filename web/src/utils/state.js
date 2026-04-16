@@ -1,8 +1,12 @@
 // Factory functions for creating clean rule state objects.
 // These mirror the Go types in internal/rule/types.go.
 
+let _nextId = 1
+export function uid() { return _nextId++ }
+
 export function createRule(file = '') {
   return {
+    id: uid(),
     file,  // Filename grouping — rules with same file go into one YAML output
     trigger: {
       type: 'nats',
@@ -48,11 +52,11 @@ export function createHTTPAction() {
 }
 
 export function createConditions() {
-  return { operator: 'and', items: [], groups: [] }
+  return { id: uid(), operator: 'and', items: [], groups: [] }
 }
 
 export function createCondition() {
-  return { field: '', operator: 'eq', value: '', conditions: null }
+  return { id: uid(), field: '', operator: 'eq', value: '', conditions: null }
 }
 
 export function createDebounce() {

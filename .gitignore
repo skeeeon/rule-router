@@ -32,6 +32,10 @@ node_modules/
 dist/
 .vite/
 
+# WASM build artifacts
+web/public/tester.wasm
+web/public/wasm_exec.js
+
 .goreleaser.yaml
 # Editor/IDE
 # .idea/

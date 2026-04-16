@@ -4,7 +4,7 @@ const props = defineProps({
   index: Number,
 })
 
-const emit = defineEmits(['edit', 'remove'])
+const emit = defineEmits(['edit', 'remove', 'duplicate'])
 
 function summary(rule) {
   const t = rule.trigger
@@ -28,6 +28,7 @@ function summary(rule) {
     <span class="rule-index">Rule {{ index + 1 }}</span>
     <span v-if="rule.file" class="rule-file-badge">{{ rule.file }}</span>
     <span class="rule-summary">{{ summary(rule) }}</span>
+    <button class="duplicate-btn" @click.stop="emit('duplicate')" title="Duplicate rule">&#x2398;</button>
     <button class="remove-btn" @click.stop="emit('remove')" title="Remove rule">&times;</button>
   </div>
 </template>
