@@ -1,6 +1,19 @@
 # Changelog
 
-## [0.10.0] - Unreleased
+## [0.11.0] - 2026-04-15
+
+### Features
+- **Unified single binary**: consolidated `rule-router`, `http-gateway`, and `rule-scheduler` into a single `rule-router` binary with feature flags (`features.router`, `features.gateway`, `features.scheduler`) and env var overrides (`RR_FEATURES_GATEWAY=true`)
+- Removed standalone `cmd/http-gateway` and `cmd/rule-scheduler` binaries
+
+### Improvements
+- Simplified broker pipeline and removed redundant subscriptions in gateway
+- Rule Builder Web UI: UX improvements including field suggestion input, message inspector, and help modal
+- Updated web dependencies
+- Fixed and updated benchmarks
+- Updated Docker configuration and documentation for unified binary
+
+## [0.10.0] - 2026-03-28
 
 ### Features
 - Added **Rule Builder Web UI** (`web/`): visual rule creation with live YAML preview, multi-file support, and NATS KV push/pull via WebSocket
@@ -16,7 +29,7 @@
 - `Close()` methods in all apps now use `errors.Join` for proper error unwrapping
 - `RuleKVManager.Stop()` reads watcher under mutex for thread safety
 
-## [0.9.0] - 2026-03-28
+## [0.9.0] - 2026-03-22
 
 ### Features
 - Added **KV Rule Store**: optionally load rules from a NATS KV bucket instead of YAML files, with automatic hot-reload via KV Watch
@@ -108,6 +121,7 @@
 - Signature verification
 - Rule-cli utility
 
+[0.11.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.11.0
 [0.10.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.10.0
 [0.9.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.9.0
 [0.8.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.8.0
