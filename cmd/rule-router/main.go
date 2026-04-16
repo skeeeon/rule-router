@@ -102,12 +102,6 @@ func run() error {
 			}
 		}
 
-		// Single feature: wrap with BaseApp cleanup
-		if len(apps) == 1 {
-			return app.NewCompositeApp(apps, baseApp), nil
-		}
-
-		// Multiple features: CompositeApp handles concurrency + cleanup
 		return app.NewCompositeApp(apps, baseApp), nil
 	}
 

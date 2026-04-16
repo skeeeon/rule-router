@@ -185,12 +185,6 @@ func (b *AppBuilder) WithRuleProcessor() *AppBuilder {
 	// Configure forEach iteration limit
 	b.base.Processor.SetMaxForEachIterations(b.cfg.ForEach.MaxIterations)
 	
-	// Wire up metrics to evaluator for array operator tracking
-	if b.base.Metrics != nil {
-		// The evaluator needs access to metrics for array operator tracking
-		// This is done internally when evaluator is created within processor
-	}
-	
 	if err := b.base.Processor.LoadRules(rules); err != nil {
 		b.err = fmt.Errorf("failed to load rules into processor: %w", err)
 		return b

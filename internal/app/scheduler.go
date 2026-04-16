@@ -225,7 +225,6 @@ func (app *SchedulerApp) Run(ctx context.Context) error {
 	// Stop the scheduler (waits for running jobs to finish)
 	if err := app.scheduler.Shutdown(); err != nil {
 		app.logger.Error("failed to shutdown scheduler", "error", err)
-		return err
 	}
 
 	app.logger.Info("shutdown complete")
