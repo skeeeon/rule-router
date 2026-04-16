@@ -20,13 +20,14 @@ import (
 
 // BaseApp holds the common, initialized components for any application.
 type BaseApp struct {
-	Logger        *logger.Logger
-	Metrics       *metrics.Metrics
-	Broker        *broker.NATSBroker
-	Processor     *rule.Processor
-	RulesLoader   *rule.RulesLoader
-	MetricsServer *http.Server
-	Collector     *metrics.MetricsCollector
+	Logger         *logger.Logger
+	Metrics        *metrics.Metrics
+	Broker         *broker.NATSBroker
+	Processor      *rule.Processor
+	RulesLoader    *rule.RulesLoader
+	RuleKVManager  *broker.RuleKVManager
+	MetricsServer  *http.Server
+	Collector      *metrics.MetricsCollector
 
 	// metricsServerWg tracks the metrics server goroutine for graceful shutdown
 	metricsServerWg sync.WaitGroup
@@ -240,11 +241,46 @@ func (b *AppBuilder) WithKVRuleProcessor() *AppBuilder {
 	return b
 }
 
+// WithKVRuleManager creates and starts the KV rule manager.
+// Call this after WithKVRuleProcessor and WithNATSBroker.
+// Sub-apps should register their callbacks (SetOutboundSubscriber, SetScheduleRebuildFunc)
+// on base.RuleKVManager, then call base.RuleKVManager.WaitReady().
+func (b *AppBuilder) WithKVRuleManager() *AppBuilder {
+	if b.err != nil {
+		return b
+	}
+
+	kvCfg := b.cfg.KV.Rules
+	b.base.RuleKVManager = broker.NewRuleKVManager(
+		kvCfg.Bucket,
+		kvCfg.AutoProvision,
+		b.base.Processor,
+		b.base.Broker,
+		b.base.RulesLoader,
+		b.base.Logger,
+	)
+
+	if err := b.base.RuleKVManager.Watch(context.Background()); err != nil {
+		b.err = fmt.Errorf("failed to start KV rule watcher: %w", err)
+		return b
+	}
+
+	b.base.Logger.Info("KV rule manager started", "bucket", kvCfg.Bucket)
+	return b
+}
+
 // Build finalizes the construction and returns the BaseApp.
+// Initializes the SubscriptionManager so it's available to all features.
 func (b *AppBuilder) Build() (*BaseApp, error) {
 	if b.err != nil {
 		return nil, b.err
 	}
+
+	// Initialize SubscriptionManager for all features that need NATS-trigger subscriptions
+	if b.base.Broker != nil && b.base.Processor != nil {
+		b.base.Broker.InitializeSubscriptionManager(b.base.Processor)
+	}
+
 	return b.base, nil
 }
 
@@ -272,5 +308,55 @@ func (base *BaseApp) ShutdownMetricsServer(ctx context.Context) error {
 	case <-ctx.Done():
 		return fmt.Errorf("timeout waiting for metrics server goroutine: %w", ctx.Err())
 	}
+}
+
+// Close gracefully shuts down all shared resources owned by BaseApp.
+// Sub-apps should clean up their own resources first, then call this.
+func (base *BaseApp) Close() error {
+	var errs []error
+
+	// Stop metrics collector
+	if base.Collector != nil {
+		base.Collector.Stop()
+	}
+
+	// Shutdown metrics server
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := base.ShutdownMetricsServer(shutdownCtx); err != nil {
+		errs = append(errs, err)
+	}
+
+	// Stop subscription manager
+	if base.Broker != nil {
+		subMgr := base.Broker.GetSubscriptionManager()
+		if subMgr != nil {
+			if err := subMgr.Stop(); err != nil {
+				errs = append(errs, fmt.Errorf("failed to stop subscription manager: %w", err))
+			}
+		}
+	}
+
+	// Stop KV rule manager
+	if base.RuleKVManager != nil {
+		base.RuleKVManager.Stop()
+	}
+
+	// Close NATS broker
+	if base.Broker != nil {
+		if err := base.Broker.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to close NATS broker: %w", err))
+		}
+	}
+
+	// Sync logger
+	if base.Logger != nil {
+		base.Logger.Sync()
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("errors during BaseApp close: %v", errs)
+	}
+	return nil
 }
 

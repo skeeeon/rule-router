@@ -143,8 +143,17 @@ const (
 	DefaultSignatureHeader = "Nats-Signature"
 )
 
-// Config represents the unified configuration for both rule-router and http-gateway
+// FeaturesConfig controls which application features are enabled in the unified binary.
+// When no features block is present in config, Router defaults to true for backward compatibility.
+type FeaturesConfig struct {
+	Router    bool `json:"router" yaml:"router" mapstructure:"router"`
+	Gateway   bool `json:"gateway" yaml:"gateway" mapstructure:"gateway"`
+	Scheduler bool `json:"scheduler" yaml:"scheduler" mapstructure:"scheduler"`
+}
+
+// Config represents the unified configuration for rule-router
 type Config struct {
+	Features FeaturesConfig `json:"features,omitempty" yaml:"features,omitempty" mapstructure:"features"`
 	NATS     NATSConfig     `json:"nats" yaml:"nats" mapstructure:"nats"`
 	HTTP     HTTPConfig     `json:"http,omitempty" yaml:"http,omitempty" mapstructure:"http"`
 	Logging  LogConfig      `json:"logging" yaml:"logging" mapstructure:"logging"`
@@ -354,6 +363,17 @@ func Load(path string) (*Config, error) {
 	}
 
 	// Apply defaults that depend on other config values (must run after unmarshal).
+
+	// Default features.router to true when no features block is present (backward compat)
+	if !v.IsSet("features.router") && !v.IsSet("features.gateway") && !v.IsSet("features.scheduler") {
+		config.Features.Router = true
+	}
+
+	// Default HTTP server address only when gateway feature is enabled
+	if config.Features.Gateway && config.HTTP.Server.Address == "" {
+		config.HTTP.Server.Address = DefaultHTTPServerAddress
+	}
+
 	// Default localCache to enabled when KV is enabled, unless explicitly set to false.
 	if config.KV.Enabled && !v.IsSet("kv.localCache.enabled") {
 		config.KV.LocalCache.Enabled = true
@@ -367,20 +387,6 @@ func Load(path string) (*Config, error) {
 	return &config, nil
 }
 
-// LoadHTTPConfig loads configuration and validates that HTTP fields are present
-func LoadHTTPConfig(path string) (*Config, error) {
-	cfg, err := Load(path)
-	if err != nil {
-		return nil, err
-	}
-
-	// Validate that HTTP configuration is present and valid
-	if cfg.HTTP.Server.Address == "" {
-		return nil, fmt.Errorf("HTTP server address is required for http-gateway")
-	}
-
-	return cfg, nil
-}
 
 // setDefaults applies default values to the configuration
 func setDefaults(cfg *Config) {
@@ -438,10 +444,7 @@ func setDefaults(cfg *Config) {
 		cfg.NATS.Publish.RetryBaseDelay = DefaultRetryBaseDelay
 	}
 
-	// HTTP Server defaults
-	if cfg.HTTP.Server.Address == "" {
-		cfg.HTTP.Server.Address = DefaultHTTPServerAddress
-	}
+	// HTTP Server defaults (address is set post-unmarshal, conditional on features.gateway)
 	if cfg.HTTP.Server.ReadTimeout == 0 {
 		cfg.HTTP.Server.ReadTimeout = DefaultHTTPReadTimeout
 	}
@@ -616,8 +619,16 @@ func validateConfig(cfg *Config) error {
 		}
 	}
 
-	// HTTP-specific validation with bounds checking
-	if cfg.HTTP.Server.Address != "" {
+	// Validate at least one feature is enabled
+	if !cfg.Features.Router && !cfg.Features.Gateway && !cfg.Features.Scheduler {
+		return fmt.Errorf("at least one feature must be enabled (router, gateway, or scheduler)")
+	}
+
+	// HTTP server validation (only when gateway feature is enabled)
+	if cfg.Features.Gateway {
+		if cfg.HTTP.Server.Address == "" {
+			return fmt.Errorf("HTTP server address is required when gateway feature is enabled")
+		}
 		if cfg.HTTP.Server.ReadTimeout < 0 {
 			return fmt.Errorf("HTTP server read timeout cannot be negative")
 		}

@@ -1,6 +1,6 @@
 # Rule CLI (`rule-cli`)
 
-The `rule-cli` is a powerful command-line utility for creating, testing, and validating your rules in a fast, offline environment. It is the primary tool for managing the lifecycle of rules for the `rule-router`, `rule-scheduler`, and `http-gateway` applications.
+The `rule-cli` is a powerful command-line utility for creating, testing, and validating your rules in a fast, offline environment. It is the primary tool for managing the lifecycle of rules for all rule-router features (router, gateway, and scheduler).
 
 This tool streamlines the developer workflow by providing both rapid, template-based scaffolding for common patterns and a flexible, interactive builder for custom rules. It is essential for maintaining a high-quality, reliable ruleset and integrating rule validation into a modern CI/CD workflow.
 
@@ -129,7 +129,7 @@ For multi-rule files, the test runner detects `_rule_N/` subdirectories within t
 ## Full CLI Reference
 
 ```
-A CLI for creating, testing, and managing rules for the rule-router and http-gateway.
+A CLI for creating, testing, and managing rules for rule-router.
 
 Usage:
   rule-cli [command]

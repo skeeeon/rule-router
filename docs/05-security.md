@@ -13,7 +13,7 @@ This feature ensures that a message was sent by a trusted publisher and that its
         *   `Nats-Signature`: The Base64-encoded signature.
 
 2.  **Rule Engine Side**:
-    *   The `rule-router` or `http-gateway` receives the message.
+    *   The rule-router (router or gateway feature) receives the message.
     *   When a rule condition references a `{@signature.*}` variable, the engine automatically performs verification.
     *   It uses the public key from the header to verify the signature against the raw message payload.
     *   The results (`true`/`false` and the public key) are made available to the rule.

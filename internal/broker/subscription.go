@@ -46,6 +46,12 @@ var (
 	ErrInvalidPayload = errors.New("invalid message payload")
 )
 
+// HTTPActionExecutor handles HTTP action execution. Implemented by httpclient.HTTPExecutor.
+// Defined here as an interface to keep the broker package decoupled from httpclient.
+type HTTPActionExecutor interface {
+	ExecuteHTTPAction(ctx context.Context, action *rule.HTTPAction) error
+}
+
 // SubscriptionManager manages JetStream pull subscriptions for rule subjects
 // using the JetStream Messages() iterator pattern for optimal performance.
 //
@@ -60,11 +66,18 @@ type SubscriptionManager struct {
 	logger        *logger.Logger
 	metrics       *metrics.Metrics
 	processor     *rule.Processor
+	httpExecutor  HTTPActionExecutor
 	consumerCfg   *config.ConsumerConfig
 	publishCfg    *config.PublishConfig
 	subscriptions map[string]*Subscription
 	wg            sync.WaitGroup
 	mu            sync.RWMutex
+}
+
+// SetHTTPExecutor sets the HTTP action executor for handling NATS-trigger + HTTP-action rules.
+// When set, the SubscriptionManager executes HTTP actions instead of skipping them.
+func (sm *SubscriptionManager) SetHTTPExecutor(exec HTTPActionExecutor) {
+	sm.httpExecutor = exec
 }
 
 // Subscription represents a single JetStream pull consumer with Messages() iterator.
@@ -440,10 +453,26 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 				sm.metrics.IncRuleMatches()
 			}
 		} else if action.HTTP != nil {
-			// HTTP actions will be handled by http-gateway
-			sm.logger.Warn("HTTP action detected in rule-router - HTTP actions not supported in this application",
-				"actionURL", action.HTTP.URL,
-				"hint", "Use http-gateway for HTTP actions")
+			if sm.httpExecutor != nil {
+				if err := sm.httpExecutor.ExecuteHTTPAction(ctx, action.HTTP); err != nil {
+					sm.logger.Error("failed to execute HTTP action",
+						"url", action.HTTP.URL,
+						"method", action.HTTP.Method,
+						"error", err)
+					if sm.metrics != nil {
+						sm.metrics.IncActionsTotal("error")
+					}
+					return fmt.Errorf("failed to execute HTTP action: %w", err)
+				}
+				if sm.metrics != nil {
+					sm.metrics.IncActionsTotal("success")
+					sm.metrics.IncRuleMatches()
+				}
+			} else {
+				sm.logger.Warn("HTTP action skipped - gateway feature not enabled",
+					"url", action.HTTP.URL,
+					"hint", "Enable features.gateway to handle HTTP actions")
+			}
 		} else {
 			sm.logger.Error("action has neither NATS nor HTTP configuration - this should never happen",
 				"subject", msg.Subject())

@@ -1,6 +1,8 @@
-# Multi-stage Dockerfile for all rule-router applications.
+# Multi-stage Dockerfile for rule-router applications.
 # Build with: docker build --build-arg APP_NAME=<app> -t rule-router/<app> .
-# Available apps: rule-router, http-gateway, rule-scheduler, nats-auth-manager, rule-cli
+# Available apps: rule-router, nats-auth-manager, rule-cli
+# Note: http-gateway and rule-scheduler are now features of rule-router
+# (enable via config: features.gateway/features.scheduler or env: RR_FEATURES_GATEWAY=true)
 
 # --- Build stage ---
 FROM golang:1.26-alpine AS builder

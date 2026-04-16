@@ -1,6 +1,6 @@
 # NATS Auth Manager
 
-Standalone application that manages authentication tokens for external APIs and stores them in NATS KV buckets. Enables `rule-router` and `http-gateway` to access tokens via `@kv.*` template syntax without any code changes.
+Standalone application that manages authentication tokens for external APIs and stores them in NATS KV buckets. Enables rule-router (all features) to access tokens via `@kv.*` template syntax without any code changes.
 
 ## Features
 
@@ -62,7 +62,7 @@ providers:
 ### 5. Use Tokens in Rules
 
 ```yaml
-# In http-gateway or rule-router rules
+# In rule-router rules (gateway or router feature)
 action:
   http:
     url: "https://api.stripe.com/v1/charges"
@@ -283,7 +283,7 @@ providers:
     refreshBefore: "5m"
     kvKey: "stripe-api"
 
-# In http-gateway rule:
+# In a gateway rule:
 action:
   http:
     url: "https://api.stripe.com/v1/charges"
@@ -314,7 +314,7 @@ providers:
     refreshEvery: "30m"
     kvKey: "pocketbase-admin"
 
-# In rule-router rule:
+# In a router rule:
 action:
   nats:
     subject: "webhooks.pocketbase"

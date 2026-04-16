@@ -62,34 +62,30 @@ func resolveConditionValue(value interface{}, context *EvaluationContext) (inter
 	// Only strings can be templates
 	strValue, isString := value.(string)
 	if !isString {
-		// Numbers, bools, arrays, objects - return as-is
 		return value, nil
 	}
-	
-	// Fast path: if no braces, it's a literal string
-	if !IsTemplate(strValue) {
+
+	// Quick check: must start with { and end with } to be a template
+	if len(strValue) < 3 || strValue[0] != '{' || strValue[len(strValue)-1] != '}' {
 		return value, nil
 	}
-	
-	// Extract variable name from template
-	varName := ExtractVariable(strValue)
+
+	// Extract variable name directly (skip redundant IsTemplate check)
+	varName := strValue[1 : len(strValue)-1]
 	if varName == "" {
-		// Malformed template like "{}" - treat as literal for robustness
 		return value, nil
 	}
-	
-	// Resolve using existing context resolution (handles all variable types)
+
 	resolved, found := context.ResolveValue(varName)
 	if !found {
 		return nil, fmt.Errorf("variable not found: %s", varName)
 	}
-	
-	// Return resolved value with original type preserved
+
 	return resolved, nil
 }
 
 // resolveConditionValueFast uses pre-computed path data when available.
-// Falls back to resolveConditionValue for system fields, nested braces, and non-templates.
+// Falls back to resolveConditionValue only for non-templates and nested braces.
 func resolveConditionValueFast(value interface{}, varName string, path []string, context *EvaluationContext) (interface{}, error) {
 	if path != nil {
 		result, err := context.traverser.TraversePath(context.Msg, path)
@@ -97,6 +93,15 @@ func resolveConditionValueFast(value interface{}, varName string, path []string,
 			return nil, fmt.Errorf("variable not found: %s", varName)
 		}
 		return result, nil
+	}
+	// varName was pre-extracted at load time (system fields like @time.hour)
+	// Skip the full re-parse of the template string
+	if varName != "" {
+		resolved, found := context.ResolveValue(varName)
+		if !found {
+			return nil, fmt.Errorf("variable not found: %s", varName)
+		}
+		return resolved, nil
 	}
 	return resolveConditionValue(value, context)
 }
@@ -141,9 +146,10 @@ func precomputeTemplatePath(s string) (string, []string) {
 	if varName == "" {
 		return "", nil
 	}
-	// System fields require runtime dispatch -- don't pre-compute
+	// System fields require runtime dispatch -- don't pre-compute path,
+	// but keep varName so resolveConditionValueFast can skip re-parsing
 	if strings.HasPrefix(varName, "@") {
-		return "", nil
+		return varName, nil
 	}
 	// Nested braces require runtime template resolution
 	if strings.Contains(varName, "{") {

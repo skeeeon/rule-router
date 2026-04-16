@@ -13,13 +13,6 @@ import (
 	"rule-router/internal/rule"
 )
 
-// OutboundSubscriber is implemented by components that manage outbound subscriptions
-// for rules with NATS triggers and HTTP actions (e.g., the http-gateway's OutboundClient).
-type OutboundSubscriber interface {
-	AddAndStartSubscription(ctx context.Context, streamName, consumerName, subject string, workers int) error
-	RemoveSubscription(subject string)
-}
-
 // RuleKVManager watches a NATS KV bucket for rule definitions and hot-reloads
 // them into the Processor. It also dynamically creates and removes JetStream
 // consumers and subscriptions as trigger subjects change.
@@ -31,7 +24,6 @@ type RuleKVManager struct {
 	rulesLoader         *rule.RulesLoader
 	logger              *logger.Logger
 	currentRules        map[string][]rule.Rule // KV key → parsed rules
-	outboundSubscriber  OutboundSubscriber
 	scheduleRebuildFunc func([]*rule.Rule)     // optional: called when schedule rules change
 	mu                  sync.Mutex
 	wg                  sync.WaitGroup
@@ -191,14 +183,11 @@ func (m *RuleKVManager) handleRulePut(key string, value []byte, revision uint64)
 	// Atomically update the rule set
 	m.mu.Lock()
 
-	previousNATSSubjects := m.collectNATSSubjects(m.currentRules[key])
-	previousHTTPSubjects := m.collectHTTPActionSubjects(m.currentRules[key])
+	previousSubjects := m.collectNATSTriggerSubjects(m.currentRules[key])
 	m.currentRules[key] = rules
 	scheduleRules := m.pushRulesToProcessor()
 
-	newNATSSubjects := m.collectNATSSubjects(rules)
-	newHTTPSubjects := m.collectHTTPActionSubjects(rules)
-	outbound := m.outboundSubscriber
+	newSubjects := m.collectNATSTriggerSubjects(rules)
 	rebuildFunc := m.scheduleRebuildFunc
 
 	m.mu.Unlock()
@@ -208,9 +197,9 @@ func (m *RuleKVManager) handleRulePut(key string, value []byte, revision uint64)
 		rebuildFunc(scheduleRules)
 	}
 
-	// Start inbound subscriptions for newly added NATS trigger subjects (outside lock)
-	for subject := range newNATSSubjects {
-		if !previousNATSSubjects[subject] {
+	// Start subscriptions for newly added NATS trigger subjects (outside lock)
+	for subject := range newSubjects {
+		if !previousSubjects[subject] {
 			if err := m.broker.AddAndStartSubscription(subject); err != nil {
 				if errors.Is(err, ErrNoStreamFound) {
 					m.logger.Warn("rule references subject with no JetStream stream, skipping subscription",
@@ -221,13 +210,6 @@ func (m *RuleKVManager) handleRulePut(key string, value []byte, revision uint64)
 						"key", key, "subject", subject, "error", err)
 				}
 			}
-		}
-	}
-
-	// Start outbound subscriptions for NATS trigger + HTTP action rules
-	for subject := range newHTTPSubjects {
-		if !previousHTTPSubjects[subject] {
-			m.addOutboundSubscription(outbound, key, subject)
 		}
 	}
 
@@ -245,24 +227,18 @@ func (m *RuleKVManager) handleRuleDelete(key string) {
 		return
 	}
 
-	oldNATSSubjects := m.collectNATSSubjects(oldRules)
-	oldHTTPSubjects := m.collectHTTPActionSubjects(oldRules)
+	oldSubjects := m.collectNATSTriggerSubjects(oldRules)
 	oldHadScheduleRules := m.hasScheduleRules(oldRules)
 	delete(m.currentRules, key)
 	scheduleRules := m.pushRulesToProcessor()
 
 	// Compute which subjects are still needed by other keys
-	stillNeededNATS := make(map[string]bool)
-	stillNeededHTTP := make(map[string]bool)
+	stillNeeded := make(map[string]bool)
 	for _, rules := range m.currentRules {
-		for subject := range m.collectNATSSubjects(rules) {
-			stillNeededNATS[subject] = true
-		}
-		for subject := range m.collectHTTPActionSubjects(rules) {
-			stillNeededHTTP[subject] = true
+		for subject := range m.collectNATSTriggerSubjects(rules) {
+			stillNeeded[subject] = true
 		}
 	}
-	outbound := m.outboundSubscriber
 	rebuildFunc := m.scheduleRebuildFunc
 
 	m.mu.Unlock()
@@ -272,19 +248,10 @@ func (m *RuleKVManager) handleRuleDelete(key string) {
 		rebuildFunc(scheduleRules)
 	}
 
-	// Remove inbound subscriptions for subjects no longer needed (outside lock)
-	for subject := range oldNATSSubjects {
-		if !stillNeededNATS[subject] {
+	// Remove subscriptions for subjects no longer needed (outside lock)
+	for subject := range oldSubjects {
+		if !stillNeeded[subject] {
 			m.broker.RemoveSubscription(subject)
-		}
-	}
-
-	// Remove outbound subscriptions for HTTP action subjects no longer needed
-	for subject := range oldHTTPSubjects {
-		if !stillNeededHTTP[subject] {
-			if outbound != nil {
-				outbound.RemoveSubscription(subject)
-			}
 		}
 	}
 
@@ -320,50 +287,6 @@ func (m *RuleKVManager) pushRulesToProcessor() []*rule.Rule {
 	return scheduleRules
 }
 
-// SetOutboundSubscriber registers an outbound subscriber (e.g., http-gateway's OutboundClient)
-// for managing NATS trigger + HTTP action subscriptions. It retroactively subscribes to
-// any HTTP action subjects already loaded from KV.
-func (m *RuleKVManager) SetOutboundSubscriber(sub OutboundSubscriber) {
-	m.mu.Lock()
-	m.outboundSubscriber = sub
-
-	// Collect all HTTP action subjects from already-loaded rules
-	var httpSubjects []string
-	for _, rules := range m.currentRules {
-		for subject := range m.collectHTTPActionSubjects(rules) {
-			httpSubjects = append(httpSubjects, subject)
-		}
-	}
-	m.mu.Unlock()
-
-	// Retroactively subscribe to already-loaded HTTP action subjects
-	for _, subject := range httpSubjects {
-		m.addOutboundSubscription(sub, "", subject)
-	}
-}
-
-// addOutboundSubscription creates a consumer and starts an outbound subscription.
-func (m *RuleKVManager) addOutboundSubscription(sub OutboundSubscriber, key, subject string) {
-	if sub == nil {
-		m.logger.Debug("no outbound subscriber set, skipping HTTP action subscription",
-			"subject", subject)
-		return
-	}
-
-	streamName, consumerName, err := m.broker.CreateOutboundConsumer(subject)
-	if err != nil {
-		m.logger.Error("failed to create outbound consumer",
-			"key", key, "subject", subject, "error", err)
-		return
-	}
-
-	workers := m.broker.config.NATS.Consumers.WorkerCount
-	if err := sub.AddAndStartSubscription(m.broker.ctx, streamName, consumerName, subject, workers); err != nil {
-		m.logger.Error("failed to start outbound subscription",
-			"key", key, "subject", subject, "error", err)
-	}
-}
-
 // hasScheduleRules returns true if any rule in the slice has a schedule trigger.
 func (m *RuleKVManager) hasScheduleRules(rules []rule.Rule) bool {
 	for _, r := range rules {
@@ -374,24 +297,12 @@ func (m *RuleKVManager) hasScheduleRules(rules []rule.Rule) bool {
 	return false
 }
 
-// collectNATSSubjects returns the set of trigger subjects for rules with NATS actions
-// (NATS trigger → NATS action). Used for inbound subscription management.
-func (m *RuleKVManager) collectNATSSubjects(rules []rule.Rule) map[string]bool {
+// collectNATSTriggerSubjects returns the set of trigger subjects for all rules with NATS triggers,
+// regardless of action type (NATS or HTTP). Used for subscription management.
+func (m *RuleKVManager) collectNATSTriggerSubjects(rules []rule.Rule) map[string]bool {
 	subjects := make(map[string]bool)
 	for _, r := range rules {
-		if r.Trigger.NATS != nil && r.Action.NATS != nil {
-			subjects[r.Trigger.NATS.Subject] = true
-		}
-	}
-	return subjects
-}
-
-// collectHTTPActionSubjects returns the set of trigger subjects for rules with HTTP actions
-// (NATS trigger → HTTP action). Used for outbound subscription management.
-func (m *RuleKVManager) collectHTTPActionSubjects(rules []rule.Rule) map[string]bool {
-	subjects := make(map[string]bool)
-	for _, r := range rules {
-		if r.Trigger.NATS != nil && r.Action.HTTP != nil {
+		if r.Trigger.NATS != nil {
 			subjects[r.Trigger.NATS.Subject] = true
 		}
 	}

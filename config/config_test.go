@@ -70,10 +70,7 @@ func TestSetDefaults(t *testing.T) {
 					t.Errorf("Publish.MaxRetries = %d, want 3", cfg.NATS.Publish.MaxRetries)
 				}
 
-				// HTTP Server defaults
-				if cfg.HTTP.Server.Address != ":8080" {
-					t.Errorf("HTTP.Server.Address = %s, want :8080", cfg.HTTP.Server.Address)
-				}
+				// HTTP Server defaults (address is set post-unmarshal, conditional on features.gateway)
 				if cfg.HTTP.Server.ReadTimeout != 30*time.Second {
 					t.Errorf("HTTP.Server.ReadTimeout = %v, want 30s", cfg.HTTP.Server.ReadTimeout)
 				}
@@ -207,6 +204,7 @@ func TestValidateConfig(t *testing.T) {
 	validConfig := func() *Config {
 		cfg := &Config{}
 		setDefaults(cfg)
+		cfg.Features.Router = true // at least one feature must be enabled
 		return cfg
 	}
 
@@ -219,6 +217,11 @@ func TestValidateConfig(t *testing.T) {
 			name:    "valid default config",
 			modify:  func(cfg *Config) {},
 			wantErr: "",
+		},
+		{
+			name:    "no features enabled",
+			modify:  func(cfg *Config) { cfg.Features.Router = false },
+			wantErr: "at least one feature must be enabled",
 		},
 		{
 			name: "empty NATS URLs",
@@ -355,6 +358,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "negative HTTP read timeout",
 			modify: func(cfg *Config) {
+				cfg.Features.Gateway = true
+				cfg.HTTP.Server.Address = ":8080"
 				cfg.HTTP.Server.ReadTimeout = -1 * time.Second
 			},
 			wantErr: "HTTP server read timeout cannot be negative",
@@ -362,6 +367,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "negative HTTP write timeout",
 			modify: func(cfg *Config) {
+				cfg.Features.Gateway = true
+				cfg.HTTP.Server.Address = ":8080"
 				cfg.HTTP.Server.WriteTimeout = -1 * time.Second
 			},
 			wantErr: "HTTP server write timeout cannot be negative",
@@ -369,6 +376,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "inbound worker count too low",
 			modify: func(cfg *Config) {
+				cfg.Features.Gateway = true
+				cfg.HTTP.Server.Address = ":8080"
 				cfg.HTTP.Server.InboundWorkerCount = 0
 			},
 			wantErr: "inbound worker count must be at least 1",
@@ -376,6 +385,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "inbound worker count too high",
 			modify: func(cfg *Config) {
+				cfg.Features.Gateway = true
+				cfg.HTTP.Server.Address = ":8080"
 				cfg.HTTP.Server.InboundWorkerCount = 1001
 			},
 			wantErr: "inbound worker count too high",
@@ -383,6 +394,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "inbound queue size too low",
 			modify: func(cfg *Config) {
+				cfg.Features.Gateway = true
+				cfg.HTTP.Server.Address = ":8080"
 				cfg.HTTP.Server.InboundQueueSize = 0
 			},
 			wantErr: "inbound queue size must be at least 1",
@@ -390,6 +403,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "inbound queue size too high",
 			modify: func(cfg *Config) {
+				cfg.Features.Gateway = true
+				cfg.HTTP.Server.Address = ":8080"
 				cfg.HTTP.Server.InboundQueueSize = 100001
 			},
 			wantErr: "inbound queue size too high",
@@ -397,6 +412,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "negative HTTP client timeout",
 			modify: func(cfg *Config) {
+				cfg.Features.Gateway = true
+				cfg.HTTP.Server.Address = ":8080"
 				cfg.HTTP.Client.Timeout = -1 * time.Second
 			},
 			wantErr: "HTTP client timeout cannot be negative",
@@ -404,6 +421,8 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "negative max idle conns",
 			modify: func(cfg *Config) {
+				cfg.Features.Gateway = true
+				cfg.HTTP.Server.Address = ":8080"
 				cfg.HTTP.Client.MaxIdleConns = -1
 			},
 			wantErr: "HTTP client max idle connections cannot be negative",
@@ -411,9 +430,19 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "negative max idle conns per host",
 			modify: func(cfg *Config) {
+				cfg.Features.Gateway = true
+				cfg.HTTP.Server.Address = ":8080"
 				cfg.HTTP.Client.MaxIdleConnsPerHost = -1
 			},
 			wantErr: "HTTP client max idle connections per host cannot be negative",
+		},
+		{
+			name: "gateway requires HTTP server address",
+			modify: func(cfg *Config) {
+				cfg.Features.Gateway = true
+				cfg.HTTP.Server.Address = ""
+			},
+			wantErr: "HTTP server address is required when gateway feature is enabled",
 		},
 		{
 			name: "negative forEach maxIterations",
@@ -606,6 +635,7 @@ func TestValidateKVBuckets(t *testing.T) {
 	validConfig := func() *Config {
 		cfg := &Config{}
 		setDefaults(cfg)
+		cfg.Features.Router = true
 		return cfg
 	}
 

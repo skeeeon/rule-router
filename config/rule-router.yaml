@@ -1,171 +1,113 @@
-# NATS Rule Router Configuration
-# High-Performance Message Routing with NATS JetStream and Key-Value Store Support
-# Featuring Local KV Cache for Maximum Edge Performance
+# Rule Router Unified Configuration
+# Single binary with selectable features: router, gateway, scheduler
+# Enable/disable via config or env vars (RR_FEATURES_ROUTER, RR_FEATURES_GATEWAY, RR_FEATURES_SCHEDULER)
+
+# Feature Selection
+# When no features block is present, router is enabled by default (backward compatible)
+features:
+  router: true       # NATS-to-NATS message routing
+  gateway: false     # Bidirectional HTTP-NATS integration
+  scheduler: false   # Cron-based scheduled publishing
 
 # NATS Server Connection and JetStream Configuration
 nats:
-  # Connection URLs - supports multiple servers for high availability
   urls:
-    - nats://nats-server-1:4222
-    - nats://nats-server-2:4222
-    - nats://nats-server-3:4222
-  
-  # Authentication Options (choose one)
-  # Option 1: Username/Password
-  username: "rule-router-service"
-  password: "secure-password"
-  
-  # Option 2: Token Authentication
+    - nats://localhost:4222
+
+  # Authentication (choose one)
+  # username: "rule-router-service"
+  # password: "secure-password"
   # token: "your-nats-token"
-  
-  # Option 3: NKey Authentication (path to seed file)
   # nkeySeedFile: "/path/to/nkey.seed"
-  
-  # Option 4: JWT with .creds file (recommended for production)
   # credsFile: "/etc/nats/creds/rule-router.creds"
-  
+
   # TLS Configuration
   tls:
-    enable: true
-    certFile: "/etc/ssl/nats/client-cert.pem"
-    keyFile: "/etc/ssl/nats/client-key.pem"
-    caFile: "/etc/ssl/nats/ca.pem"
-    insecure: false  # Skip certificate verification (NOT recommended for production)
-  
-  # JetStream Consumer Configuration
+    enable: false
+    # certFile: "/etc/ssl/nats/client-cert.pem"
+    # keyFile: "/etc/ssl/nats/client-key.pem"
+    # caFile: "/etc/ssl/nats/ca.pem"
+
+  # JetStream Consumer Configuration (used by router and gateway features)
   consumers:
-    consumerPrefix: "rule-router" # Unique prefix for this application's consumers
-    # Performance Tuning
-    workerCount: 8            # Concurrent workers per subscription (recommend: 2-4x CPU cores)
-    fetchBatchSize: 64        # Messages to fetch per pull request
-                              # - 1 = lowest latency, immediate processing
-                              # - 10-100 = balanced throughput and latency
-                              # - 100+ = maximum throughput, higher latency
-    
-    fetchTimeout: 5s          # Max wait time when fetching messages
-                              # - Lower (1s) = more aggressive, higher CPU
-                              # - Higher (5s+) = more efficient, allows heartbeat
-                              # Note: For fetchTimeout > 1.5s, automatic heartbeat is enabled
-                              #       For fetchTimeout <= 1.5s, heartbeat is omitted (conflicts with NATS constraints) Must be minimum 1s
-    
-    maxAckPending: 1000       # Max unacknowledged messages per consumer
-                              # Controls backpressure and memory usage
-                              # Increase for high throughput scenarios
-    
-    # Reliability Settings
-    ackWaitTimeout: 30s       # Time to wait for ack before redelivery
-                              # Increase if message processing takes longer
-    
-    maxDeliver: 3             # Max redelivery attempts before giving up
-                              # Failed messages move to dead letter after this
-    
-    # Delivery Behavior
-    deliverPolicy: new        # Options:
-                              # - all: Process all messages (including historical)
-                              # - new: Only process new messages (Default, ignore backlog)
-                              # - last: Start from most recent message
-                              # - by_start_time: Start from specific timestamp
-                              # - by_start_sequence: Start from specific sequence number
-    
-    replayPolicy: instant     # Options:
-                              # - instant: Deliver messages as fast as possible
-                              # - original: Replay messages at original timing intervals
-  
+    consumerPrefix: "rule-router"
+    workerCount: 4
+    fetchBatchSize: 10
+    fetchTimeout: 5s
+    maxAckPending: 1000
+    ackWaitTimeout: 30s
+    maxDeliver: 3
+    deliverPolicy: "new"
+    replayPolicy: "instant"
+
   # NATS Connection Behavior
   connection:
-    maxReconnects: -1         # -1 = unlimited reconnection attempts
-                              # 0 = no reconnects, >0 = specific number of attempts
-    reconnectWait: 50ms       # Wait time between reconnection attempts
+    maxReconnects: -1
+    reconnectWait: 50ms
 
   # Action Publish Configuration
   publish:
-    # Mode determines how rule actions are published:
-    # - "jetstream": Publish to JetStream with ack confirmation (default)
-    #   * Reliable: Actions persisted to stream before ack
-    #   * Slower: ~50-100μs per publish (depends on stream config)
-    #   * Requires: Stream must exist for action subject
-    #   * Best for: Critical actions that must not be lost
-    #
-    # - "core": Publish to core NATS (fire-and-forget)
-    #   * Fast: ~10-20μs per publish
-    #   * No persistence: Actions lost if no subscribers listening
-    #   * No requirements: Works with any subject
-    #   * Best for: High-throughput scenarios, non-critical actions
-    mode: jetstream
-    
-    # Ack timeout for JetStream publishes (only used in jetstream mode)
-    # How long to wait for stream ack before considering publish failed
+    mode: jetstream    # "jetstream" (reliable) or "core" (fire-and-forget)
     ackTimeout: 5s
-    
-    # Max retries for failed publish operations (applies to both modes)
-    # Failed publishes will be retried with exponential backoff
     maxRetries: 3
-    
-    # Base delay for retry exponential backoff (applies to both modes)
-    # Actual delays: 50ms, 100ms, 200ms (for 3 retries)
     retryBaseDelay: 50ms
 
-# NATS Key-Value Store Configuration with Local Cache
+# HTTP Configuration (used when features.gateway or features.scheduler is enabled)
+http:
+  # Inbound HTTP server (gateway only)
+  server:
+    address: ":8080"
+    readTimeout: 30s
+    writeTimeout: 30s
+    idleTimeout: 120s
+    maxHeaderBytes: 1048576
+    shutdownGracePeriod: 30s
+    inboundWorkerCount: 10
+    inboundQueueSize: 100
+
+  # Outbound HTTP client (gateway and scheduler)
+  client:
+    timeout: 30s
+    maxIdleConns: 100
+    maxIdleConnsPerHost: 10
+    idleConnTimeout: 90s
+    tls:
+      insecureSkipVerify: false
+
+# NATS Key-Value Store Configuration
 kv:
-  enabled: true
-  buckets:
-    - "device_status"         # String format - watches all keys
-    - "device_config"         # String format - watches all keys
-    - "customer_data"         # String format - watches all keys
-    - "feature_flags"         # String format - watches all keys
-    - "system_config"         # String format - watches all keys
-    # Object format with optional keyFilter (watches only matching keys):
-    # - name: "occupancy"
-    #   keyFilter: "bldg-a.>"
-  
-  # KV-Based Rule Storage (optional)
-  # When enabled, rules are loaded from a NATS KV bucket instead of YAML files.
-  # A watcher hot-reloads rules on any change — no restart needed.
-  # Push rules with: rule-cli kv push <file-or-dir> --url nats://localhost:4222
+  enabled: false
+  buckets: []
+  # buckets:
+  #   - "device_status"
+  #   - name: "customer_data"
+  #     keyFilter: "region-us.>"
+
+  # KV-Based Rule Storage (optional, replaces file-based rules)
   # rules:
   #   enabled: true
-  #   bucket: "rules"          # KV bucket name (default: "rules")
-  #   autoProvision: false     # Auto-create bucket if it doesn't exist
+  #   bucket: "rules"
+  #   autoProvision: false
 
-  # Local Cache Configuration - High Performance In-Memory KV Cache
   localCache:
-    enabled: true             # Enable in-memory KV caching (default: true)
-    # When enabled:
-    # - All KV data loaded into memory at startup
-    # - Real-time updates via KV Watch API
-    # 
-    # Set to false to disable caching (useful for troubleshooting or memory constraints)
+    enabled: false
 
-# Security Configuration
+# Security Configuration (used by router feature)
 security:
   verification:
-    # Enable cryptographic signature verification
-    enabled: true
-    
-    # Header containing signer's NKey public key
+    enabled: false
     publicKeyHeader: "Nats-Public-Key"
-    
-    # Header containing Base64-encoded Ed25519 signature
     signatureHeader: "Nats-Signature"
 
 # Logging Configuration
 logging:
-  level: info                 # Options: debug, info, warn, error
-                              # debug: Verbose logging for development/troubleshooting
-                              # info: Standard operational logging
-                              # warn: Only warnings and errors
-                              # error: Only errors
-  
-  outputPath: stdout          # Output destination: stdout, stderr, or file path
-                              # Examples: stdout, /var/log/rule-router.log
-  
-  encoding: json              # Log format: json or console
-                              # json: Structured logging for log aggregation
-                              # console: Human-readable for development
+  level: info
+  outputPath: stdout
+  encoding: json
 
 # Prometheus Metrics Configuration
 metrics:
   enabled: true
-  address: :2112              # HTTP server address for metrics endpoint
-  path: /metrics              # Metrics endpoint path
-  updateInterval: 15s         # How often to update gauge metrics
+  address: :2112
+  path: /metrics
+  updateInterval: 15s
