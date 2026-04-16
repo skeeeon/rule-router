@@ -141,7 +141,7 @@ async function runTest() {
     <div v-if="expanded" class="tester-body">
       <!-- WASM loading state -->
       <div v-if="wasmLoading" class="tester-loading">
-        Loading test engine...
+        <span class="loading-spinner"></span> Loading test engine...
       </div>
 
       <!-- Inputs -->

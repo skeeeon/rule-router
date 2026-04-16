@@ -7,6 +7,18 @@ import FieldSuggestInput from './FieldSuggestInput.vue'
 
 const LIST_OPERATORS = ['in', 'not_in']
 
+const OPERATOR_PLACEHOLDERS = {
+  eq: 'exact value',
+  neq: 'value to exclude',
+  gt: 'number',
+  lt: 'number',
+  gte: 'number',
+  lte: 'number',
+  contains: 'substring',
+  not_contains: 'substring',
+  recent: 'seconds (e.g. 300)',
+}
+
 const props = defineProps({
   item: Object,
   errorFor: Function,
@@ -91,7 +103,7 @@ function onOperatorChange() {
       <div v-else-if="!isArrayOp && item.operator !== 'exists'" class="field compact">
         <input
           v-model="item.value"
-          placeholder="value"
+          :placeholder="OPERATOR_PLACEHOLDERS[item.operator] || 'value'"
           :class="{ error: errorFor(`${prefix}.value`) }"
         >
         <span class="field-error" v-if="errorFor(`${prefix}.value`)">

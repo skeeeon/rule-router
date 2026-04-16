@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, ref, computed, onMounted } from 'vue'
+import { reactive, ref, computed, onMounted, onUnmounted } from 'vue'
 import { connectAndPush, pushMultiple, testConnection } from '../utils/nats.js'
 
 const props = defineProps({
@@ -22,7 +22,10 @@ const status = ref('')
 const statusType = ref('')
 const loading = ref(false)
 
+function onEscape(e) { if (e.key === 'Escape') emit('close') }
+
 onMounted(() => {
+  document.addEventListener('keydown', onEscape)
   form.url = sessionStorage.getItem('kv.url') || 'ws://localhost:9222'
   form.bucket = sessionStorage.getItem('kv.bucket') || 'rules'
 
@@ -33,6 +36,8 @@ onMounted(() => {
     form.key = sessionStorage.getItem('kv.key') || ''
   }
 })
+
+onUnmounted(() => { document.removeEventListener('keydown', onEscape) })
 
 function saveSettings() {
   sessionStorage.setItem('kv.url', form.url)

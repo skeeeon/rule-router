@@ -178,6 +178,10 @@ function editRule(index) {
   state.showConditions = !!state.rules[index].conditions
 }
 
+function collapseRule() {
+  state.activeIndex = -1
+}
+
 function toggleConditions() {
   state.showConditions = !state.showConditions
   if (state.showConditions && !activeRule.value.conditions) {
@@ -232,6 +236,7 @@ function loadFromKV(entries) {
             v-if="i !== state.activeIndex"
             :rule="rule"
             :index="i"
+            :can-remove="state.rules.length > 1"
             @edit="editRule(i)"
             @remove="removeRule(i)"
             @duplicate="duplicateRule(i)"
@@ -248,12 +253,24 @@ function loadFromKV(entries) {
                   title="Filename — rules with the same name group into one file"
                 >
               </div>
-              <button
-                v-if="state.rules.length > 1"
-                class="remove-btn"
-                @click="removeRule(i)"
-                title="Remove rule"
-              >&times;</button>
+              <div class="rule-editor-actions">
+                <button
+                  class="rule-action-btn collapse"
+                  @click="collapseRule()"
+                  title="Collapse rule"
+                >&#x25B2;</button>
+                <button
+                  class="rule-action-btn"
+                  @click="duplicateRule(i)"
+                  title="Duplicate rule"
+                >&#x2398;</button>
+                <button
+                  v-if="state.rules.length > 1"
+                  class="rule-action-btn remove"
+                  @click="removeRule(i)"
+                  title="Remove rule"
+                >&times;</button>
+              </div>
             </div>
 
             <MessageInspector v-model="inspectedFields" />
@@ -267,7 +284,7 @@ function loadFromKV(entries) {
               <h2>
                 Conditions
                 <button class="toggle-btn" @click="toggleConditions">
-                  {{ state.showConditions ? 'Remove' : 'Add' }}
+                  {{ state.showConditions ? 'Clear' : 'Add Conditions' }}
                 </button>
               </h2>
               <ConditionsBuilder

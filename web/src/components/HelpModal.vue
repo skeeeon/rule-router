@@ -1,8 +1,12 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 
 const emit = defineEmits(['close'])
 const activeSection = ref('variables')
+
+function onEscape(e) { if (e.key === 'Escape') emit('close') }
+onMounted(() => { document.addEventListener('keydown', onEscape) })
+onUnmounted(() => { document.removeEventListener('keydown', onEscape) })
 </script>
 
 <template>

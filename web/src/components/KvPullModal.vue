@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, ref, onMounted } from 'vue'
+import { reactive, ref, onMounted, onUnmounted } from 'vue'
 import { pullFromKV, testConnection } from '../utils/nats.js'
 
 const emit = defineEmits(['close', 'load'])
@@ -16,10 +16,15 @@ const loading = ref(false)
 const entries = ref(null) // null = not fetched, [] = empty bucket
 const selected = ref(new Set())
 
+function onEscape(e) { if (e.key === 'Escape') emit('close') }
+
 onMounted(() => {
+  document.addEventListener('keydown', onEscape)
   form.url = sessionStorage.getItem('kv.url') || 'ws://localhost:9222'
   form.bucket = sessionStorage.getItem('kv.bucket') || 'rules'
 })
+
+onUnmounted(() => { document.removeEventListener('keydown', onEscape) })
 
 function onCredsFile(event) {
   const file = event.target.files[0]
