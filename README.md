@@ -55,7 +55,7 @@ Detailed documentation on the rule engine's features can be found in the `docs/`
 *   **[04 - Primitive & Array Root Messages](./docs/04-primitive-messages.md)**: How to handle non-object JSON payloads.
 *   **[05 - Security](./docs/05-security.md)**: Guide to Cryptographic Signature Verification.
 *   **[06 - KV Rule Store](./docs/06-kv-rule-store.md)**: Store rules in NATS KV with hot-reload and GitOps push workflow.
-*   **[Rule Builder Web UI](./web/README.md)**: Visual rule creation, live YAML preview, and NATS KV push/pull.
+*   **[Rule Builder Web UI](./web/README.md)**: Visual rule creation, live YAML preview, in-browser rule testing via WASM, and NATS KV push/pull.
 *   **[Docker Deployment](#quick-start)**: Docker Compose setup for local development and deployment.
 
 ---
@@ -191,6 +191,10 @@ go build -o nats-auth-manager ./cmd/nats-auth-manager
 
 # Build the CLI
 go build -o rule-cli ./cmd/rule-cli
+
+# Build the WASM test engine for the web UI (optional)
+GOOS=js GOARCH=wasm go build -ldflags="-s -w" -o web/public/tester.wasm ./cmd/wasm/
+cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" web/public/
 ```
 
 ### 2. Configure NATS Streams
@@ -306,7 +310,7 @@ You will see the message appear on the `alerts.>` subscription, having been proc
 
 *   **`cmd/rule-cli`**: A powerful command-line utility for linting, scaffolding, and testing your rules offline, enabling CI/CD and ensuring rule correctness. [**» View CLI README**](./cmd/rule-cli/README.md)
 
-*   **`web`**: A visual rule builder web UI. Build rules with a guided form, preview YAML in real time, and push directly to NATS KV via WebSocket. Supports dark mode and responsive mobile layout. [**» View Web UI README**](./web/README.md)
+*   **`web`**: A visual rule builder web UI. Build rules with a guided form, preview YAML in real time, test rules against sample messages using the Go engine compiled to WebAssembly, and push directly to NATS KV via WebSocket. [**» View Web UI README**](./web/README.md)
 
 ## Monitoring
 
