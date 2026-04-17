@@ -84,8 +84,9 @@ type forEachActionConfig struct {
 	MetricsType string // "nats" or "http"
 }
 
-// forEachPayload is the result of payload processing for one element.
-type forEachPayload struct {
+// resolvedPayload is the result of resolving an action's payload config
+// (passthrough, merge, or templated) into concrete bytes or text.
+type resolvedPayload struct {
 	Text        string // set in template mode
 	Raw         []byte // set in passthrough or merge mode
 	Passthrough bool   // true means use Raw
@@ -682,6 +683,28 @@ func (p *Processor) processAction(action *Action, context *EvaluationContext) ([
 	return results, nil
 }
 
+// resolvePayload resolves an action's payload config into concrete bytes or text.
+// Passthrough reuses the inbound raw payload; merge templates the overlay and
+// deep-merges it onto the inbound message; otherwise the payload template is
+// executed. Shared by processNATSAction and processHTTPAction.
+func (p *Processor) resolvePayload(passthrough, merge bool, payloadTemplate string, context *EvaluationContext) (resolvedPayload, error) {
+	if passthrough {
+		return resolvedPayload{Raw: context.RawPayload, Passthrough: true}, nil
+	}
+	if merge {
+		mergedBytes, err := p.applyMerge(payloadTemplate, context.Msg, context)
+		if err != nil {
+			return resolvedPayload{}, fmt.Errorf("failed to merge payload: %w", err)
+		}
+		return resolvedPayload{Raw: mergedBytes, Passthrough: true}, nil
+	}
+	payload, err := p.templater.Execute(payloadTemplate, context)
+	if err != nil {
+		return resolvedPayload{}, fmt.Errorf("failed to template payload: %w", err)
+	}
+	return resolvedPayload{Text: payload}, nil
+}
+
 // processNATSAction processes a NATS action with template substitution
 // Returns multiple actions when forEach is used
 func (p *Processor) processNATSAction(action *NATSAction, context *EvaluationContext) ([]*Action, error) {
@@ -700,21 +723,15 @@ func (p *Processor) processNATSAction(action *NATSAction, context *EvaluationCon
 	}
 	result.Subject = subject
 
-	if action.Passthrough {
-		result.RawPayload = context.RawPayload
-	} else if action.Merge {
-		mergedBytes, err := p.applyMerge(action.Payload, context.Msg, context)
-		if err != nil {
-			return nil, fmt.Errorf("failed to merge payload: %w", err)
-		}
-		result.RawPayload = mergedBytes
-		result.Passthrough = true // signals publisher to use RawPayload
+	pl, err := p.resolvePayload(action.Passthrough, action.Merge, action.Payload, context)
+	if err != nil {
+		return nil, err
+	}
+	if pl.Passthrough {
+		result.RawPayload = pl.Raw
+		result.Passthrough = true
 	} else {
-		payload, err := p.templater.Execute(action.Payload, context)
-		if err != nil {
-			return nil, fmt.Errorf("failed to template payload: %w", err)
-		}
-		result.Payload = payload
+		result.Payload = pl.Text
 	}
 
 	result.Headers, err = p.templateHeaders(action.Headers, context)
@@ -751,7 +768,7 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 		Merge: action.Merge, Payload: action.Payload,
 		Headers: action.Headers, MetricsType: "nats",
 	}
-	return p.processActionForEach(cfg, context, func(elemCtx *EvaluationContext, pl forEachPayload, headers map[string]string, _ int) (*Action, error) {
+	return p.processActionForEach(cfg, context, func(elemCtx *EvaluationContext, pl resolvedPayload, headers map[string]string, _ int) (*Action, error) {
 		subject, err := p.templater.Execute(action.Subject, elemCtx)
 		if err != nil {
 			return nil, &forEachElementError{ErrorType: "template_subject_failed", Err: err}
@@ -789,21 +806,15 @@ func (p *Processor) processHTTPAction(action *HTTPAction, context *EvaluationCon
 	}
 	result.Method = method
 
-	if action.Passthrough {
-		result.RawPayload = context.RawPayload
-	} else if action.Merge {
-		mergedBytes, err := p.applyMerge(action.Payload, context.Msg, context)
-		if err != nil {
-			return nil, fmt.Errorf("failed to merge payload: %w", err)
-		}
-		result.RawPayload = mergedBytes
-		result.Passthrough = true // signals publisher to use RawPayload
+	pl, err := p.resolvePayload(action.Passthrough, action.Merge, action.Payload, context)
+	if err != nil {
+		return nil, err
+	}
+	if pl.Passthrough {
+		result.RawPayload = pl.Raw
+		result.Passthrough = true
 	} else {
-		payload, err := p.templater.Execute(action.Payload, context)
-		if err != nil {
-			return nil, fmt.Errorf("failed to template payload: %w", err)
-		}
-		result.Payload = payload
+		result.Payload = pl.Text
 	}
 
 	result.Headers, err = p.templateHeaders(action.Headers, context)
@@ -822,7 +833,7 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 		Merge: action.Merge, Payload: action.Payload,
 		Headers: action.Headers, MetricsType: "http",
 	}
-	return p.processActionForEach(cfg, context, func(elemCtx *EvaluationContext, pl forEachPayload, headers map[string]string, _ int) (*Action, error) {
+	return p.processActionForEach(cfg, context, func(elemCtx *EvaluationContext, pl resolvedPayload, headers map[string]string, _ int) (*Action, error) {
 		url, err := p.templater.Execute(action.URL, elemCtx)
 		if err != nil {
 			return nil, &forEachElementError{ErrorType: "template_url_failed", Err: err}
@@ -847,7 +858,7 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 func (p *Processor) processActionForEach(
 	cfg forEachActionConfig,
 	context *EvaluationContext,
-	buildAction func(elemCtx *EvaluationContext, pl forEachPayload, headers map[string]string, index int) (*Action, error),
+	buildAction func(elemCtx *EvaluationContext, pl resolvedPayload, headers map[string]string, index int) (*Action, error),
 ) ([]*Action, error) {
 	start := time.Now()
 
@@ -879,28 +890,28 @@ func (p *Processor) processActionForEach(
 		}
 
 		// Process payload (shared across action types)
-		var pl forEachPayload
+		var pl resolvedPayload
 		if cfg.Passthrough {
 			rawPayload, err := safeMarshal(itemMap)
 			if err != nil {
 				p.logElementError(result, i, "marshal_failed", cfg.ForEach, err)
 				continue
 			}
-			pl = forEachPayload{Raw: rawPayload, Passthrough: true}
+			pl = resolvedPayload{Raw: rawPayload, Passthrough: true}
 		} else if cfg.Merge {
 			mergedBytes, err := p.applyMerge(cfg.Payload, itemMap, elementContext)
 			if err != nil {
 				p.logElementError(result, i, "merge_payload_failed", cfg.ForEach, err)
 				continue
 			}
-			pl = forEachPayload{Raw: mergedBytes, Passthrough: true}
+			pl = resolvedPayload{Raw: mergedBytes, Passthrough: true}
 		} else {
 			payload, err := p.templater.Execute(cfg.Payload, elementContext)
 			if err != nil {
 				p.logElementError(result, i, "template_payload_failed", cfg.ForEach, err)
 				continue
 			}
-			pl = forEachPayload{Text: payload}
+			pl = resolvedPayload{Text: payload}
 		}
 
 		// Template headers
