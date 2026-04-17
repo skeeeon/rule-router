@@ -40,6 +40,17 @@ kv:
 
 When `kv.rules.enabled` is `true`, the `rules/` directory is ignored. All rules come from the KV bucket.
 
+### When to enable `autoProvision`
+
+The default is `false`. Auto-provisioning only fires when the bucket does not yet exist — if the bucket is already present, the flag is a no-op and the existing bucket (with whatever settings it has) is used as-is.
+
+| Setting | Use when |
+|---------|----------|
+| `autoProvision: false` | Strict GitOps / IaC workflows where bucket creation must go through Terraform, NACK CRDs, or an explicit `nats kv add` step that is reviewed alongside other infra changes. |
+| `autoProvision: true` | First-run convenience. The application creates the bucket with JetStream defaults (history=1, no TTL, single replica, file storage) on initial startup, and you tune it afterwards with `nats kv edit rules` (or `nats stream edit KV_rules` for the underlying stream). Safe to leave on in production — it never modifies an existing bucket. |
+
+Most KV bucket settings (history, TTL, max bytes, replicas, storage tier) are mutable after creation, so `autoProvision: true` followed by a one-time `nats kv edit` is a perfectly valid bootstrap pattern.
+
 This works with all features:
 *   **Router**: NATS trigger rules are loaded from KV, consumers created dynamically.
 *   **Gateway**: Both inbound (HTTP trigger) and outbound (NATS trigger + HTTP action) rules are loaded from KV. HTTP paths are handled dynamically via a catch-all handler.

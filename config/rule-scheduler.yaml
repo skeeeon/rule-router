@@ -59,6 +59,6 @@ logging:
 # Prometheus Metrics
 metrics:
   enabled: true
-  address: :2114           # Different port from rule-router (:2112) and http-gateway (:2113)
+  address: :2114           # Different port from rule-router/http-gateway (:2112) and nats-auth-manager (:2113)
   path: /metrics
   updateInterval: 15s

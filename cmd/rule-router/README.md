@@ -240,7 +240,7 @@ The rule-router exposes Prometheus metrics on port `:2112` (configurable).
 *   `messages_total{status="received|processed|error"}`
 *   `rule_matches_total`
 *   `actions_total{status="success|error"}`
-*   `forEach_iterations_total{rule_file="batch_notifications"}`
+*   `foreach_iterations_total{rule_file="batch_notifications"}`
 *   `throttle_suppressed_total{phase="trigger|action"}`
 *   `kv_cache_hits_total` / `kv_cache_misses_total`
 *   `nats_connection_status`

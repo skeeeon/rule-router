@@ -380,13 +380,26 @@ KV-sourced forEach also works with NATS and HTTP triggers. This is useful when t
 **Default Limits:**
 - Maximum 100 iterations per forEach (configurable)
 - Prevents resource exhaustion from malicious/malformed messages
-- Configure via `forEach.maxIterations` in config file
+- Configure via the top-level `forEach.maxIterations` block in the application config (not in the rule file)
 
 **Configuration:**
 ```yaml
+# rule-router.yaml (top level, alongside features/nats/metrics)
 forEach:
-  maxIterations: 100  # Maximum array elements to process
+  maxIterations: 100  # Maximum array elements to process per forEach action.
+                      # Set to 0 for unlimited (use with caution).
+                      # Hard ceiling enforced at config load: 100000.
 ```
+
+When an array exceeds the limit, processing stops at the limit and the remaining elements are silently dropped. The `foreach_iterations_total` metric reflects what was actually processed; pair it with the input size in your application logs if you need to detect truncation.
+
+**Per-forEach observability:**
+
+| Metric | Labels | Meaning |
+|--------|--------|---------|
+| `foreach_iterations_total` | `rule_file` | Array elements visited (after `maxIterations` cap) |
+| `foreach_filtered_total` | `rule_file` | Elements dropped by the `filter` block |
+| `foreach_actions_generated_total` | `rule_file` | Actions actually emitted (visited − filtered − errors) |
 
 ## Best Practices
 

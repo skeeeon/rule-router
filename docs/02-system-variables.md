@@ -124,6 +124,27 @@ All system variables can be used in conditions with these operators:
 **Time-Based:**
 - `recent` - Timestamp is within time window (e.g., `"5s"`, `"1m"`, `"1h"`)
 
+### `recent` Operator Details
+
+`recent` compares a **field value** (interpreted as a timestamp) against the **current system clock** at the moment the rule is evaluated.
+
+```yaml
+- field: "{event_time}"   # value from the message
+  operator: recent
+  value: "30s"            # tolerance window (Go duration string)
+```
+
+**Field formats accepted:**
+- Unix seconds as a number: `1730217600` or `1730217600.5`
+- RFC3339 string: `"2025-10-29T17:30:00Z"`
+
+**Semantics:**
+- The condition matches when `now - field <= window`.
+- Future timestamps are tolerated within a fixed **5-second clock-skew allowance**; anything more than 5s in the future fails.
+- Invalid duration strings or unparseable timestamps cause the condition to evaluate `false` (not error).
+
+This is most commonly used to drop stale events from queue backlogs (`recent: "1m"` to ignore anything older than a minute).
+
 ## Complete Example: Using Multiple System Variables
 
 ```yaml

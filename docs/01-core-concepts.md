@@ -1,5 +1,32 @@
 # Core Concepts
 
+## Unified Binary & Feature Selection
+
+`rule-router` is a single binary that bundles three features behind feature flags:
+
+| Feature | Purpose | Triggers it owns |
+|---------|---------|------------------|
+| `router` | NATS-to-NATS routing (the original behavior) | `nats` |
+| `gateway` | Inbound HTTP→NATS and outbound NATS→HTTP | `http`, plus `nats` for outbound |
+| `scheduler` | Cron-based publishing to NATS or HTTP | `schedule` |
+
+Enable features explicitly in the config:
+
+```yaml
+features:
+  router: true
+  gateway: false
+  scheduler: false
+```
+
+…or via environment variables (`RR_FEATURES_GATEWAY=true`, `RR_FEATURES_SCHEDULER=true`).
+
+If no `features` block is present, `router` defaults to `true` for backward compatibility. Multiple features can run in the same process and share NATS connections, the rule engine, the metrics endpoint, and KV state — there is no benefit to running them as separate processes when they share infrastructure.
+
+`nats-auth-manager` and `rule-cli` remain separate binaries.
+
+---
+
 All features of rule-router are configured using a shared rule syntax. A **rule** is a YAML object composed of a `trigger`, optional `conditions`, and an `action`.
 
 ```yaml
@@ -238,7 +265,18 @@ action:
     retry:
       maxAttempts: 3
       initialDelay: "1s"
+      maxDelay: "30s"
 ```
+
+**HTTP Retry Configuration:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `maxAttempts` | int | `3` | Total attempts including the first. `1` disables retry. |
+| `initialDelay` | duration string | `"1s"` | Delay before the second attempt. Format: Go duration (`"500ms"`, `"2s"`, `"1m"`). |
+| `maxDelay` | duration string | `"30s"` | Cap on the backoff. Prevents runaway delays on long retry chains. |
+
+Backoff doubles each attempt (`initialDelay`, `2×`, `4×`, …) up to `maxDelay`, and a small random jitter (≤100ms) is added each round to avoid thundering herds when multiple actions retry simultaneously. Retries are issued for any non-2xx response or transport error. The retry context honors graceful shutdown — in-flight retries are cancelled when the application terminates.
 
 ### Action Payload Modes
 
@@ -330,7 +368,9 @@ The `key` field controls what gets debounced independently. It supports template
 | `"{sensor_id}"` | Debounce per message field value |
 | `"{@path.1}"` | Debounce per HTTP path segment |
 
-Each rule maintains its own independent debounce state, so two rules on the same subject never interfere with each other.
+Each rule maintains its own independent debounce state, so two rules on the same subject never interfere with each other. Within a single rule, however, **messages whose `key` template resolves to the same value share a window** — that is exactly the point of using a non-default key. For example, with `key: "{@subject.2}"`, all messages where the third subject token resolves to `"room1"` share a window, while messages resolving to `"room2"` are tracked separately.
+
+State is held in-memory per Processor instance. A SIGHUP reload (which rebuilds the Processor) clears all debounce state — useful to know if you are watching for an alert immediately after a config change.
 
 ### Using Both Together
 
