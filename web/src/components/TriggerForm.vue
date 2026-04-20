@@ -1,6 +1,7 @@
 <script setup>
 import { createDebounce } from '../utils/state.js'
 import DebounceEditor from './DebounceEditor.vue'
+import CronBuilder from './CronBuilder.vue'
 
 const props = defineProps({
   trigger: Object,
@@ -74,22 +75,7 @@ function toggleDebounce(target) {
 
     <!-- Schedule trigger -->
     <div v-if="trigger.type === 'schedule'" class="fields">
-      <div class="field">
-        <label>Cron Expression</label>
-        <input
-          v-model="trigger.schedule.cron"
-          placeholder="0 8 * * 1-5"
-          :class="{ error: errorFor('trigger.schedule.cron') }"
-        >
-        <span class="field-error" v-if="errorFor('trigger.schedule.cron')">
-          {{ errorFor('trigger.schedule.cron').message }}
-        </span>
-        <span class="field-hint">5-field: minute hour day-of-month month day-of-week</span>
-      </div>
-      <div class="field">
-        <label>Timezone <span class="optional">(optional)</span></label>
-        <input v-model="trigger.schedule.timezone" placeholder="America/New_York">
-      </div>
+      <CronBuilder :schedule="trigger.schedule" :error-for="errorFor" />
     </div>
   </div>
 </template>

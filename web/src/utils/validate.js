@@ -1,5 +1,7 @@
 // Client-side validation mirroring internal/rule/loader.go
 
+import { CronExpressionParser } from 'cron-parser'
+
 export const VALID_OPERATORS = [
   'eq', 'neq', 'gt', 'lt', 'gte', 'lte',
   'contains', 'not_contains',
@@ -47,8 +49,11 @@ function validateTrigger(trigger, errors) {
   } else if (trigger.type === 'schedule') {
     if (!trigger.schedule.cron) {
       errors.push({ path: 'trigger.schedule.cron', message: 'Cron expression is required' })
-    } else if (!isValidCron(trigger.schedule.cron)) {
-      errors.push({ path: 'trigger.schedule.cron', message: 'Must be a 5-field cron expression' })
+    } else {
+      const cronErr = cronParseError(trigger.schedule.cron)
+      if (cronErr) {
+        errors.push({ path: 'trigger.schedule.cron', message: cronErr })
+      }
     }
   }
 }
@@ -190,9 +195,13 @@ function isTemplateField(s) {
   return s.includes('{') && s.includes('}')
 }
 
-function isValidCron(cron) {
-  const parts = cron.trim().split(/\s+/)
-  return parts.length === 5
+function cronParseError(cron) {
+  try {
+    CronExpressionParser.parse(cron.trim())
+    return null
+  } catch (e) {
+    return e?.message || 'Invalid cron expression'
+  }
 }
 
 function isValidDuration(s) {

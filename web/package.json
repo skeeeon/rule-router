@@ -11,6 +11,8 @@
   "dependencies": {
     "@nats-io/kv": "^3.3.1",
     "@nats-io/nats-core": "^3.3.1",
+    "cron-parser": "^5.5.0",
+    "cronstrue": "^3.14.0",
     "vue": "^3.5.0",
     "yaml": "^2.8.3"
   },
