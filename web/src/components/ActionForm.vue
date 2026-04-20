@@ -5,6 +5,7 @@ import HeadersEditor from './HeadersEditor.vue'
 import DebounceEditor from './DebounceEditor.vue'
 import ConditionsBuilder from './ConditionsBuilder.vue'
 import FieldSuggestInput from './FieldSuggestInput.vue'
+import JsonTextarea from './JsonTextarea.vue'
 
 const props = defineProps({
   action: Object,
@@ -96,15 +97,15 @@ function toggleOption(target, key, factory) {
             :title="f.sample"
           ><code>{<span>{{ f.path }}</span>}</code><span class="chip-type">{{ typeLabel(f.type) }}</span></button>
         </div>
-        <textarea
+        <JsonTextarea
           ref="natsPayloadEl"
           v-model="action.nats.payload"
-          rows="6"
+          :rows="6"
           placeholder='{"alert": "High temperature!", "temp": {temperature}}'
-          :class="{ error: errorFor('action.nats.payload') }"
+          :error="!!errorFor('action.nats.payload')"
           @keyup="saveCursor($event, 'nats')"
           @mouseup="saveCursor($event, 'nats')"
-        ></textarea>
+        />
         <span class="field-error" v-if="errorFor('action.nats.payload')">
           {{ errorFor('action.nats.payload').message }}
         </span>
@@ -198,15 +199,15 @@ function toggleOption(target, key, factory) {
             :title="f.sample"
           ><code>{<span>{{ f.path }}</span>}</code><span class="chip-type">{{ typeLabel(f.type) }}</span></button>
         </div>
-        <textarea
+        <JsonTextarea
           ref="httpPayloadEl"
           v-model="action.http.payload"
-          rows="6"
+          :rows="6"
           placeholder='{"alert": "{message}", "source": "{@subject}"}'
-          :class="{ error: errorFor('action.http.payload') }"
+          :error="!!errorFor('action.http.payload')"
           @keyup="saveCursor($event, 'http')"
           @mouseup="saveCursor($event, 'http')"
-        ></textarea>
+        />
       </div>
 
       <!-- Optional features -->
