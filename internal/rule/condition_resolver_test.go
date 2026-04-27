@@ -271,6 +271,78 @@ func TestResolveConditionValue(t *testing.T) {
 	}
 }
 
+// TestResolveConditionValue_HeaderCaseInsensitive verifies that header lookups
+// resolve regardless of the case used in the template or in the source map.
+// HTTP and NATS both canonicalize header keys at extraction; templates should
+// not require authors to memorize the canonical spelling.
+func TestResolveConditionValue_HeaderCaseInsensitive(t *testing.T) {
+	log := logger.NewNopLogger()
+
+	tests := []struct {
+		name        string
+		headers     map[string]string
+		template    string
+		expectValue interface{}
+	}{
+		{
+			name:        "canonical source, canonical template",
+			headers:     map[string]string{"X-Device-Id": "device-123"},
+			template:    "{@header.X-Device-Id}",
+			expectValue: "device-123",
+		},
+		{
+			name:        "canonical source, uppercase template",
+			headers:     map[string]string{"X-Device-Id": "device-123"},
+			template:    "{@header.X-DEVICE-ID}",
+			expectValue: "device-123",
+		},
+		{
+			name:        "canonical source, lowercase template",
+			headers:     map[string]string{"X-Device-Id": "device-123"},
+			template:    "{@header.x-device-id}",
+			expectValue: "device-123",
+		},
+		{
+			name:        "canonical source, mixed-case template (capital ID)",
+			headers:     map[string]string{"X-Device-Id": "device-123"},
+			template:    "{@header.X-Device-ID}",
+			expectValue: "device-123",
+		},
+		{
+			name:        "single-word header",
+			headers:     map[string]string{"Authorization": "Bearer abc"},
+			template:    "{@header.authorization}",
+			expectValue: "Bearer abc",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, err := NewEvaluationContext(
+				[]byte(`{}`),
+				tt.headers,
+				nil,
+				nil,
+				NewSystemTimeProvider().GetCurrentContext(),
+				nil,
+				nil,
+				log,
+			)
+			if err != nil {
+				t.Fatalf("Failed to create context: %v", err)
+			}
+
+			result, err := resolveConditionValue(tt.template, ctx)
+			if err != nil {
+				t.Fatalf("Unexpected error resolving %q: %v", tt.template, err)
+			}
+			if !compareTestValues(result, tt.expectValue) {
+				t.Errorf("resolveConditionValue(%q) = %v, want %v", tt.template, result, tt.expectValue)
+			}
+		})
+	}
+}
+
 func TestResolveConditionValue_TypePreservation(t *testing.T) {
 	log := logger.NewNopLogger() // ✅ Fixed: Use NewNopLogger()
 

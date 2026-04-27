@@ -7,6 +7,7 @@ package rule
 
 import (
 	"encoding/base64"
+	"net/textproto"
 
 	"github.com/nats-io/nkeys"
 )
@@ -30,8 +31,8 @@ func (c *EvaluationContext) verifySignature() {
 		return
 	}
 
-	pubKeyStr := c.Headers[c.sigVerification.PublicKeyHeader]
-	sigBase64 := c.Headers[c.sigVerification.SignatureHeader]
+	pubKeyStr := c.Headers[textproto.CanonicalMIMEHeaderKey(c.sigVerification.PublicKeyHeader)]
+	sigBase64 := c.Headers[textproto.CanonicalMIMEHeaderKey(c.sigVerification.SignatureHeader)]
 
 	if pubKeyStr == "" || sigBase64 == "" {
 		if c.logger != nil {

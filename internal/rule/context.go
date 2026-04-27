@@ -4,6 +4,7 @@ package rule
 
 import (
 	"bytes"
+	"net/textproto"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -121,6 +122,16 @@ func NewEvaluationContext(
 	// Wrap if needed to ensure msgData is always an object
 	msgData := wrapIfNeeded(raw)
 
+	// Canonicalize header keys at the rule-engine boundary so lookups are case-insensitive
+	// regardless of how the caller constructed the map (extraction sites, tests, WASM).
+	if len(headers) > 0 {
+		canonical := make(map[string]string, len(headers))
+		for k, v := range headers {
+			canonical[textproto.CanonicalMIMEHeaderKey(k)] = v
+		}
+		headers = canonical
+	}
+
 	ctx := &EvaluationContext{
 		Msg:             msgData,
 		RawPayload:      payload,
@@ -228,9 +239,11 @@ func (c *EvaluationContext) resolveSystemField(path string) (interface{}, bool) 
 		return nil, false
 	}
 
-	// Header fields (both contexts)
+	// Header fields (both contexts) — case-insensitive per HTTP/MIME conventions.
+	// Headers are stored canonicalized at the extraction site; canonicalize the
+	// requested name here so templates work regardless of how authors spell them.
 	if strings.HasPrefix(path, prefixHeader) {
-		headerName := path[len(prefixHeader):]
+		headerName := textproto.CanonicalMIMEHeaderKey(path[len(prefixHeader):])
 		if c.Headers != nil {
 			if value, ok := c.Headers[headerName]; ok {
 				return value, true

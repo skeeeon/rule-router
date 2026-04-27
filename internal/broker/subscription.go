@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net/textproto"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -416,12 +417,12 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 
 	sm.logger.Debug("processing message", "subject", msg.Subject(), "size", len(msg.Data()))
 
-	// Extract headers
+	// Extract headers, canonicalizing keys so rule template lookups are case-insensitive.
 	headers := make(map[string]string)
 	if msg.Headers() != nil {
 		for key, values := range msg.Headers() {
 			if len(values) > 0 {
-				headers[key] = values[0]
+				headers[textproto.CanonicalMIMEHeaderKey(key)] = values[0]
 			}
 		}
 	}

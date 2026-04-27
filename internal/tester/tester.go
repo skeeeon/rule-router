@@ -5,6 +5,7 @@ package tester
 import (
 	"encoding/json"
 	"fmt"
+	"net/textproto"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1372,6 +1373,13 @@ func loadTestConfig(path string) *TestConfig {
 	json.Unmarshal(bytes, &config)
 	if config.Headers == nil {
 		config.Headers = make(map[string]string)
+	} else {
+		// Canonicalize header keys so test inputs match what the rule engine sees in production.
+		canonical := make(map[string]string, len(config.Headers))
+		for k, v := range config.Headers {
+			canonical[textproto.CanonicalMIMEHeaderKey(k)] = v
+		}
+		config.Headers = canonical
 	}
 	return config
 }

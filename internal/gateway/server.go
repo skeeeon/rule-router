@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/textproto"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -259,11 +260,11 @@ func (s *InboundServer) webhookHandler(path string) http.HandlerFunc {
 			return
 		}
 
-		// Extract headers
+		// Extract headers, canonicalizing keys so rule template lookups are case-insensitive.
 		headers := make(map[string]string)
 		for key, values := range r.Header {
 			if len(values) > 0 {
-				headers[key] = values[0]
+				headers[textproto.CanonicalMIMEHeaderKey(key)] = values[0]
 			}
 		}
 
@@ -440,10 +441,11 @@ func (s *InboundServer) catchAllHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Canonicalize header keys so rule template lookups are case-insensitive.
 	headers := make(map[string]string)
 	for key, values := range r.Header {
 		if len(values) > 0 {
-			headers[key] = values[0]
+			headers[textproto.CanonicalMIMEHeaderKey(key)] = values[0]
 		}
 	}
 
