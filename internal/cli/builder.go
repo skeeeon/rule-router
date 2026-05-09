@@ -394,7 +394,13 @@ func (rb *RuleBuilder) getHTTPAction() (*rule.HTTPAction, error) {
 
 	if cardinality == 0 { // Single
 		url, _ := rb.prompter.Ask("Enter HTTP Action URL (e.g., 'https://api.example.com/alerts/{device_id}'):")
-		return &rule.HTTPAction{URL: url, Method: method, Payload: payload, Retry: retry}, nil
+		action := &rule.HTTPAction{URL: url, Method: method, Payload: payload, Retry: retry}
+		if pr, err := rb.getPublishResponse(); err != nil {
+			return nil, err
+		} else if pr != nil {
+			action.PublishResponse = pr
+		}
+		return action, nil
 	}
 
 	// ForEach
@@ -402,9 +408,14 @@ func (rb *RuleBuilder) getHTTPAction() (*rule.HTTPAction, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	url, _ := rb.prompter.Ask("Enter HTTP Action URL (can use element fields, e.g., 'https://api.example.com/items/{id}'):")
 	action := &rule.HTTPAction{ForEach: forEachField, URL: url, Method: method, Payload: payload, Retry: retry}
+	if pr, err := rb.getPublishResponse(); err != nil {
+		return nil, err
+	} else if pr != nil {
+		action.PublishResponse = pr
+	}
 
 	addFilter, _ := rb.prompter.Confirm("Add a filter to process only some elements?")
 	if addFilter {
@@ -420,6 +431,24 @@ func (rb *RuleBuilder) getHTTPAction() (*rule.HTTPAction, error) {
 		action.Filter = filter
 	}
 	return action, nil
+}
+
+// getPublishResponse asks whether to capture the HTTP response body and republish
+// it to a NATS subject. Returns nil if the user declines.
+func (rb *RuleBuilder) getPublishResponse() (*rule.PublishResponseSpec, error) {
+	want, _ := rb.prompter.Confirm("Publish the HTTP response body to a NATS subject on success?")
+	if !want {
+		return nil, nil
+	}
+	subject, err := rb.prompter.Ask("Enter NATS subject for the response (templates resolve against trigger context, e.g., 'poll.devices.{device_id}.status'):")
+	if err != nil {
+		return nil, err
+	}
+	subject = strings.TrimSpace(subject)
+	if subject == "" {
+		return nil, fmt.Errorf("publishResponse subject cannot be empty")
+	}
+	return &rule.PublishResponseSpec{Subject: subject}, nil
 }
 
 // getForEachField prompts for a forEach field with validation and auto-fix

@@ -78,15 +78,16 @@ type NATSAction struct {
 
 // HTTPAction represents making an HTTP request
 type HTTPAction struct {
-	URL         string            `json:"url" yaml:"url"`
-	Method      string            `json:"method" yaml:"method"`
-	Payload     string            `json:"payload,omitempty" yaml:"payload,omitempty"`
-	Passthrough bool              `json:"passthrough,omitempty" yaml:"passthrough,omitempty"`
-	Merge       bool              `json:"merge,omitempty" yaml:"merge,omitempty"`
-	Headers     map[string]string `json:"headers,omitempty" yaml:"headers,omitempty"`
-	RawPayload  []byte            `json:"-" yaml:"-"` // Populated during processing
-	Retry       *RetryConfig      `json:"retry,omitempty" yaml:"retry,omitempty"`
-	
+	URL             string               `json:"url" yaml:"url"`
+	Method          string               `json:"method" yaml:"method"`
+	Payload         string               `json:"payload,omitempty" yaml:"payload,omitempty"`
+	Passthrough     bool                 `json:"passthrough,omitempty" yaml:"passthrough,omitempty"`
+	Merge           bool                 `json:"merge,omitempty" yaml:"merge,omitempty"`
+	Headers         map[string]string    `json:"headers,omitempty" yaml:"headers,omitempty"`
+	RawPayload      []byte               `json:"-" yaml:"-"` // Populated during processing
+	Retry           *RetryConfig         `json:"retry,omitempty" yaml:"retry,omitempty"`
+	PublishResponse *PublishResponseSpec `json:"publishResponse,omitempty" yaml:"publishResponse,omitempty"`
+
 	// Array iteration fields for forEach functionality
 	// ForEach must use template syntax: "{arrayField}" or "{nested.array}" or "{@items}"
 	ForEach  string          `json:"forEach,omitempty" yaml:"forEach,omitempty"`
@@ -95,6 +96,14 @@ type HTTPAction struct {
 
 	// Pre-computed at load time (nil for system fields or dynamic paths)
 	forEachPath []string
+}
+
+// PublishResponseSpec describes how to publish an HTTP response body to NATS
+// after a successful (2xx) HTTP request. The body is published as-is using
+// passthrough semantics — no template processing on the response. Subject
+// supports template syntax resolved against the trigger context only.
+type PublishResponseSpec struct {
+	Subject string `json:"subject" yaml:"subject"`
 }
 
 // RetryConfig defines retry behavior for HTTP actions

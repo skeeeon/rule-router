@@ -16,7 +16,7 @@ import (
 	"rule-router/internal/rule"
 )
 
-// newTestExecutor creates an HTTPExecutor with test defaults and nil metrics.
+// newTestExecutor creates an HTTPExecutor with test defaults, nil metrics, and no publisher.
 func newTestExecutor() *HTTPExecutor {
 	cfg := &config.HTTPClientConfig{
 		Timeout:             10 * time.Second,
@@ -24,7 +24,29 @@ func newTestExecutor() *HTTPExecutor {
 		MaxIdleConnsPerHost: 5,
 		IdleConnTimeout:     30 * time.Second,
 	}
-	return NewHTTPExecutor(cfg, logger.NewNopLogger(), nil)
+	return NewHTTPExecutor(cfg, logger.NewNopLogger(), nil, nil)
+}
+
+// newTestExecutorWithPublisher is like newTestExecutor but with a response publisher.
+func newTestExecutorWithPublisher(p ResponsePublisher) *HTTPExecutor {
+	cfg := &config.HTTPClientConfig{
+		Timeout:             10 * time.Second,
+		MaxIdleConns:        10,
+		MaxIdleConnsPerHost: 5,
+		IdleConnTimeout:     30 * time.Second,
+	}
+	return NewHTTPExecutor(cfg, logger.NewNopLogger(), nil, p)
+}
+
+// fakePublisher captures NATS publish calls for assertions.
+type fakePublisher struct {
+	calls []*rule.NATSAction
+	err   error
+}
+
+func (f *fakePublisher) Publish(ctx context.Context, action *rule.NATSAction) error {
+	f.calls = append(f.calls, action)
+	return f.err
 }
 
 func TestExecuteHTTPAction_Success(t *testing.T) {
@@ -343,5 +365,174 @@ func TestExecuteHTTPAction_DefaultRetry(t *testing.T) {
 	}
 	if atomic.LoadInt32(&attempts) != 3 {
 		t.Fatalf("expected 3 default attempts, got %d", attempts)
+	}
+}
+
+func TestExecuteHTTPAction_PublishResponse_OnSuccess(t *testing.T) {
+	body := `{"status":"ok","value":42}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+
+	pub := &fakePublisher{}
+	executor := newTestExecutorWithPublisher(pub)
+	action := &rule.HTTPAction{
+		URL:    server.URL,
+		Method: "GET",
+		PublishResponse: &rule.PublishResponseSpec{
+			Subject: "poll.devices.123.status",
+		},
+	}
+
+	if err := executor.ExecuteHTTPAction(context.Background(), action); err != nil {
+		t.Fatalf("expected success, got error: %v", err)
+	}
+	if len(pub.calls) != 1 {
+		t.Fatalf("expected 1 publish, got %d", len(pub.calls))
+	}
+	got := pub.calls[0]
+	if got.Subject != "poll.devices.123.status" {
+		t.Errorf("subject mismatch: got %q want %q", got.Subject, "poll.devices.123.status")
+	}
+	if !got.Passthrough {
+		t.Errorf("expected Passthrough=true on response publish")
+	}
+	if string(got.RawPayload) != body {
+		t.Errorf("payload mismatch: got %q want %q", string(got.RawPayload), body)
+	}
+}
+
+func TestExecuteHTTPAction_PublishResponse_NotCalledOnError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	pub := &fakePublisher{}
+	executor := newTestExecutorWithPublisher(pub)
+	action := &rule.HTTPAction{
+		URL:    server.URL,
+		Method: "GET",
+		Retry: &rule.RetryConfig{
+			MaxAttempts:  1,
+			InitialDelay: "1ms",
+			MaxDelay:     "1ms",
+		},
+		PublishResponse: &rule.PublishResponseSpec{
+			Subject: "should.not.publish",
+		},
+	}
+
+	if err := executor.ExecuteHTTPAction(context.Background(), action); err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if len(pub.calls) != 0 {
+		t.Fatalf("expected no publishes on non-2xx, got %d", len(pub.calls))
+	}
+}
+
+func TestExecuteHTTPAction_PublishResponse_NotSetSkipsPublish(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("hello"))
+	}))
+	defer server.Close()
+
+	pub := &fakePublisher{}
+	executor := newTestExecutorWithPublisher(pub)
+	action := &rule.HTTPAction{
+		URL:    server.URL,
+		Method: "GET",
+		// PublishResponse not set
+	}
+
+	if err := executor.ExecuteHTTPAction(context.Background(), action); err != nil {
+		t.Fatalf("expected success, got error: %v", err)
+	}
+	if len(pub.calls) != 0 {
+		t.Fatalf("expected no publish when PublishResponse not set, got %d", len(pub.calls))
+	}
+}
+
+func TestExecuteHTTPAction_PublishResponse_NoPublisherSkipsPublish(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("hello"))
+	}))
+	defer server.Close()
+
+	executor := newTestExecutor() // no publisher
+	action := &rule.HTTPAction{
+		URL:    server.URL,
+		Method: "GET",
+		PublishResponse: &rule.PublishResponseSpec{
+			Subject: "no.publisher",
+		},
+	}
+
+	// HTTP request itself should still succeed; publish is silently skipped.
+	if err := executor.ExecuteHTTPAction(context.Background(), action); err != nil {
+		t.Fatalf("expected success, got error: %v", err)
+	}
+}
+
+func TestExecuteHTTPAction_PublishResponse_PublishErrorDoesNotFailAction(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("hello"))
+	}))
+	defer server.Close()
+
+	pub := &fakePublisher{err: fmt.Errorf("nats unavailable")}
+	executor := newTestExecutorWithPublisher(pub)
+	action := &rule.HTTPAction{
+		URL:    server.URL,
+		Method: "GET",
+		PublishResponse: &rule.PublishResponseSpec{
+			Subject: "poll.errors",
+		},
+	}
+
+	// HTTP succeeded; publish failure should be logged but not surfaced.
+	if err := executor.ExecuteHTTPAction(context.Background(), action); err != nil {
+		t.Fatalf("publish error should not fail HTTP action, got: %v", err)
+	}
+	if len(pub.calls) != 1 {
+		t.Fatalf("expected 1 publish attempt, got %d", len(pub.calls))
+	}
+}
+
+func TestExecuteHTTPAction_PublishResponse_BodyCappedAt1MB(t *testing.T) {
+	// Server responds with 2 MB; executor should cap at MaxResponseSize (1 MB).
+	bigBody := make([]byte, 2*MaxResponseSize)
+	for i := range bigBody {
+		bigBody[i] = 'A'
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(bigBody)
+	}))
+	defer server.Close()
+
+	pub := &fakePublisher{}
+	executor := newTestExecutorWithPublisher(pub)
+	action := &rule.HTTPAction{
+		URL:    server.URL,
+		Method: "GET",
+		PublishResponse: &rule.PublishResponseSpec{
+			Subject: "poll.big",
+		},
+	}
+
+	if err := executor.ExecuteHTTPAction(context.Background(), action); err != nil {
+		t.Fatalf("expected success, got error: %v", err)
+	}
+	if len(pub.calls) != 1 {
+		t.Fatalf("expected 1 publish, got %d", len(pub.calls))
+	}
+	if got := len(pub.calls[0].RawPayload); got != MaxResponseSize {
+		t.Errorf("expected payload capped at %d bytes, got %d", MaxResponseSize, got)
 	}
 }

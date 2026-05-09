@@ -822,6 +822,14 @@ func (p *Processor) processHTTPAction(action *HTTPAction, context *EvaluationCon
 		return nil, fmt.Errorf("failed to template headers: %w", err)
 	}
 
+	if action.PublishResponse != nil {
+		subj, err := p.templater.Execute(action.PublishResponse.Subject, context)
+		if err != nil {
+			return nil, fmt.Errorf("failed to template publishResponse.subject: %w", err)
+		}
+		result.PublishResponse = &PublishResponseSpec{Subject: subj}
+	}
+
 	return []*Action{{HTTP: result}}, nil
 }
 
@@ -842,11 +850,20 @@ func (p *Processor) processHTTPActionWithForEach(action *HTTPAction, context *Ev
 		if err != nil {
 			return nil, &forEachElementError{ErrorType: "template_method_failed", Err: err}
 		}
+		var publishResponse *PublishResponseSpec
+		if action.PublishResponse != nil {
+			subj, err := p.templater.Execute(action.PublishResponse.Subject, elemCtx)
+			if err != nil {
+				return nil, &forEachElementError{ErrorType: "template_publish_response_subject_failed", Err: err}
+			}
+			publishResponse = &PublishResponseSpec{Subject: subj}
+		}
 		return &Action{HTTP: &HTTPAction{
 			URL: url, Method: method, Passthrough: pl.Passthrough,
 			Merge: action.Merge, Payload: pl.Text,
 			RawPayload: pl.Raw, Headers: headers,
-			Retry: action.Retry,
+			Retry:           action.Retry,
+			PublishResponse: publishResponse,
 		}}, nil
 	})
 }

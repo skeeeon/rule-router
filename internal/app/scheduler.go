@@ -48,7 +48,7 @@ func NewSchedulerApp(base *BaseApp, cfg *config.Config) (*SchedulerApp, error) {
 		logger:       base.Logger.With("component", "scheduler"),
 		metrics:      base.Metrics,
 		processor:    base.Processor,
-		httpExecutor: httpclient.NewHTTPExecutor(&cfg.HTTP.Client, base.Logger, base.Metrics),
+		httpExecutor: httpclient.NewHTTPExecutor(&cfg.HTTP.Client, base.Logger, base.Metrics, base.Broker),
 		base:         base,
 	}
 

@@ -113,6 +113,9 @@ function rawToHTTPAction(raw) {
       maxDelay: raw.retry.maxDelay || '30s',
     }
   }
+  if (raw.publishResponse) {
+    action.publishResponse = { subject: raw.publishResponse.subject || '' }
+  }
   if (raw.filter) {
     action.filter = rawToConditions(raw.filter)
   }

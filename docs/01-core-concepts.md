@@ -278,6 +278,28 @@ action:
 
 Backoff doubles each attempt (`initialDelay`, `2×`, `4×`, …) up to `maxDelay`, and a small random jitter (≤100ms) is added each round to avoid thundering herds when multiple actions retry simultaneously. Retries are issued for any non-2xx response or transport error. The retry context honors graceful shutdown — in-flight retries are cancelled when the application terminates.
 
+**Optional `publishResponse`**: Capture the HTTP response body and republish it to a NATS subject. On a 2xx response, the body (capped at 1 MB) is published as a NATS message — typically consumed by a router rule that performs the actual evaluation. Available wherever HTTP actions are used (scheduler cron triggers, gateway outbound NATS→HTTP, router NATS-trigger + HTTP-action rules).
+
+```yaml
+action:
+  http:
+    url: "https://api.example.com/devices/{device_id}/status"
+    method: GET
+    publishResponse:
+      subject: "poll.devices.{device_id}.status"
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `subject` | string (required) | NATS subject to publish the response body to. Supports template syntax. |
+
+**Behavior:**
+- **Success-only**: the response is only published on a 2xx status. Non-2xx responses retry per `retry` config and never publish.
+- **Body cap**: the body is read up to 1 MB; anything beyond is truncated.
+- **Trigger-context templating**: the subject is templated against the trigger context only (cron + KV + system functions for scheduler, message + subject + KV for router). Response fields are **not** available in the subject — keeping templating consistent across the rule.
+- **Best-effort publish**: a publish failure logs an error but does not fail the action (the HTTP call already succeeded; retrying it is wasteful).
+- **Common pattern**: pair a scheduler poll with `publishResponse` and a router rule that subscribes to that subject — this turns "poll an API for state" into a normal event-driven flow.
+
 ### Action Payload Modes
 
 Every action supports three payload modes:

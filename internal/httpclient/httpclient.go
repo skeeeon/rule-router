@@ -34,19 +34,30 @@ const (
 	retryMaxJitter = 100 * time.Millisecond
 )
 
+// ResponsePublisher publishes a NATS message. Implemented by *broker.NATSBroker.
+// Used by HTTPExecutor to publish HTTP response bodies to NATS when an action's
+// PublishResponse is set. The interface keeps httpclient decoupled from broker.
+type ResponsePublisher interface {
+	Publish(ctx context.Context, action *rule.NATSAction) error
+}
+
 // HTTPExecutor handles HTTP request execution with retry logic.
 // Used by both the http-gateway and rule-scheduler to execute HTTP actions.
 type HTTPExecutor struct {
-	client  *http.Client
-	logger  *logger.Logger
-	metrics *metrics.Metrics // may be nil
+	client    *http.Client
+	logger    *logger.Logger
+	metrics   *metrics.Metrics  // may be nil
+	publisher ResponsePublisher // may be nil; required for PublishResponse to take effect
 }
 
-// NewHTTPExecutor creates a new HTTP executor from config
+// NewHTTPExecutor creates a new HTTP executor from config. The publisher is
+// optional — when nil, actions with PublishResponse set will execute the HTTP
+// request normally but skip the response publish (with a warning).
 func NewHTTPExecutor(
 	cfg *config.HTTPClientConfig,
 	log *logger.Logger,
 	m *metrics.Metrics,
+	publisher ResponsePublisher,
 ) *HTTPExecutor {
 	log = log.With("component", "http-client")
 	return &HTTPExecutor{
@@ -61,8 +72,9 @@ func NewHTTPExecutor(
 				},
 			},
 		},
-		logger:  log,
-		metrics: m,
+		logger:    log,
+		metrics:   m,
+		publisher: publisher,
 	}
 }
 
@@ -187,6 +199,36 @@ func (e *HTTPExecutor) makeHTTPRequest(ctx context.Context, action *rule.HTTPAct
 			"method", action.Method,
 			"statusCode", resp.StatusCode,
 			"duration", duration)
+
+		// Optional response publish: on 2xx, republish the body (capped at
+		// MaxResponseSize above) to a NATS subject. Publish failures are
+		// logged but do not fail the action — the HTTP request succeeded
+		// and we don't want to retry an idempotent-unsafe call.
+		if action.PublishResponse != nil {
+			if e.publisher == nil {
+				e.logger.Warn("publishResponse set but no publisher configured - response not published",
+					"url", action.URL,
+					"subject", action.PublishResponse.Subject)
+			} else {
+				natsAction := &rule.NATSAction{
+					Subject:     action.PublishResponse.Subject,
+					Passthrough: true,
+					RawPayload:  responseBody,
+				}
+				if perr := e.publisher.Publish(ctx, natsAction); perr != nil {
+					e.logger.Error("failed to publish HTTP response to NATS",
+						"url", action.URL,
+						"subject", action.PublishResponse.Subject,
+						"error", perr)
+				} else {
+					e.logger.Debug("published HTTP response to NATS",
+						"url", action.URL,
+						"subject", action.PublishResponse.Subject,
+						"bytes", len(responseBody))
+				}
+			}
+		}
+
 		return nil
 	}
 

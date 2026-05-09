@@ -1,6 +1,6 @@
 <script setup>
 import { ref, inject, nextTick } from 'vue'
-import { createDebounce, createRetry, createConditions } from '../utils/state.js'
+import { createDebounce, createRetry, createConditions, createPublishResponse } from '../utils/state.js'
 import HeadersEditor from './HeadersEditor.vue'
 import DebounceEditor from './DebounceEditor.vue'
 import ConditionsBuilder from './ConditionsBuilder.vue'
@@ -225,6 +225,10 @@ function toggleOption(target, key, factory) {
           Retry
         </label>
         <label class="checkbox">
+          <input type="checkbox" :checked="!!action.http.publishResponse" @change="toggleOption(action.http, 'publishResponse', createPublishResponse)">
+          Publish Response
+        </label>
+        <label class="checkbox">
           <input type="checkbox" :checked="!!action.http.debounce" @change="toggleOption(action.http, 'debounce', createDebounce)">
           Debounce
         </label>
@@ -270,6 +274,22 @@ function toggleOption(target, key, factory) {
             <input v-model="action.http.retry.maxDelay" placeholder="30s">
           </div>
         </div>
+      </div>
+
+      <div v-if="action.http.publishResponse" class="field">
+        <label>Publish Response Subject</label>
+        <input
+          v-model="action.http.publishResponse.subject"
+          placeholder="poll.devices.{device_id}.status"
+          :class="{ error: errorFor('action.http.publishResponse.subject') }"
+        >
+        <span class="field-hint">
+          On 2xx, the response body (capped at 1 MB) is published to this NATS subject.
+          Templates resolve against the trigger context only.
+        </span>
+        <span class="field-error" v-if="errorFor('action.http.publishResponse.subject')">
+          {{ errorFor('action.http.publishResponse.subject').message }}
+        </span>
       </div>
 
       <DebounceEditor v-if="action.http.debounce" :debounce="action.http.debounce" :error-for="errorFor" prefix="action.http.debounce" />

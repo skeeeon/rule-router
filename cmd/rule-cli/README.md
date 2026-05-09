@@ -55,6 +55,7 @@ Available templates:
   - nats-forEach
   - nats-kv-enrichment
   - schedule-basic
+  - schedule-poll
   - signature-verification
 ```
 
@@ -69,6 +70,9 @@ Then, create a rule from a template. The CLI will automatically place it in the 
 
 # Create a cron schedule rule
 ./rule-cli new --template=schedule-basic --output=rules/scheduler/my-schedule.yaml
+
+# Create an HTTP-poll-to-NATS rule (cron-driven GET that republishes the response)
+./rule-cli new --template=schedule-poll --output=rules/scheduler/my-poll.yaml
 ```
 
 ### 2. Scaffold Tests

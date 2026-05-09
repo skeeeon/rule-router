@@ -1,0 +1,29 @@
+# templates/schedule-poll.yaml
+#
+# A cron-based polling rule: periodically GET an HTTP API and republish the
+# response body to a NATS subject so router rules can react to it.
+#
+# The HTTP request fires on the cron schedule. On a 2xx response, the body
+# (capped at 1 MB) is published to publishResponse.subject as a NATS message.
+# A separate router rule (subscribed to that subject) does the actual logic.
+#
+# Subject templates resolve against the trigger context only (cron + KV +
+# system functions). Response fields are NOT available in the subject.
+#
+- trigger:
+    schedule:
+      cron: "*/5 * * * *"
+  action:
+    http:
+      url: "https://api.example.com/devices/123/status"
+      method: GET
+      headers:
+        Authorization: "Bearer your-api-token"
+      retry:
+        maxAttempts: 3
+        initialDelay: "1s"
+        maxDelay: "10s"
+      publishResponse:
+        # Where to publish the API response body. A router rule subscribed
+        # to this subject does the actual evaluation.
+        subject: "poll.devices.123.status"

@@ -34,3 +34,18 @@
         maxAttempts: 3
         initialDelay: "2s"
         maxDelay: "30s"
+
+# Poll an API every 5 minutes and republish the response body to NATS so
+# router rules can react to it. The response body is published as-is
+# (capped at 1 MB). Subject templates resolve against the trigger context only.
+- trigger:
+    schedule:
+      cron: "*/5 * * * *"
+  action:
+    http:
+      url: "https://api.example.com/devices/123/status"
+      method: GET
+      headers:
+        Authorization: "Bearer your-api-token"
+      publishResponse:
+        subject: "poll.devices.123.status"

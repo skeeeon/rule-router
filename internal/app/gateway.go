@@ -50,7 +50,7 @@ func NewGatewayApp(base *BaseApp, cfg *config.Config) (*GatewayApp, error) {
 
 	// Wire HTTP executor into the shared SubscriptionManager so it can handle
 	// NATS-trigger + HTTP-action rules alongside NATS-trigger + NATS-action rules.
-	httpExec := httpclient.NewHTTPExecutor(&cfg.HTTP.Client, base.Logger, base.Metrics)
+	httpExec := httpclient.NewHTTPExecutor(&cfg.HTTP.Client, base.Logger, base.Metrics, base.Broker)
 	base.Broker.GetSubscriptionManager().SetHTTPExecutor(httpExec)
 
 	// Setup inbound server (HTTP → NATS)

@@ -45,10 +45,15 @@ export function createHTTPAction() {
     merge: false,
     headers: {},
     retry: null,
+    publishResponse: null,
     forEach: '',
     filter: null,
     debounce: null,
   }
+}
+
+export function createPublishResponse() {
+  return { subject: '' }
 }
 
 export function createConditions() {

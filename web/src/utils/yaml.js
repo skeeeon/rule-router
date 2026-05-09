@@ -141,6 +141,10 @@ function pushAction(lines, action, indent) {
         lines.push(`${pad}    maxDelay: ${yamlString(a.retry.maxDelay)}`)
       }
     }
+    if (a.publishResponse && a.publishResponse.subject) {
+      lines.push(`${pad}  publishResponse:`)
+      lines.push(`${pad}    subject: ${yamlString(a.publishResponse.subject)}`)
+    }
     if (a.debounce) {
       pushDebounce(lines, a.debounce, indent + 2)
     }

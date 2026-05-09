@@ -594,6 +594,19 @@ func (l *RulesLoader) validateHTTPAction(action *HTTPAction) error {
 		return err
 	}
 
+	if action.PublishResponse != nil {
+		if action.PublishResponse.Subject == "" {
+			return fmt.Errorf("publishResponse.subject cannot be empty")
+		}
+		if err := l.validateKVFieldsInTemplate(action.PublishResponse.Subject); err != nil {
+			return fmt.Errorf("invalid KV field in publishResponse.subject: %w", err)
+		}
+		if containsWildcards(action.PublishResponse.Subject) {
+			l.logger.Debug("publishResponse subject contains wildcards - ensure this is intentional",
+				"subject", action.PublishResponse.Subject)
+		}
+	}
+
 	return nil
 }
 

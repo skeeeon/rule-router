@@ -108,6 +108,9 @@ function validateAction(action, errors) {
         errors.push({ path: 'action.http.retry.maxDelay', message: 'Invalid duration (e.g., "30s")' })
       }
     }
+    if (a.publishResponse && !a.publishResponse.subject) {
+      errors.push({ path: 'action.http.publishResponse.subject', message: 'Subject is required when publishResponse is enabled' })
+    }
     if (a.debounce) {
       validateDebounce(a.debounce, 'action.http.debounce', errors)
     }

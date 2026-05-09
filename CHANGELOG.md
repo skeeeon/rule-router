@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+- Added `publishResponse` to HTTP actions: on a 2xx response, the body (capped at 1 MB) is republished to a NATS subject. Works in the scheduler (cron-poll → NATS) and the gateway/router outbound path (NATS event → HTTP call → NATS result). Subject templates resolve against the trigger context only; publish failures log but do not fail the action.
+- Added `schedule-poll` template to `rule-cli` (`rule-cli new --template=schedule-poll`) demonstrating the HTTP-poll-to-NATS pattern.
+- Web rule builder: "Publish Response" toggle and subject input added to the HTTP action form.
+
 ## [0.11.0] - 2026-04-15
 
 ### Features

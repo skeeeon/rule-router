@@ -1878,6 +1878,42 @@ func TestProcessNATSAction_Merge_NestedObject(t *testing.T) {
 	}
 }
 
+// TestProcessHTTPAction_PublishResponse_SubjectTemplating verifies that the
+// publishResponse.subject is templated against the trigger context (no
+// response-side templating).
+func TestProcessHTTPAction_PublishResponse_SubjectTemplating(t *testing.T) {
+	processor := newTestProcessor()
+
+	action := &HTTPAction{
+		URL:    "https://api.example.com/devices/{deviceId}",
+		Method: "GET",
+		PublishResponse: &PublishResponseSpec{
+			Subject: "poll.devices.{deviceId}.status",
+		},
+	}
+
+	data := map[string]interface{}{"deviceId": "abc123"}
+	ctx := newTemplateTestContext(data, "trigger.poll", time.Now())
+
+	actions, err := processor.processHTTPAction(action, ctx)
+	if err != nil {
+		t.Fatalf("processHTTPAction() error = %v", err)
+	}
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(actions))
+	}
+	got := actions[0].HTTP
+	if got.PublishResponse == nil {
+		t.Fatal("expected PublishResponse to be set on result")
+	}
+	if got.PublishResponse.Subject != "poll.devices.abc123.status" {
+		t.Errorf("subject = %q, want %q", got.PublishResponse.Subject, "poll.devices.abc123.status")
+	}
+	if got.URL != "https://api.example.com/devices/abc123" {
+		t.Errorf("URL not templated: %q", got.URL)
+	}
+}
+
 // --- HTTP Merge Action Tests ---
 
 func TestProcessHTTPAction_Merge_Basic(t *testing.T) {

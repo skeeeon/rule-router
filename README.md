@@ -18,7 +18,7 @@ Features are enabled via config (`features.router`, `features.gateway`, `feature
 The platform is designed for performance, security, and flexibility in event-driven architectures.
 
 *   **High Performance**: Microsecond rule evaluation, asynchronous processing, and thousands of messages per second.
-*   **Cron Scheduling**: Publish to NATS and HTTP endpoints on cron schedules with timezone support, conditional execution, KV lookups, and HTTP retry logic.
+*   **Cron Scheduling**: Publish to NATS and HTTP endpoints on cron schedules with timezone support, conditional execution, KV lookups, and HTTP retry logic. HTTP actions can optionally republish the response body to a NATS subject — turning periodic API polling into a normal event-driven flow.
 *   **Array Processing**: Native support for batch message processing with array operators and forEach iteration.
 *   **Primitive Message Support**: Handle strings, numbers, arrays, and objects at the root - perfect for IoT protocols and simple formats.
 *   **Bidirectional HTTP Gateway**:

@@ -162,6 +162,46 @@ Suppress rapid-fire alerts per room, allowing one alert every 30 seconds:
 
 See [Core Concepts](./../../docs/01-core-concepts.md) for full debounce semantics.
 
+### Example: Polling an HTTP API into NATS
+
+When a third-party service does not emit webhooks, use the scheduler to poll it on a cron schedule and republish the response body to NATS. A normal router rule then handles the evaluation, so polling cadence stays decoupled from rule logic.
+
+**Step 1 — schedule rule that polls and republishes the response:**
+
+```yaml
+- trigger:
+    schedule:
+      cron: "*/5 * * * *"
+  action:
+    http:
+      url: "https://api.example.com/devices/123/status"
+      method: GET
+      headers:
+        Authorization: "Bearer ${API_TOKEN}"
+      publishResponse:
+        subject: "poll.devices.123.status"
+```
+
+**Step 2 — router rule that consumes the polled response:**
+
+```yaml
+- trigger:
+    nats:
+      subject: "poll.devices.123.status"
+  conditions:
+    operator: and
+    items:
+      - field: "{state}"
+        operator: eq
+        value: "offline"
+  action:
+    nats:
+      subject: "alerts.devices.offline"
+      payload: '{"deviceId": "123", "lastSeen": "{lastSeen}", "at": "{@timestamp()}"}'
+```
+
+`publishResponse` only fires on 2xx, caps the body at 1 MB, and templates the subject against the trigger context only — see [Core Concepts → Actions](./../../docs/01-core-concepts.md) for details. The same field works on outbound gateway HTTP actions (NATS message → call API → publish response back to NATS).
+
 ### Example: Message Enrichment with `merge`
 
 This rule enriches incoming orders with customer data from a KV store, preserving all original fields:
