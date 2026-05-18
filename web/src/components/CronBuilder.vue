@@ -131,22 +131,28 @@ function range(n, startAt = 0) {
           </div>
           <div class="cron-field-inputs">
             <template v-if="state.minute.mode === 'everyN'">
-              <span class="inline-label">Every</span>
-              <input type="number" min="1" max="59" v-model.number="state.minute.step" class="num-input">
-              <span class="inline-label">minute(s)</span>
+              <span class="cron-prefix">Every</span>
+              <div class="cron-input-group">
+                <input type="number" min="1" max="59" v-model.number="state.minute.step" class="num-input">
+                <span class="cron-suffix">minute(s)</span>
+              </div>
             </template>
             <template v-else-if="state.minute.mode === 'at'">
-              <span class="inline-label">At minute</span>
-              <input type="number" min="0" max="59" v-model.number="state.minute.value" class="num-input">
+              <span class="cron-prefix">At</span>
+              <div class="cron-input-group">
+                <input type="number" min="0" max="59" v-model.number="state.minute.value" class="num-input">
+              </div>
             </template>
             <template v-else-if="state.minute.mode === 'range'">
-              <span class="inline-label">From</span>
-              <input type="number" min="0" max="59" v-model.number="state.minute.rangeFrom" class="num-input">
-              <span class="inline-label">to</span>
-              <input type="number" min="0" max="59" v-model.number="state.minute.rangeTo" class="num-input">
+              <span class="cron-prefix">Between</span>
+              <div class="cron-input-group">
+                <input type="number" min="0" max="59" v-model.number="state.minute.rangeFrom" class="num-input">
+                <span class="cron-separator">–</span>
+                <input type="number" min="0" max="59" v-model.number="state.minute.rangeTo" class="num-input">
+              </div>
             </template>
             <template v-else-if="state.minute.mode === 'list'">
-              <div class="chip-row wrap">
+              <div class="chip-row wrap full">
                 <button
                   v-for="n in range(60, 0)"
                   :key="n"
@@ -172,22 +178,28 @@ function range(n, startAt = 0) {
           </div>
           <div class="cron-field-inputs">
             <template v-if="state.hour.mode === 'everyN'">
-              <span class="inline-label">Every</span>
-              <input type="number" min="1" max="23" v-model.number="state.hour.step" class="num-input">
-              <span class="inline-label">hour(s)</span>
+              <span class="cron-prefix">Every</span>
+              <div class="cron-input-group">
+                <input type="number" min="1" max="23" v-model.number="state.hour.step" class="num-input">
+                <span class="cron-suffix">hour(s)</span>
+              </div>
             </template>
             <template v-else-if="state.hour.mode === 'at'">
-              <span class="inline-label">At hour</span>
-              <input type="number" min="0" max="23" v-model.number="state.hour.value" class="num-input">
+              <span class="cron-prefix">At</span>
+              <div class="cron-input-group">
+                <input type="number" min="0" max="23" v-model.number="state.hour.value" class="num-input">
+              </div>
             </template>
             <template v-else-if="state.hour.mode === 'range'">
-              <span class="inline-label">From</span>
-              <input type="number" min="0" max="23" v-model.number="state.hour.rangeFrom" class="num-input">
-              <span class="inline-label">to</span>
-              <input type="number" min="0" max="23" v-model.number="state.hour.rangeTo" class="num-input">
+              <span class="cron-prefix">Between</span>
+              <div class="cron-input-group">
+                <input type="number" min="0" max="23" v-model.number="state.hour.rangeFrom" class="num-input">
+                <span class="cron-separator">–</span>
+                <input type="number" min="0" max="23" v-model.number="state.hour.rangeTo" class="num-input">
+              </div>
             </template>
             <template v-else-if="state.hour.mode === 'list'">
-              <div class="chip-row wrap">
+              <div class="chip-row wrap full">
                 <button
                   v-for="n in range(24, 0)"
                   :key="n"
@@ -213,22 +225,28 @@ function range(n, startAt = 0) {
           </div>
           <div class="cron-field-inputs">
             <template v-if="state.dom.mode === 'everyN'">
-              <span class="inline-label">Every</span>
-              <input type="number" min="1" max="31" v-model.number="state.dom.step" class="num-input">
-              <span class="inline-label">day(s)</span>
+              <span class="cron-prefix">Every</span>
+              <div class="cron-input-group">
+                <input type="number" min="1" max="31" v-model.number="state.dom.step" class="num-input">
+                <span class="cron-suffix">day(s)</span>
+              </div>
             </template>
             <template v-else-if="state.dom.mode === 'at'">
-              <span class="inline-label">Day</span>
-              <input type="number" min="1" max="31" v-model.number="state.dom.value" class="num-input">
+              <span class="cron-prefix">Day</span>
+              <div class="cron-input-group">
+                <input type="number" min="1" max="31" v-model.number="state.dom.value" class="num-input">
+              </div>
             </template>
             <template v-else-if="state.dom.mode === 'range'">
-              <span class="inline-label">From</span>
-              <input type="number" min="1" max="31" v-model.number="state.dom.rangeFrom" class="num-input">
-              <span class="inline-label">to</span>
-              <input type="number" min="1" max="31" v-model.number="state.dom.rangeTo" class="num-input">
+              <span class="cron-prefix">Between</span>
+              <div class="cron-input-group">
+                <input type="number" min="1" max="31" v-model.number="state.dom.rangeFrom" class="num-input">
+                <span class="cron-separator">–</span>
+                <input type="number" min="1" max="31" v-model.number="state.dom.rangeTo" class="num-input">
+              </div>
             </template>
             <template v-else-if="state.dom.mode === 'list'">
-              <div class="chip-row wrap">
+              <div class="chip-row wrap full">
                 <button
                   v-for="n in 31"
                   :key="n"
@@ -253,21 +271,26 @@ function range(n, startAt = 0) {
           </div>
           <div class="cron-field-inputs">
             <template v-if="state.month.mode === 'everyN'">
-              <span class="inline-label">Every</span>
-              <input type="number" min="1" max="12" v-model.number="state.month.step" class="num-input">
-              <span class="inline-label">month(s)</span>
+              <span class="cron-prefix">Every</span>
+              <div class="cron-input-group">
+                <input type="number" min="1" max="12" v-model.number="state.month.step" class="num-input">
+                <span class="cron-suffix">month(s)</span>
+              </div>
             </template>
             <template v-else-if="state.month.mode === 'range'">
-              <select v-model.number="state.month.rangeFrom">
-                <option v-for="m in MONTHS" :key="m.n" :value="m.n">{{ m.short }}</option>
-              </select>
-              <span class="inline-label">to</span>
-              <select v-model.number="state.month.rangeTo">
-                <option v-for="m in MONTHS" :key="m.n" :value="m.n">{{ m.short }}</option>
-              </select>
+              <span class="cron-prefix">Between</span>
+              <div class="cron-input-group">
+                <select v-model.number="state.month.rangeFrom" class="cron-select">
+                  <option v-for="m in MONTHS" :key="m.n" :value="m.n">{{ m.short }}</option>
+                </select>
+                <span class="cron-separator">–</span>
+                <select v-model.number="state.month.rangeTo" class="cron-select">
+                  <option v-for="m in MONTHS" :key="m.n" :value="m.n">{{ m.short }}</option>
+                </select>
+              </div>
             </template>
             <template v-else-if="state.month.mode === 'list'">
-              <div class="chip-row">
+              <div class="chip-row full">
                 <button
                   v-for="m in MONTHS"
                   :key="m.n"
@@ -291,16 +314,19 @@ function range(n, startAt = 0) {
           </div>
           <div class="cron-field-inputs">
             <template v-if="state.dow.mode === 'range'">
-              <select v-model.number="state.dow.rangeFrom">
-                <option v-for="d in WEEKDAYS" :key="d.n" :value="d.n">{{ d.short }}</option>
-              </select>
-              <span class="inline-label">to</span>
-              <select v-model.number="state.dow.rangeTo">
-                <option v-for="d in WEEKDAYS" :key="d.n" :value="d.n">{{ d.short }}</option>
-              </select>
+              <span class="cron-prefix">Between</span>
+              <div class="cron-input-group">
+                <select v-model.number="state.dow.rangeFrom" class="cron-select">
+                  <option v-for="d in WEEKDAYS" :key="d.n" :value="d.n">{{ d.short }}</option>
+                </select>
+                <span class="cron-separator">–</span>
+                <select v-model.number="state.dow.rangeTo" class="cron-select">
+                  <option v-for="d in WEEKDAYS" :key="d.n" :value="d.n">{{ d.short }}</option>
+                </select>
+              </div>
             </template>
             <template v-else-if="state.dow.mode === 'list'">
-              <div class="chip-row">
+              <div class="chip-row full">
                 <button
                   v-for="d in WEEKDAYS"
                   :key="d.n"
@@ -444,22 +470,82 @@ function range(n, startAt = 0) {
 }
 
 .cron-field-inputs {
-  display: flex;
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  column-gap: 12px;
+  row-gap: 8px;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
   min-height: 4px;
 }
 
-.inline-label {
+.cron-field-inputs:empty {
+  display: none;
+}
+
+.cron-prefix {
   font-size: 12px;
+  font-weight: 600;
   color: var(--text-secondary);
+  letter-spacing: 0.2px;
+  text-align: right;
+}
+
+.cron-input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cron-suffix {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.cron-separator {
+  font-size: 16px;
+  color: var(--text-muted);
+  user-select: none;
+  line-height: 1;
 }
 
 .num-input {
-  width: 64px;
-  padding: 6px 8px !important;
+  width: 72px;
+  padding: 7px 10px !important;
   font-size: 13px;
+  text-align: center;
+  background: var(--bg-surface-alt);
+  border: 1px solid var(--border-input);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+}
+
+.num-input:focus {
+  background: var(--bg-surface);
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(74, 144, 217, 0.12);
+}
+
+.cron-select {
+  padding: 7px 10px;
+  font-size: 13px;
+  background: var(--bg-surface-alt);
+  border: 1px solid var(--border-input);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+  cursor: pointer;
+}
+
+.cron-select:focus {
+  background: var(--bg-surface);
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(74, 144, 217, 0.12);
 }
 
 .chip-row {
@@ -470,6 +556,9 @@ function range(n, startAt = 0) {
 .chip-row.wrap {
   max-height: 120px;
   overflow-y: auto;
+}
+.chip-row.full {
+  grid-column: 1 / -1;
 }
 
 .chip {
