@@ -291,7 +291,7 @@ function loadFromKV(entries) {
       <h1>Rule Builder</h1>
       <div class="header-actions">
         <button class="header-btn" @click="resetRules" title="Clear all rules and start fresh">New</button>
-        <button class="header-btn" @click="showKvPull = true">Load from KV</button>
+        <button class="header-btn" @click="showKvPull = true" title="Load rules from a NATS KV bucket">Load KV</button>
         <button class="help-toggle" @click="showHelp = true" title="Reference">?</button>
         <button class="theme-toggle" @click="cycleTheme" :title="themeTitle">
           {{ themeIcon }}

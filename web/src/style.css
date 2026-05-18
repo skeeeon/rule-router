@@ -217,14 +217,15 @@ body {
 
 .header-actions {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
 }
 
 .header-btn {
-  padding: 6px 14px;
+  padding: 7px 16px;
   font-size: 12px;
   font-weight: 500;
+  white-space: nowrap;
   background: rgba(255, 255, 255, 0.12);
   color: rgba(255, 255, 255, 0.75);
   border: 1px solid rgba(255, 255, 255, 0.2);
