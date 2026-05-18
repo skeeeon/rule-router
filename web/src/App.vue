@@ -15,6 +15,7 @@ import HelpModal from './components/HelpModal.vue'
 import MessageInspector from './components/MessageInspector.vue'
 import RuleTester from './components/RuleTester.vue'
 import SectionPanel from './components/SectionPanel.vue'
+import ConfirmModal from './components/ConfirmModal.vue'
 
 const inspectedFields = ref([])
 provide('inspectedFields', inspectedFields)
@@ -31,6 +32,7 @@ const showKvModal = ref(false)
 const showKvPull = ref(false)
 const showHelp = ref(false)
 const showDrawer = ref(false)
+const showResetConfirm = ref(false)
 const kvPushTarget = ref(null)
 
 // Theme: 'system' | 'light' | 'dark'
@@ -215,13 +217,19 @@ function resetRules() {
     || !!state.rules[0]?.trigger?.schedule?.cron
     || !!state.rules[0]?.action?.nats?.subject
     || !!state.rules[0]?.action?.http?.url
-  if (hasContent && !confirm('Clear all rules and start fresh? This cannot be undone.')) {
+  if (hasContent) {
+    showResetConfirm.value = true
     return
   }
+  performReset()
+}
+
+function performReset() {
   state.rules = [createRule()]
   state.activeIndex = 0
   state.showConditions = false
   localStorage.removeItem('ruleBuilder.rules')
+  showResetConfirm.value = false
 }
 
 function downloadActiveYaml() {
@@ -398,5 +406,14 @@ function loadFromKV(entries) {
     <KvPushModal v-if="showKvModal" :target="kvPushTarget" @close="showKvModal = false" />
     <KvPullModal v-if="showKvPull" @close="showKvPull = false" @load="loadFromKV" />
     <HelpModal v-if="showHelp" @close="showHelp = false" />
+    <ConfirmModal
+      v-if="showResetConfirm"
+      title="Clear all rules?"
+      message="This will discard the current rules and start fresh. The change cannot be undone."
+      confirm-label="Clear rules"
+      :danger="true"
+      @confirm="performReset"
+      @close="showResetConfirm = false"
+    />
   </div>
 </template>

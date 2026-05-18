@@ -1241,6 +1241,31 @@ textarea:focus-visible {
   width: 560px;
 }
 
+/* Confirm modal variant */
+.modal-confirm {
+  width: 420px;
+  max-width: calc(100vw - 32px);
+}
+
+.confirm-message {
+  font-size: 14px;
+  color: var(--text-primary);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.danger-btn {
+  background: var(--error);
+  color: #fff;
+  border-color: var(--error);
+}
+
+.danger-btn:hover {
+  background: var(--error);
+  border-color: var(--error);
+  filter: brightness(0.92);
+}
+
 /* Fetch button */
 .fetch-btn {
   align-self: flex-start;

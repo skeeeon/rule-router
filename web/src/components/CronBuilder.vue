@@ -51,7 +51,6 @@ watch(state, emitFromSimple, { deep: true })
 
 function applyPreset(cron) {
   props.schedule.cron = cron
-  activeTab.value = 'simple'
 }
 
 function toggleListValue(field, value) {
