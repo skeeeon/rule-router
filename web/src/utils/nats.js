@@ -7,7 +7,14 @@ import { Kvm } from '@nats-io/kv'
 function buildOpts(url, creds) {
   const opts = { servers: url }
   if (creds) {
-    opts.authenticator = credsAuthenticator(new TextEncoder().encode(creds))
+    // credsAuthenticator parses with a regex that requires LF line endings and
+    // no leading BOM. Normalize so Windows-saved or BOM-prefixed .creds files
+    // don't blow up with "unable to parse credentials".
+    const normalized = creds
+      .replace(/^﻿/, '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+    opts.authenticator = credsAuthenticator(new TextEncoder().encode(normalized))
   }
   return opts
 }

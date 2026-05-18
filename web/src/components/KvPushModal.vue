@@ -47,12 +47,10 @@ function saveSettings() {
   }
 }
 
-function onCredsFile(event) {
+async function onCredsFile(event) {
   const file = event.target.files[0]
   if (!file) return
-  const reader = new FileReader()
-  reader.onload = () => { form.creds = reader.result }
-  reader.readAsText(file)
+  form.creds = await file.text()
 }
 
 async function test() {
