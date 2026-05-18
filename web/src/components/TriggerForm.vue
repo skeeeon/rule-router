@@ -33,6 +33,10 @@ function toggleDebounce(target) {
           v-model="trigger.nats.subject"
           placeholder="sensors.temperature.>"
           :class="{ error: errorFor('trigger.nats.subject') }"
+          autocapitalize="off"
+          autocorrect="off"
+          autocomplete="off"
+          spellcheck="false"
         >
         <span class="field-error" v-if="errorFor('trigger.nats.subject')">
           {{ errorFor('trigger.nats.subject').message }}
@@ -54,6 +58,11 @@ function toggleDebounce(target) {
           v-model="trigger.http.path"
           placeholder="/webhooks/github"
           :class="{ error: errorFor('trigger.http.path') }"
+          autocapitalize="off"
+          autocorrect="off"
+          autocomplete="off"
+          spellcheck="false"
+          inputmode="url"
         >
         <span class="field-error" v-if="errorFor('trigger.http.path')">
           {{ errorFor('trigger.http.path').message }}

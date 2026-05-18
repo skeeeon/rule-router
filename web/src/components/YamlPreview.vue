@@ -87,9 +87,11 @@ function pushAll() {
         v-for="(f, i) in files"
         :key="f.file"
         class="preview-tab"
-        :class="{ active: activeTab === i }"
+        :class="{ active: activeTab === i, 'has-errors': f.errorCount > 0 }"
+        :title="f.errorCount > 0 ? `${f.errorCount} validation error${f.errorCount === 1 ? '' : 's'} in this file` : ''"
         @click="activeTab = i"
       >
+        <span v-if="f.errorCount > 0" class="tab-error-dot">&#9679;</span>
         {{ f.file }}<span class="tab-count">{{ f.ruleCount }}</span>
       </button>
     </div>

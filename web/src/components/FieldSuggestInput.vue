@@ -114,6 +114,9 @@ function typeLabel(type) {
       @blur="onBlur"
       @keydown="onKeydown"
       autocomplete="off"
+      autocapitalize="off"
+      autocorrect="off"
+      spellcheck="false"
     >
     <span v-if="fieldWarning" class="field-warn-hint">not in sample</span>
     <div v-if="visible" class="suggest-dropdown">

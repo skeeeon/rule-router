@@ -1,5 +1,5 @@
 <script setup>
-import { ref, inject, nextTick } from 'vue'
+import { ref, inject, nextTick, onMounted, onUnmounted } from 'vue'
 import { createDebounce, createRetry, createConditions, createPublishResponse } from '../utils/state.js'
 import HeadersEditor from './HeadersEditor.vue'
 import DebounceEditor from './DebounceEditor.vue'
@@ -13,15 +13,19 @@ const props = defineProps({
 })
 
 const inspectedFields = inject('inspectedFields', ref([]))
+const activePayloadInsert = inject('activePayloadInsert', ref(null))
 
 const natsPayloadEl = ref(null)
 const httpPayloadEl = ref(null)
 
-// Track last known cursor position so chip clicks insert at the right spot
+// Track last known cursor position so chip clicks insert at the right spot.
 const cursorPositions = { nats: null, http: null }
+// Last payload textarea the user touched — used when an external chip (Inspector) fires.
+let lastFocused = null  // 'nats' | 'http' | null
 
 function saveCursor(e, which) {
   cursorPositions[which] = { start: e.target.selectionStart, end: e.target.selectionEnd }
+  lastFocused = which
 }
 
 function insertField(path, which, target, key) {
@@ -41,6 +45,22 @@ function insertField(path, which, target, key) {
     })
   }
 }
+
+// Expose an insert function so the Inspector chip can insert into the active payload.
+onMounted(() => {
+  activePayloadInsert.value = (path) => {
+    const which = lastFocused || props.action.type
+    if (which === 'nats' && props.action.type === 'nats' && !props.action.nats.passthrough) {
+      insertField(path, 'nats', props.action.nats, 'payload')
+    } else if (which === 'http' && props.action.type === 'http' && !props.action.http.passthrough) {
+      insertField(path, 'http', props.action.http, 'payload')
+    }
+  }
+})
+
+onUnmounted(() => {
+  activePayloadInsert.value = null
+})
 
 function typeLabel(type) {
   const labels = { string: 'str', number: 'num', boolean: 'bool', array: 'arr', null: 'null' }
@@ -71,6 +91,10 @@ function toggleOption(target, key, factory) {
           v-model="action.nats.subject"
           placeholder="alerts.high_temp.{@subject.2}"
           :class="{ error: errorFor('action.nats.subject') }"
+          autocapitalize="off"
+          autocorrect="off"
+          autocomplete="off"
+          spellcheck="false"
         >
         <span class="field-error" v-if="errorFor('action.nats.subject')">
           {{ errorFor('action.nats.subject').message }}
@@ -164,6 +188,12 @@ function toggleOption(target, key, factory) {
           v-model="action.http.url"
           placeholder="https://api.example.com/webhook"
           :class="{ error: errorFor('action.http.url') }"
+          type="url"
+          autocapitalize="off"
+          autocorrect="off"
+          autocomplete="off"
+          spellcheck="false"
+          inputmode="url"
         >
         <span class="field-error" v-if="errorFor('action.http.url')">
           {{ errorFor('action.http.url').message }}

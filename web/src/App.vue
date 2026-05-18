@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, computed, ref, provide, onMounted, watch } from 'vue'
+import { reactive, computed, ref, provide, onMounted, onUnmounted, watch } from 'vue'
 import { createRule, createConditions, groupRulesByFile, uid } from './utils/state.js'
 import { rulesToYaml } from './utils/yaml.js'
 import { validateRule } from './utils/validate.js'
@@ -14,9 +14,18 @@ import KvPullModal from './components/KvPullModal.vue'
 import HelpModal from './components/HelpModal.vue'
 import MessageInspector from './components/MessageInspector.vue'
 import RuleTester from './components/RuleTester.vue'
+import SectionPanel from './components/SectionPanel.vue'
 
 const inspectedFields = ref([])
 provide('inspectedFields', inspectedFields)
+
+// Shared sample JSON between Inspector and Tester
+const sampleMessage = ref('')
+provide('sampleMessage', sampleMessage)
+
+// Set by ActionForm while a payload textarea is mounted; called by Inspector chips.
+const activePayloadInsert = ref(null)
+provide('activePayloadInsert', activePayloadInsert)
 
 const showKvModal = ref(false)
 const showKvPull = ref(false)
@@ -113,14 +122,25 @@ watch(() => state.rules, (rules) => {
 
 const activeRule = computed(() => state.rules[state.activeIndex])
 
-// Group rules by filename, generate YAML per group
+// Validation errors per rule, indexed alongside state.rules.
+const allErrors = computed(() => state.rules.map(r => validateRule(r)))
+
+// Group rules by filename, generate YAML per group, count errors per file.
 const files = computed(() => {
   const groups = groupRulesByFile(state.rules)
-  return groups.map(g => ({
-    file: g.file,
-    yaml: rulesToYaml(g.rules),
-    ruleCount: g.rules.length,
-  }))
+  return groups.map(g => {
+    let errorCount = 0
+    for (const r of g.rules) {
+      const idx = state.rules.indexOf(r)
+      if (idx >= 0) errorCount += allErrors.value[idx].length
+    }
+    return {
+      file: g.file,
+      yaml: rulesToYaml(g.rules),
+      ruleCount: g.rules.length,
+      errorCount,
+    }
+  })
 })
 
 // YAML for the active rule's file group (used by the tester)
@@ -141,10 +161,7 @@ function openKvPushAll(allFiles) {
   showKvModal.value = true
 }
 
-const errors = computed(() => {
-  if (!activeRule.value) return []
-  return validateRule(activeRule.value)
-})
+const errors = computed(() => allErrors.value[state.activeIndex] || [])
 
 function errorFor(path) {
   return errors.value.find(e => e.path === path)
@@ -192,11 +209,57 @@ function toggleConditions() {
 }
 
 function resetRules() {
+  const hasContent = state.rules.length > 1
+    || !!state.rules[0]?.trigger?.nats?.subject
+    || !!state.rules[0]?.trigger?.http?.path
+    || !!state.rules[0]?.trigger?.schedule?.cron
+    || !!state.rules[0]?.action?.nats?.subject
+    || !!state.rules[0]?.action?.http?.url
+  if (hasContent && !confirm('Clear all rules and start fresh? This cannot be undone.')) {
+    return
+  }
   state.rules = [createRule()]
   state.activeIndex = 0
   state.showConditions = false
   localStorage.removeItem('ruleBuilder.rules')
 }
+
+function downloadActiveYaml() {
+  if (state.activeIndex < 0) return
+  const file = activeRule.value?.file || 'untitled'
+  const group = files.value.find(f => f.file === file)
+  if (!group) return
+  const name = file.endsWith('.yaml') ? file : file + '.yaml'
+  const blob = new Blob([group.yaml], { type: 'text/yaml' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function isTextInput(el) {
+  if (!el) return false
+  const tag = el.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable
+}
+
+function onGlobalKeydown(e) {
+  const mod = e.metaKey || e.ctrlKey
+  if (mod && (e.key === 's' || e.key === 'S')) {
+    e.preventDefault()
+    downloadActiveYaml()
+    return
+  }
+  if (e.key === '?' && !isTextInput(e.target) && !showHelp.value) {
+    e.preventDefault()
+    showHelp.value = true
+  }
+}
+
+onMounted(() => document.addEventListener('keydown', onGlobalKeydown))
+onUnmounted(() => document.removeEventListener('keydown', onGlobalKeydown))
 
 // Load rules pulled from KV into the builder, replacing current state.
 function loadFromKV(entries) {
@@ -236,6 +299,7 @@ function loadFromKV(entries) {
             v-if="i !== state.activeIndex"
             :rule="rule"
             :index="i"
+            :error-count="allErrors[i].length"
             :can-remove="state.rules.length > 1"
             @edit="editRule(i)"
             @remove="removeRule(i)"
@@ -251,6 +315,10 @@ function loadFromKV(entries) {
                   v-model="rule.file"
                   placeholder="untitled"
                   title="Filename — rules with the same name group into one file"
+                  autocapitalize="off"
+                  autocorrect="off"
+                  autocomplete="off"
+                  spellcheck="false"
                 >
               </div>
               <div class="rule-editor-actions">
@@ -273,20 +341,18 @@ function loadFromKV(entries) {
               </div>
             </div>
 
-            <MessageInspector v-model="inspectedFields" />
+            <MessageInspector />
 
-            <div class="section">
-              <h2>Trigger</h2>
+            <SectionPanel title="Trigger">
               <TriggerForm :trigger="rule.trigger" :error-for="errorFor" />
-            </div>
+            </SectionPanel>
 
-            <div class="section">
-              <h2>
-                Conditions
+            <SectionPanel title="Conditions">
+              <template #header-actions>
                 <button class="toggle-btn" @click="toggleConditions">
                   {{ state.showConditions ? 'Clear' : 'Add Conditions' }}
                 </button>
-              </h2>
+              </template>
               <ConditionsBuilder
                 v-if="state.showConditions && rule.conditions"
                 v-model="rule.conditions"
@@ -294,12 +360,11 @@ function loadFromKV(entries) {
                 prefix="conditions"
               />
               <p v-else class="hint">No conditions — action runs on every trigger match.</p>
-            </div>
+            </SectionPanel>
 
-            <div class="section">
-              <h2>Action</h2>
+            <SectionPanel title="Action">
               <ActionForm :action="rule.action" :error-for="errorFor" />
-            </div>
+            </SectionPanel>
 
             <RuleTester :rule="rule" :yaml="activeFileYaml" />
           </div>

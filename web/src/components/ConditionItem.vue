@@ -1,11 +1,40 @@
 <script setup>
 import { computed } from 'vue'
-import { VALID_OPERATORS, ARRAY_OPERATORS } from '../utils/validate.js'
+import { ARRAY_OPERATORS } from '../utils/validate.js'
 import { createConditions } from '../utils/state.js'
 import ConditionsBuilder from './ConditionsBuilder.vue'
 import FieldSuggestInput from './FieldSuggestInput.vue'
 
 const LIST_OPERATORS = ['in', 'not_in']
+
+// Grouped operator list shown in the dropdown. Mirrors the Help reference.
+const OPERATOR_GROUPS = [
+  { label: 'Comparison', ops: [
+    { value: 'eq',  label: 'eq (=)' },
+    { value: 'neq', label: 'neq (≠)' },
+    { value: 'gt',  label: 'gt (>)' },
+    { value: 'lt',  label: 'lt (<)' },
+    { value: 'gte', label: 'gte (≥)' },
+    { value: 'lte', label: 'lte (≤)' },
+  ]},
+  { label: 'String', ops: [
+    { value: 'contains',     label: 'contains' },
+    { value: 'not_contains', label: 'not_contains' },
+  ]},
+  { label: 'Membership', ops: [
+    { value: 'in',     label: 'in (list)' },
+    { value: 'not_in', label: 'not_in (list)' },
+  ]},
+  { label: 'Special', ops: [
+    { value: 'exists', label: 'exists' },
+    { value: 'recent', label: 'recent (seconds)' },
+  ]},
+  { label: 'Array', ops: [
+    { value: 'any',  label: 'any' },
+    { value: 'all',  label: 'all' },
+    { value: 'none', label: 'none' },
+  ]},
+]
 
 const OPERATOR_PLACEHOLDERS = {
   eq: 'exact value',
@@ -83,7 +112,9 @@ function onOperatorChange() {
       </div>
       <div class="field compact">
         <select v-model="item.operator" @change="onOperatorChange">
-          <option v-for="op in VALID_OPERATORS" :key="op" :value="op">{{ op }}</option>
+          <optgroup v-for="g in OPERATOR_GROUPS" :key="g.label" :label="g.label">
+            <option v-for="op in g.ops" :key="op.value" :value="op.value">{{ op.label }}</option>
+          </optgroup>
         </select>
       </div>
 
@@ -93,6 +124,10 @@ function onOperatorChange() {
           v-model="listValueDisplay"
           placeholder="val1, val2, val3"
           :class="{ error: errorFor(`${prefix}.value`) }"
+          autocapitalize="off"
+          autocorrect="off"
+          autocomplete="off"
+          spellcheck="false"
         >
         <span class="field-error" v-if="errorFor(`${prefix}.value`)">
           {{ errorFor(`${prefix}.value`).message }}
@@ -105,6 +140,10 @@ function onOperatorChange() {
           v-model="item.value"
           :placeholder="OPERATOR_PLACEHOLDERS[item.operator] || 'value'"
           :class="{ error: errorFor(`${prefix}.value`) }"
+          autocapitalize="off"
+          autocorrect="off"
+          autocomplete="off"
+          spellcheck="false"
         >
         <span class="field-error" v-if="errorFor(`${prefix}.value`)">
           {{ errorFor(`${prefix}.value`).message }}

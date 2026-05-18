@@ -2,6 +2,7 @@
 const props = defineProps({
   rule: Object,
   index: Number,
+  errorCount: { type: Number, default: 0 },
   canRemove: { type: Boolean, default: true },
 })
 
@@ -25,8 +26,13 @@ function summary(rule) {
 </script>
 
 <template>
-  <div class="rule-card" @click="emit('edit')">
+  <div class="rule-card" :class="{ 'has-errors': errorCount > 0 }" @click="emit('edit')">
     <span class="rule-index">Rule {{ index + 1 }}</span>
+    <span
+      v-if="errorCount > 0"
+      class="rule-error-badge"
+      :title="`${errorCount} validation ${errorCount === 1 ? 'error' : 'errors'} — click to edit`"
+    >&#9888; {{ errorCount }}</span>
     <span v-if="rule.file" class="rule-file-badge">{{ rule.file }}</span>
     <span class="rule-summary">{{ summary(rule) }}</span>
     <button class="rule-action-btn" @click.stop="emit('duplicate')" title="Duplicate rule">&#x2398;</button>

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, inject } from 'vue'
+import { ref, computed, watch, inject, onMounted, onUnmounted } from 'vue'
 import { callEvaluateRule, getWasmState, loadWasm } from '../utils/wasm.js'
 
 const props = defineProps({
@@ -8,9 +8,14 @@ const props = defineProps({
 })
 
 const inspectedFields = inject('inspectedFields', ref([]))
+const sampleMessage = inject('sampleMessage', ref(''))
 
-const expanded = ref(false)
-const messageInput = ref('')
+const messageModel = computed({
+  get: () => sampleMessage.value,
+  set: (v) => { sampleMessage.value = v },
+})
+
+const expanded = ref(true)
 const subjectInput = ref('')
 const pathInput = ref('')
 const methodInput = ref('POST')
@@ -24,31 +29,65 @@ const wasmLoading = ref(false)
 const result = ref(null)
 const error = ref(null)
 
-// Auto-populate trigger fields when rule changes
+// Track previous trigger values so we only auto-populate when the user hasn't customized.
+let prevSubject = ''
+let prevPath = ''
+let prevMethod = 'POST'
+
 watch(() => props.rule?.trigger, (trigger) => {
   if (!trigger) return
-  if (trigger.type === 'nats' && trigger.nats.subject) {
-    subjectInput.value = trigger.nats.subject
+  if (trigger.type === 'nats') {
+    const next = trigger.nats.subject || ''
+    if (subjectInput.value === '' || subjectInput.value === prevSubject) {
+      subjectInput.value = next
+    }
+    prevSubject = next
   } else if (trigger.type === 'http') {
-    pathInput.value = trigger.http.path || '/'
-    methodInput.value = trigger.http.method || 'POST'
+    const nextPath = trigger.http.path || '/'
+    const nextMethod = trigger.http.method || 'POST'
+    if (pathInput.value === '' || pathInput.value === prevPath) {
+      pathInput.value = nextPath
+    }
+    if (methodInput.value === prevMethod) {
+      methodInput.value = nextMethod
+    }
+    prevPath = nextPath
+    prevMethod = nextMethod
   }
 }, { immediate: true, deep: true })
 
 const triggerType = computed(() => props.rule?.trigger?.type || 'nats')
 
-// Start loading WASM when panel is opened
-watch(expanded, (val) => {
-  if (val) {
-    const state = getWasmState()
-    if (!state.ready && !state.loading) {
-      wasmLoading.value = true
-      loadWasm()
-        .then(() => { wasmLoading.value = false })
-        .catch(() => { wasmLoading.value = false })
-    }
-  }
+function kickoffWasm() {
+  const state = getWasmState()
+  if (state.ready || state.loading) return
+  wasmLoading.value = true
+  loadWasm()
+    .then(() => { wasmLoading.value = false })
+    .catch(() => { wasmLoading.value = false })
+}
+
+// Load WASM on mount (default-expanded) and when re-expanded after collapse.
+onMounted(() => {
+  if (expanded.value) kickoffWasm()
+  document.addEventListener('keydown', onKeydown)
 })
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKeydown)
+})
+
+watch(expanded, (val) => {
+  if (val) kickoffWasm()
+})
+
+function onKeydown(e) {
+  if (!expanded.value) return
+  if (!(e.metaKey || e.ctrlKey) || e.key !== 'Enter') return
+  if (loading.value || wasmLoading.value) return
+  e.preventDefault()
+  runTest()
+}
 
 function formatPayload(payload) {
   if (!payload) return ''
@@ -60,7 +99,7 @@ function formatPayload(payload) {
 }
 
 async function runTest() {
-  if (!messageInput.value.trim()) {
+  if (!sampleMessage.value.trim()) {
     error.value = 'Sample message is required'
     result.value = null
     return
@@ -68,7 +107,7 @@ async function runTest() {
 
   // Validate JSON
   try {
-    JSON.parse(messageInput.value)
+    JSON.parse(sampleMessage.value)
   } catch (e) {
     error.value = `Invalid JSON message: ${e.message}`
     result.value = null
@@ -112,7 +151,7 @@ async function runTest() {
       kvMock,
     }
 
-    result.value = await callEvaluateRule(props.yaml, messageInput.value, options)
+    result.value = await callEvaluateRule(props.yaml, sampleMessage.value, options)
 
     if (result.value.error) {
       error.value = result.value.error
@@ -146,9 +185,9 @@ async function runTest() {
 
       <!-- Inputs -->
       <div class="field">
-        <label>Sample Message</label>
+        <label>Sample Message <span class="optional">(shared with inspector)</span></label>
         <textarea
-          v-model="messageInput"
+          v-model="messageModel"
           class="tester-message"
           rows="6"
           placeholder='{"temperature": 105, "sensor_id": "room1"}'
@@ -159,12 +198,27 @@ async function runTest() {
       <!-- Trigger context -->
       <div v-if="triggerType === 'nats'" class="field">
         <label>Subject</label>
-        <input v-model="subjectInput" placeholder="sensors.temperature.room1">
+        <input
+          v-model="subjectInput"
+          placeholder="sensors.temperature.room1"
+          autocapitalize="off"
+          autocorrect="off"
+          autocomplete="off"
+          spellcheck="false"
+        >
       </div>
       <div v-else-if="triggerType === 'http'" class="field-row">
         <div class="field">
           <label>Path</label>
-          <input v-model="pathInput" placeholder="/webhooks/github">
+          <input
+            v-model="pathInput"
+            placeholder="/webhooks/github"
+            autocapitalize="off"
+            autocorrect="off"
+            autocomplete="off"
+            spellcheck="false"
+            inputmode="url"
+          >
         </div>
         <div class="field">
           <label>Method</label>
@@ -207,7 +261,7 @@ async function runTest() {
       </div>
 
       <!-- Run button -->
-      <button class="primary-btn tester-run-btn" @click="runTest" :disabled="loading || wasmLoading">
+      <button class="primary-btn tester-run-btn" @click="runTest" :disabled="loading || wasmLoading" title="Run Test (Ctrl/Cmd+Enter)">
         {{ loading ? 'Testing...' : 'Run Test' }}
       </button>
 

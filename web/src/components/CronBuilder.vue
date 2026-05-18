@@ -11,7 +11,11 @@ const props = defineProps({
   errorFor: Function,
 })
 
-const activeTab = ref('simple')
+// On phones the Simple builder is a wall of vertical scroll — most users will
+// pick a preset or paste a cron expression. Default to Advanced on mobile.
+const isMobile = typeof window !== 'undefined'
+  && window.matchMedia?.('(max-width: 768px)').matches
+const activeTab = ref(isMobile ? 'advanced' : 'simple')
 const state = reactive(emptyState())
 const unsupported = ref(false)
 let writingFromSimple = false
@@ -325,6 +329,10 @@ function range(n, startAt = 0) {
           v-model="schedule.cron"
           placeholder="0 8 * * 1-5"
           :class="{ error: !!cronError }"
+          autocapitalize="off"
+          autocorrect="off"
+          autocomplete="off"
+          spellcheck="false"
         >
         <span class="field-error" v-if="cronError">{{ cronError.message }}</span>
         <span class="field-hint">5-field: minute hour day-of-month month day-of-week</span>
@@ -348,7 +356,14 @@ function range(n, startAt = 0) {
 
     <div class="field">
       <label>Timezone <span class="optional">(optional)</span></label>
-      <input v-model="schedule.timezone" placeholder="America/New_York">
+      <input
+        v-model="schedule.timezone"
+        placeholder="America/New_York"
+        autocapitalize="off"
+        autocorrect="off"
+        autocomplete="off"
+        spellcheck="false"
+      >
     </div>
   </div>
 </template>

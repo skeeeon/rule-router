@@ -136,6 +136,7 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  -webkit-tap-highlight-color: transparent;
 }
 
 html, body {
@@ -331,6 +332,69 @@ body {
   gap: 10px;
 }
 
+/* ── Collapsible section panel ──────────────────────── */
+
+.section-panel.collapsed {
+  padding: 12px 20px;
+}
+
+.section-panel .section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.section-panel.collapsed .section-header {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.section-panel .section-toggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.section-panel .section-toggle:hover {
+  background: none;
+  color: var(--text-primary);
+}
+
+.section-panel .section-toggle:active {
+  transform: none;
+}
+
+.section-panel .section-chevron {
+  font-size: 11px;
+  color: var(--text-muted);
+  width: 12px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.section-panel .section-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 /* ── Rule editor header ─────────────────────────────── */
 
 .rule-editor {
@@ -516,7 +580,7 @@ body {
 .checkbox {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   cursor: pointer;
   font-size: 13px;
   color: var(--text-secondary);
@@ -525,6 +589,47 @@ body {
 .checkbox.inline {
   display: inline-flex;
   margin-right: 18px;
+}
+
+.checkbox input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin: 0;
+  border: 1px solid var(--border-input);
+  border-radius: 4px;
+  background: var(--bg-surface);
+  cursor: pointer;
+  position: relative;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.checkbox input[type="checkbox"]:hover {
+  border-color: var(--accent);
+}
+
+.checkbox input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.checkbox input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.checkbox input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .option-toggles {
@@ -830,6 +935,25 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.rule-card.has-errors {
+  border-color: var(--error);
+}
+
+.rule-card.has-errors:hover {
+  border-color: var(--error);
+}
+
+.rule-error-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--error-text);
+  background: var(--error-bg);
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  border: 1px solid var(--error);
+}
+
 /* ── YAML Preview ───────────────────────────────────── */
 
 .yaml-preview {
@@ -953,6 +1077,17 @@ textarea:focus-visible {
 .preview-tab.active .tab-count {
   background: var(--tab-count-active-bg);
   color: var(--accent-text);
+}
+
+.preview-tab.has-errors {
+  color: var(--error-text);
+}
+
+.tab-error-dot {
+  font-size: 9px;
+  color: var(--error);
+  margin-right: 4px;
+  vertical-align: middle;
 }
 
 .yaml-code {
@@ -1942,12 +2077,14 @@ textarea:focus-visible {
     padding: 16px;
   }
 
-  .radio-group {
+  /* Only stack the dense 5-mode cron radios; the 2- and 3-item trigger/action
+     selectors stay horizontal as a segmented control. */
+  .radio-group.compact {
     flex-direction: column;
     gap: 2px;
   }
 
-  .radio-group label {
+  .radio-group.compact label {
     justify-content: flex-start;
     padding: 10px 14px;
   }
@@ -1988,6 +2125,50 @@ textarea:focus-visible {
   .preview-toolbar button {
     text-align: center;
   }
+
+  /* Prevent iOS Safari from zooming when focusing form fields.
+     !important is needed to override Vue scoped styles (e.g. JsonTextarea). */
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
+  /* Larger checkbox hit target on touch screens. */
+  .checkbox input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+  }
+  .checkbox input[type="checkbox"]:checked::after {
+    left: 7px;
+    top: 3px;
+    width: 6px;
+    height: 11px;
+    border-width: 0 2.5px 2.5px 0;
+  }
+  .checkbox {
+    gap: 10px;
+    font-size: 14px;
+  }
+
+  /* 40x40 minimum touch targets for icon buttons. */
+  .rule-action-btn {
+    width: 40px;
+    height: 40px;
+    font-size: 17px;
+  }
+  .help-toggle,
+  .theme-toggle {
+    width: 40px;
+    height: 40px;
+    font-size: 17px;
+  }
+  .remove-btn {
+    padding: 8px 12px;
+    min-width: 40px;
+    min-height: 40px;
+  }
 }
 
 @media (max-width: 480px) {
@@ -2011,5 +2192,16 @@ textarea:focus-visible {
 
   .drawer {
     height: 80vh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
