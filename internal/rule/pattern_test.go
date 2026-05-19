@@ -540,3 +540,63 @@ func BenchmarkNewPatternMatcher(b *testing.B) {
 		NewPatternMatcher(pattern)
 	}
 }
+
+// BenchmarkPatternMatcher_MatchTokens_Exact benchmarks the exact-match fast
+// path on MatchTokens (the path RuleIndex uses). This is the path whose
+// implementation switched from strings.Join+compare to slice equality.
+func BenchmarkPatternMatcher_MatchTokens_Exact(b *testing.B) {
+	matcher, _ := NewPatternMatcher("sensors.temperature.room1")
+	tokens := []string{"sensors", "temperature", "room1"}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		matcher.MatchTokens(tokens)
+	}
+}
+
+// BenchmarkPatternMatcher_MatchTokens_ExactMiss benchmarks the early-exit
+// path when a token doesn't match (slice equality should short-circuit).
+func BenchmarkPatternMatcher_MatchTokens_ExactMiss(b *testing.B) {
+	matcher, _ := NewPatternMatcher("sensors.temperature.room1")
+	tokens := []string{"sensors", "temperature", "room999"}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		matcher.MatchTokens(tokens)
+	}
+}
+
+// BenchmarkPatternMatcher_MatchTokens_Wildcard benchmarks pattern matching
+// via MatchTokens; this branch is unchanged so it serves as a regression check.
+func BenchmarkPatternMatcher_MatchTokens_Wildcard(b *testing.B) {
+	matcher, _ := NewPatternMatcher("building.*.floor.*.>")
+	tokens := []string{"building", "main", "floor", "3", "room", "101", "sensor", "temp"}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		matcher.MatchTokens(tokens)
+	}
+}
+
+// BenchmarkPathMatcher_Exact benchmarks exact HTTP path matching via
+// MatchPath (new code path introduced for the gateway).
+func BenchmarkPathMatcher_Exact(b *testing.B) {
+	matcher, _ := NewPathMatcher("/webhooks/github/events")
+	path := "/webhooks/github/events"
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		MatchPath(matcher, path)
+	}
+}
+
+// BenchmarkPathMatcher_Wildcard benchmarks single-wildcard HTTP path matching.
+func BenchmarkPathMatcher_Wildcard(b *testing.B) {
+	matcher, _ := NewPathMatcher("/webhooks/*/events")
+	path := "/webhooks/github/events"
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		MatchPath(matcher, path)
+	}
+}

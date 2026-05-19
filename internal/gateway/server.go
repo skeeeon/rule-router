@@ -47,6 +47,9 @@ type webhookJob struct {
 
 // InboundServer handles HTTP requests and publishes to NATS.
 // It uses a fixed-size worker pool for bounded concurrency and backpressure.
+// All HTTP paths route through a single catch-all handler that delegates
+// path-to-rule matching to the Processor. This handles both exact and
+// wildcard paths for file-loaded and KV-loaded rules.
 type InboundServer struct {
 	logger     *logger.Logger
 	metrics    *metrics.Metrics
@@ -56,7 +59,6 @@ type InboundServer struct {
 	httpServer *http.Server
 	publishCfg *PublishConfig
 	serverCfg  *ServerConfig
-	kvMode     bool              // When true, use catch-all handler for dynamic KV paths
 
 	// Worker pool components
 	workQueue chan webhookJob   // Buffered channel acting as a job queue
@@ -125,12 +127,6 @@ func NewInboundServer(
 	}
 }
 
-// SetKVMode enables catch-all HTTP routing for dynamic KV rule paths.
-// Must be called before Start().
-func (s *InboundServer) SetKVMode(enabled bool) {
-	s.kvMode = enabled
-}
-
 // Start begins the HTTP server and starts the worker pool.
 func (s *InboundServer) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
@@ -139,19 +135,12 @@ func (s *InboundServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/health", s.healthHandler)
 	mux.HandleFunc("/healthz", s.healthHandler)
 
-	if s.kvMode {
-		// KV mode: catch-all handler routes all paths through the processor.
-		// The processor returns nil for unknown paths, which results in a 404.
-		mux.HandleFunc("/", s.catchAllHandler)
-		s.logger.Info("registered catch-all HTTP handler for KV rule mode")
-	} else {
-		// File mode: register explicit paths from loaded rules
-		paths := s.processor.GetHTTPPaths()
-		for _, path := range paths {
-			handlerPath := path
-			mux.HandleFunc(handlerPath, s.webhookHandler(handlerPath))
-			s.logger.Info("registered HTTP handler", "path", handlerPath)
-		}
+	// Single catch-all handler delegates path matching to the processor.
+	// Static, wildcard, file-loaded, and KV-loaded rules all flow through here.
+	mux.HandleFunc("/", s.webhookHandler)
+
+	for _, path := range s.processor.GetHTTPPaths() {
+		s.logger.Info("registered HTTP rule path", "path", path)
 	}
 
 	// Create HTTP server
@@ -169,13 +158,8 @@ func (s *InboundServer) Start(ctx context.Context) error {
 
 	// Start server in goroutine
 	go func() {
-		mode := "file"
-		if s.kvMode {
-			mode = "kv"
-		}
 		s.logger.Info("starting HTTP inbound server",
 			"address", s.serverCfg.Address,
-			"mode", mode,
 			"workers", s.serverCfg.InboundWorkerCount,
 			"queueSize", s.serverCfg.InboundQueueSize)
 
@@ -232,78 +216,6 @@ func (s *InboundServer) Stop(ctx context.Context) error {
 
 	s.logger.Info("HTTP inbound server and all workers stopped successfully")
 	return nil
-}
-
-// webhookHandler now ENQUEUES jobs instead of processing them directly.
-// It provides backpressure by returning 503 if the queue is full.
-func (s *InboundServer) webhookHandler(path string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-
-		// Log request
-		s.logger.Debug("webhook received",
-			"path", r.URL.Path,
-			"method", r.Method,
-			"remoteAddr", r.RemoteAddr)
-
-		// Ensure body is closed regardless of read success/failure
-		defer r.Body.Close()
-
-		// Read request body (with size limit)
-		body, err := io.ReadAll(io.LimitReader(r.Body, MaxInboundBodySize))
-		if err != nil {
-			s.logger.Error("failed to read request body", "error", err)
-			http.Error(w, "Bad Request", http.StatusBadRequest)
-			if s.metrics != nil {
-				s.metrics.IncHTTPInboundRequestsTotal(path, r.Method, "400")
-			}
-			return
-		}
-
-		// Extract headers, canonicalizing keys so rule template lookups are case-insensitive.
-		headers := make(map[string]string)
-		for key, values := range r.Header {
-			if len(values) > 0 {
-				headers[textproto.CanonicalMIMEHeaderKey(key)] = values[0]
-			}
-		}
-
-		// Create a job with the request data.
-		job := webhookJob{
-			path:    path,
-			method:  r.Method,
-			body:    body,
-			headers: headers,
-		}
-
-		// Non-blocking send to the work queue.
-		select {
-		case s.workQueue <- job:
-			// Job successfully enqueued. Return 200 OK.
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(responseAccepted))
-			if s.metrics != nil {
-				s.metrics.IncHTTPInboundRequestsTotal(path, r.Method, "200")
-			}
-		default:
-			// The queue is full. This is our backpressure mechanism.
-			s.logger.Warn("inbound work queue full, rejecting request",
-				"path", path,
-				"queueCapacity", s.serverCfg.InboundQueueSize,
-				"hint", "increase http.server.inboundQueueSize in config or add more workers")
-			http.Error(w, fmt.Sprintf("Service Unavailable: webhook queue full (%d/%d). Increase http.server.inboundQueueSize in config.",
-				s.serverCfg.InboundQueueSize, s.serverCfg.InboundQueueSize), http.StatusServiceUnavailable)
-			if s.metrics != nil {
-				s.metrics.IncHTTPInboundRequestsTotal(path, r.Method, "503")
-			}
-		}
-
-		// Observe duration of the HTTP handler itself (which should be very fast).
-		if s.metrics != nil {
-			s.metrics.ObserveHTTPRequestDuration(path, r.Method, time.Since(start).Seconds())
-		}
-	}
 }
 
 // processWebhookWithRecovery wraps processWebhook with panic recovery.
@@ -416,25 +328,24 @@ func (s *InboundServer) publishToNATS(ctx context.Context, action *rule.NATSActi
 	}
 }
 
-// healthHandler responds to health check requests
-// catchAllHandler handles all HTTP requests in KV mode, delegating to the processor.
-// Unknown paths (no rules) result in a 404. This enables dynamic HTTP path registration
-// when rules are loaded from KV at runtime.
-func (s *InboundServer) catchAllHandler(w http.ResponseWriter, r *http.Request) {
+// webhookHandler is the single HTTP entry point. It delegates path matching
+// to the Processor (which handles both exact paths and wildcard patterns),
+// enqueues matching requests onto the worker pool, and returns 503 when the
+// queue is full. Unknown paths receive 404 with a sentinel metric label to
+// bound metric cardinality under path-scan traffic.
+func (s *InboundServer) webhookHandler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	path := r.URL.Path
 
-	s.logger.Debug("webhook received (catch-all)",
+	s.logger.Debug("webhook received",
 		"path", path,
 		"method", r.Method,
 		"remoteAddr", r.RemoteAddr)
 
-	// Reject unknown paths before reading body or enqueueing — protects the work queue from path scans.
 	if !s.processor.HasHTTPPath(path) {
 		s.logger.Debug("no rule for path, returning 404", "path", path, "method", r.Method)
 		http.Error(w, "Not Found", http.StatusNotFound)
 		if s.metrics != nil {
-			// Use sentinel label to bound metric cardinality under path-scan traffic.
 			s.metrics.IncHTTPInboundRequestsTotal("_unknown_", r.Method, "404")
 		}
 		return
@@ -452,7 +363,6 @@ func (s *InboundServer) catchAllHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Canonicalize header keys so rule template lookups are case-insensitive.
 	headers := make(map[string]string)
 	for key, values := range r.Header {
 		if len(values) > 0 {
@@ -478,15 +388,18 @@ func (s *InboundServer) catchAllHandler(w http.ResponseWriter, r *http.Request) 
 	default:
 		s.logger.Warn("inbound work queue full, rejecting request",
 			"path", path,
-			"queueCapacity", s.serverCfg.InboundQueueSize)
-		http.Error(w, fmt.Sprintf("Service Unavailable: webhook queue full (%d/%d)",
+			"queueCapacity", s.serverCfg.InboundQueueSize,
+			"hint", "increase http.server.inboundQueueSize in config or add more workers")
+		http.Error(w, fmt.Sprintf("Service Unavailable: webhook queue full (%d/%d). Increase http.server.inboundQueueSize in config.",
 			s.serverCfg.InboundQueueSize, s.serverCfg.InboundQueueSize), http.StatusServiceUnavailable)
 		if s.metrics != nil {
 			s.metrics.IncHTTPInboundRequestsTotal(path, r.Method, "503")
 		}
 	}
 
-	_ = start // Used for future metrics
+	if s.metrics != nil {
+		s.metrics.ObserveHTTPRequestDuration(path, r.Method, time.Since(start).Seconds())
+	}
 }
 
 func (s *InboundServer) healthHandler(w http.ResponseWriter, r *http.Request) {

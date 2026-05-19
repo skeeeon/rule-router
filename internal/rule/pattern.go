@@ -48,20 +48,25 @@ func NewPatternMatcher(pattern string) (*PatternMatcher, error) {
 		return nil, fmt.Errorf("invalid pattern: %w", err)
 	}
 
+	return newPatternMatcherFromTokens(pattern, strings.Split(pattern, ".")), nil
+}
+
+// newPatternMatcherFromTokens builds a matcher from a pattern string and its
+// pre-split tokens. Used by both subject (.-separated) and path (/-separated)
+// matchers so the compile/match machinery is shared.
+func newPatternMatcherFromTokens(pattern string, tokens []string) *PatternMatcher {
 	pm := &PatternMatcher{
 		pattern: pattern,
-		tokens:  strings.Split(pattern, "."),
+		tokens:  tokens,
 	}
 
-	// Check if this is actually a pattern or just an exact match
-	pm.isPattern = containsWildcards(pattern)
+	pm.isPattern = tokensContainWildcards(tokens)
 
-	// Pre-compile the pattern for efficient matching
 	if pm.isPattern {
 		pm.compiled = pm.compile()
 	}
 
-	return pm, nil
+	return pm
 }
 
 // IsPattern returns true if this contains wildcards
@@ -92,12 +97,23 @@ func (pm *PatternMatcher) Match(subject string) bool {
 
 // MatchTokens checks if pre-split subject tokens match this pattern.
 // Use this when the caller already has tokens to avoid redundant strings.Split.
+// Operates purely on token slices, so it is separator-agnostic and works for
+// both NATS subjects ("." separated) and HTTP paths ("/" separated).
 func (pm *PatternMatcher) MatchTokens(subjectTokens []string) bool {
 	if !pm.isPattern {
-		return pm.pattern == strings.Join(subjectTokens, ".")
+		if len(pm.tokens) != len(subjectTokens) {
+			return false
+		}
+		for i, t := range pm.tokens {
+			if t != subjectTokens[i] {
+				return false
+			}
+		}
+		return true
 	}
 	if len(subjectTokens) == 0 {
-		return pm.pattern == "" || pm.pattern == ">"
+		// Only a sole ">" pattern can match zero tokens.
+		return len(pm.tokens) == 1 && pm.tokens[0] == ">"
 	}
 	return pm.matchTokens(subjectTokens, pm.compiled)
 }
@@ -232,6 +248,18 @@ func ValidatePattern(pattern string) error {
 // containsWildcards checks if a pattern contains any wildcards
 func containsWildcards(pattern string) bool {
 	return strings.Contains(pattern, "*") || strings.Contains(pattern, ">")
+}
+
+// tokensContainWildcards reports whether any token is exactly "*" or ">".
+// Used by the shared matcher constructor so wildcard detection works for
+// any separator (subject ".", path "/", etc.).
+func tokensContainWildcards(tokens []string) bool {
+	for _, t := range tokens {
+		if t == "*" || t == ">" {
+			return true
+		}
+	}
+	return false
 }
 
 // NewPatternCache creates a new pattern cache

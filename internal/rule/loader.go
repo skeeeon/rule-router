@@ -380,11 +380,8 @@ func (l *RulesLoader) validateTrigger(trigger *Trigger, filePath string, ruleInd
 
 	if trigger.HTTP != nil {
 		triggerCount++
-		if trigger.HTTP.Path == "" {
-			return fmt.Errorf("HTTP trigger path cannot be empty")
-		}
-		if !strings.HasPrefix(trigger.HTTP.Path, "/") {
-			return fmt.Errorf("HTTP path must start with '/': %s", trigger.HTTP.Path)
+		if err := ValidatePathPattern(trigger.HTTP.Path); err != nil {
+			return fmt.Errorf("HTTP trigger path: %w", err)
 		}
 		if trigger.HTTP.Method != "" {
 			validMethods := map[string]bool{

@@ -58,12 +58,10 @@ func NewGatewayApp(base *BaseApp, cfg *config.Config) (*GatewayApp, error) {
 		return nil, fmt.Errorf("failed to setup inbound server: %w", err)
 	}
 
-	if cfg.KV.Rules.Enabled {
-		// KV rules mode: inbound uses catch-all handler, outbound managed by KV manager
-		app.inboundServer.SetKVMode(true)
-		// KV manager handles outbound subscriptions via broker.AddAndStartSubscription
-	} else {
-		// File-based mode: setup outbound subscriptions for NATS-trigger + HTTP-action rules
+	// Outbound subscriptions (NATS-trigger + HTTP-action) are only needed in
+	// file-loaded mode. In KV mode, RuleKVManager manages outbound subscriptions
+	// dynamically via broker.AddAndStartSubscription as KV rules change.
+	if !cfg.KV.Rules.Enabled {
 		if err := app.setupOutboundSubscriptions(); err != nil {
 			return nil, fmt.Errorf("failed to setup outbound subscriptions: %w", err)
 		}

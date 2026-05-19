@@ -25,7 +25,8 @@ type Processor struct {
 	index            *RuleIndex
 	allRules         []*Rule
 	scheduleRules    []*Rule
-	httpPathIndex    map[string][]*Rule
+	httpExactPaths   map[string][]*Rule  // file-loaded HTTP rules keyed by exact path
+	httpPatternRules []*HTTPPatternRule  // file-loaded HTTP rules with wildcard paths
 	timeProvider     TimeProvider
 	kvContext        *KVContext
 	logger           *logger.Logger
@@ -37,11 +38,24 @@ type Processor struct {
 	maxForEachIters  int // Configurable forEach iteration limit
 	throttle         *ThrottleManager
 
-	// KV-based rule storage: atomically swapped maps for lock-free reads.
+	// KV-based rule storage: atomically swapped values for lock-free reads.
 	// These are populated by RuleKVManager when KV rules are enabled.
 	kvRules          atomic.Value // holds map[string][]*Rule — NATS subject → rules
-	httpKVRules      atomic.Value // holds map[string][]*Rule — HTTP path → rules
+	httpKVRules      atomic.Value // holds *HTTPKVRuleSet — exact paths + pattern rules
 	kvScheduleRules  atomic.Value // holds []*Rule — schedule-triggered rules from KV
+}
+
+// HTTPPatternRule pairs an HTTP-triggered rule with its compiled path matcher.
+type HTTPPatternRule struct {
+	Rule    *Rule
+	Matcher *PatternMatcher
+}
+
+// HTTPKVRuleSet holds KV-loaded HTTP rules bucketed by exact path and pattern.
+// Both buckets are non-nil after a successful ReplaceHTTPRules call.
+type HTTPKVRuleSet struct {
+	Exact    map[string][]*Rule
+	Patterns []*HTTPPatternRule
 }
 
 type ProcessorStats struct {
@@ -169,10 +183,11 @@ func (p *Processor) extractForEachArray(forEachTemplate string, precomputedPath 
 // NewProcessor creates a new processor with optional signature verification
 func NewProcessor(log *logger.Logger, metrics *metrics.Metrics, kvCtx *KVContext, sigVerification *SignatureVerification) *Processor {
 	p := &Processor{
-		index:           NewRuleIndex(log),
-		allRules:        make([]*Rule, 0),
-		httpPathIndex:   make(map[string][]*Rule),
-		timeProvider:    NewSystemTimeProvider(),
+		index:            NewRuleIndex(log),
+		allRules:         make([]*Rule, 0),
+		httpExactPaths:   make(map[string][]*Rule),
+		httpPatternRules: make([]*HTTPPatternRule, 0),
+		timeProvider:     NewSystemTimeProvider(),
 		kvContext:       kvCtx,
 		logger:          log.With("component", "processor"),
 		metrics:         metrics,
@@ -211,10 +226,12 @@ func (p *Processor) LoadRules(rules []Rule) error {
 	p.index.Clear()
 	p.allRules = make([]*Rule, 0, len(rules))
 	p.scheduleRules = make([]*Rule, 0)
-	p.httpPathIndex = make(map[string][]*Rule)
+	p.httpExactPaths = make(map[string][]*Rule)
+	p.httpPatternRules = make([]*HTTPPatternRule, 0)
 
 	natsCount := 0
 	httpCount := 0
+	httpPatternCount := 0
 	scheduleCount := 0
 
 	for i := range rules {
@@ -248,12 +265,30 @@ func (p *Processor) LoadRules(rules []Rule) error {
 
 		if rule.Trigger.HTTP != nil {
 			path := rule.Trigger.HTTP.Path
-			p.httpPathIndex[path] = append(p.httpPathIndex[path], rule)
 			httpCount++
 
-			p.logger.Debug("indexed HTTP rule",
-				"path", path,
-				"method", rule.Trigger.HTTP.Method)
+			if PathContainsWildcards(path) {
+				matcher, err := NewPathMatcher(path)
+				if err != nil {
+					p.logger.Error("failed to compile HTTP path pattern, skipping rule",
+						"path", path,
+						"error", err)
+				} else {
+					p.httpPatternRules = append(p.httpPatternRules, &HTTPPatternRule{
+						Rule:    rule,
+						Matcher: matcher,
+					})
+					httpPatternCount++
+					p.logger.Debug("indexed HTTP wildcard rule",
+						"pattern", path,
+						"method", rule.Trigger.HTTP.Method)
+				}
+			} else {
+				p.httpExactPaths[path] = append(p.httpExactPaths[path], rule)
+				p.logger.Debug("indexed HTTP rule",
+					"path", path,
+					"method", rule.Trigger.HTTP.Method)
+			}
 		}
 
 		if rule.Trigger.Schedule != nil {
@@ -274,8 +309,9 @@ func (p *Processor) LoadRules(rules []Rule) error {
 		"total", len(rules),
 		"natsRules", natsCount,
 		"httpRules", httpCount,
+		"httpPatternRules", httpPatternCount,
 		"scheduleRules", scheduleCount,
-		"httpPaths", len(p.httpPathIndex))
+		"httpExactPaths", len(p.httpExactPaths))
 
 	return nil
 }
@@ -285,15 +321,23 @@ func (p *Processor) GetSubjects() []string {
 	return p.index.GetSubscriptionSubjects()
 }
 
-// GetHTTPPaths returns all unique HTTP paths for route setup
+// GetHTTPPaths returns all configured HTTP paths and patterns for diagnostic
+// logging. Pattern strings (e.g. "/webhooks/*/events") are returned as-is,
+// not expanded.
 func (p *Processor) GetHTTPPaths() []string {
 	pathSet := make(map[string]bool)
-	for path := range p.httpPathIndex {
+	for path := range p.httpExactPaths {
 		pathSet[path] = true
 	}
-	if kvMap, ok := p.httpKVRules.Load().(map[string][]*Rule); ok {
-		for path := range kvMap {
+	for _, pr := range p.httpPatternRules {
+		pathSet[pr.Rule.Trigger.HTTP.Path] = true
+	}
+	if kvSet, ok := p.httpKVRules.Load().(*HTTPKVRuleSet); ok && kvSet != nil {
+		for path := range kvSet.Exact {
 			pathSet[path] = true
+		}
+		for _, pr := range kvSet.Patterns {
+			pathSet[pr.Rule.Trigger.HTTP.Path] = true
 		}
 	}
 	paths := make([]string, 0, len(pathSet))
@@ -303,14 +347,26 @@ func (p *Processor) GetHTTPPaths() []string {
 	return paths
 }
 
-// HasHTTPPath returns true if any loaded rule has an HTTP trigger for the given path.
+// HasHTTPPath returns true if any loaded rule's HTTP trigger matches the given
+// request path. Checks exact-path maps first (O(1)), then walks wildcard
+// patterns. Used by the inbound gateway to early-reject unknown paths.
 func (p *Processor) HasHTTPPath(path string) bool {
-	if len(p.httpPathIndex[path]) > 0 {
+	if len(p.httpExactPaths[path]) > 0 {
 		return true
 	}
-	if kvMap, ok := p.httpKVRules.Load().(map[string][]*Rule); ok {
-		if len(kvMap[path]) > 0 {
+	for _, pr := range p.httpPatternRules {
+		if MatchPath(pr.Matcher, path) {
 			return true
+		}
+	}
+	if kvSet, ok := p.httpKVRules.Load().(*HTTPKVRuleSet); ok && kvSet != nil {
+		if len(kvSet.Exact[path]) > 0 {
+			return true
+		}
+		for _, pr := range kvSet.Patterns {
+			if MatchPath(pr.Matcher, path) {
+				return true
+			}
 		}
 	}
 	return false
@@ -356,15 +412,26 @@ func (p *Processor) ReplaceRules(rules map[string][]*Rule) {
 
 // ReplaceHTTPRules atomically swaps the KV-loaded HTTP rule set.
 // Called by RuleKVManager when KV Watch detects changes.
-// The map is keyed by HTTP path (e.g., "/webhook/github").
-func (p *Processor) ReplaceHTTPRules(rules map[string][]*Rule) {
-	p.httpKVRules.Store(rules)
+// The set partitions rules into an exact-path map and a slice of compiled
+// wildcard pattern rules. A nil set is normalized to an empty one.
+func (p *Processor) ReplaceHTTPRules(set *HTTPKVRuleSet) {
+	if set == nil {
+		set = &HTTPKVRuleSet{
+			Exact:    make(map[string][]*Rule),
+			Patterns: nil,
+		}
+	}
+	p.httpKVRules.Store(set)
 
 	total := 0
-	for _, rs := range rules {
+	for _, rs := range set.Exact {
 		total += len(rs)
 	}
-	p.logger.Debug("KV HTTP rules replaced", "paths", len(rules), "totalRules", total)
+	total += len(set.Patterns)
+	p.logger.Debug("KV HTTP rules replaced",
+		"exactPaths", len(set.Exact),
+		"patternRules", len(set.Patterns),
+		"totalRules", total)
 }
 
 // ProcessForSubscription processes a message using O(1) lookup by trigger subject.
@@ -502,18 +569,28 @@ func (p *Processor) ProcessHTTP(path, method string, payload []byte, headers map
 }
 
 // findHTTPRules finds all HTTP rules matching the path and method.
-// Checks both file-based httpPathIndex and KV-based httpKVRules.
+// Collects from file-loaded exact + pattern rules, then KV-loaded exact +
+// pattern rules. Exact matches and wildcard matches both fire when both apply.
 func (p *Processor) findHTTPRules(path, method string) []*Rule {
-	// Collect rules from both sources
 	var rulesForPath []*Rule
 
-	if fileRules := p.httpPathIndex[path]; len(fileRules) > 0 {
-		rulesForPath = append(rulesForPath, fileRules...)
+	if fileExact := p.httpExactPaths[path]; len(fileExact) > 0 {
+		rulesForPath = append(rulesForPath, fileExact...)
+	}
+	for _, pr := range p.httpPatternRules {
+		if MatchPath(pr.Matcher, path) {
+			rulesForPath = append(rulesForPath, pr.Rule)
+		}
 	}
 
-	if kvMap, ok := p.httpKVRules.Load().(map[string][]*Rule); ok {
-		if kvRules := kvMap[path]; len(kvRules) > 0 {
-			rulesForPath = append(rulesForPath, kvRules...)
+	if kvSet, ok := p.httpKVRules.Load().(*HTTPKVRuleSet); ok && kvSet != nil {
+		if kvExact := kvSet.Exact[path]; len(kvExact) > 0 {
+			rulesForPath = append(rulesForPath, kvExact...)
+		}
+		for _, pr := range kvSet.Patterns {
+			if MatchPath(pr.Matcher, path) {
+				rulesForPath = append(rulesForPath, pr.Rule)
+			}
 		}
 	}
 

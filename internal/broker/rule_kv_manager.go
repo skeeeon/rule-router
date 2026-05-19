@@ -263,7 +263,10 @@ func (m *RuleKVManager) handleRuleDelete(key string) {
 // Returns the collected schedule rules so the caller can invoke the rebuild callback.
 func (m *RuleKVManager) pushRulesToProcessor() []*rule.Rule {
 	natsRules := make(map[string][]*rule.Rule)
-	httpRules := make(map[string][]*rule.Rule)
+	httpRules := &rule.HTTPKVRuleSet{
+		Exact:    make(map[string][]*rule.Rule),
+		Patterns: nil,
+	}
 	var scheduleRules []*rule.Rule
 
 	for _, rules := range m.currentRules {
@@ -273,7 +276,22 @@ func (m *RuleKVManager) pushRulesToProcessor() []*rule.Rule {
 				natsRules[r.Trigger.NATS.Subject] = append(natsRules[r.Trigger.NATS.Subject], r)
 			}
 			if r.Trigger.HTTP != nil {
-				httpRules[r.Trigger.HTTP.Path] = append(httpRules[r.Trigger.HTTP.Path], r)
+				path := r.Trigger.HTTP.Path
+				if rule.PathContainsWildcards(path) {
+					matcher, err := rule.NewPathMatcher(path)
+					if err != nil {
+						m.logger.Error("failed to compile KV HTTP path pattern, skipping rule",
+							"path", path,
+							"error", err)
+					} else {
+						httpRules.Patterns = append(httpRules.Patterns, &rule.HTTPPatternRule{
+							Rule:    r,
+							Matcher: matcher,
+						})
+					}
+				} else {
+					httpRules.Exact[path] = append(httpRules.Exact[path], r)
+				}
 			}
 			if r.Trigger.Schedule != nil {
 				scheduleRules = append(scheduleRules, r)
@@ -286,6 +304,7 @@ func (m *RuleKVManager) pushRulesToProcessor() []*rule.Rule {
 	m.processor.ReplaceScheduleRules(scheduleRules)
 	return scheduleRules
 }
+
 
 // hasScheduleRules returns true if any rule in the slice has a schedule trigger.
 func (m *RuleKVManager) hasScheduleRules(rules []rule.Rule) bool {
