@@ -53,7 +53,7 @@ Most KV bucket settings (history, TTL, max bytes, replicas, storage tier) are mu
 
 This works with all features:
 *   **Router**: NATS trigger rules are loaded from KV, consumers created dynamically.
-*   **Gateway**: Both inbound (HTTP trigger) and outbound (NATS trigger + HTTP action) rules are loaded from KV. HTTP paths are handled dynamically via a catch-all handler.
+*   **Gateway**: Both inbound (HTTP trigger) and outbound (NATS trigger + HTTP action) rules are loaded from KV. Inbound HTTP paths are handled via a catch-all handler that performs a fast path-existence check — unknown paths return `404` without body read or queue impact, matching file-mode behavior. See [02 Gateway — Path matching](./02-gateway.md#path-matching) for the mode comparison.
 *   **Scheduler**: Schedule-triggered rules are loaded from KV. Cron jobs are rebuilt automatically when rules change — no restart or SIGHUP needed.
 
 -----
@@ -179,6 +179,17 @@ For the scheduler feature, KV rule changes trigger a cron job rebuild rather tha
 3. The scheduler continues running — no restart, no gap in execution.
 
 Jobs that are mid-execution when a rebuild occurs are not interrupted.
+
+### Gateway Behavior
+
+For the gateway feature, the inbound HTTP server registers a single catch-all handler at `/` rather than per-path handlers. On every request, the handler performs an O(1) path-existence check against the processor's current rule set:
+
+1. Path is unknown → respond `404 Not Found` immediately (no body read, no queue enqueue).
+2. Path is known → read body, canonicalize headers, enqueue for worker processing.
+
+The check reads the same atomic rule set that `ReplaceHTTPRules` updates on each KV change, so newly added paths are live as soon as the rule is loaded, and removed paths start 404ing on the next request. There is no race between rule updates and in-flight requests.
+
+Outbound rules (NATS trigger + HTTP action) are handled by the shared `SubscriptionManager`: new trigger subjects get consumers and subscriptions created automatically; removed subjects have their subscriptions torn down when no other key still references them.
 
 ### Stream Refresh
 

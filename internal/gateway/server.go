@@ -429,6 +429,17 @@ func (s *InboundServer) catchAllHandler(w http.ResponseWriter, r *http.Request) 
 		"method", r.Method,
 		"remoteAddr", r.RemoteAddr)
 
+	// Reject unknown paths before reading body or enqueueing — protects the work queue from path scans.
+	if !s.processor.HasHTTPPath(path) {
+		s.logger.Debug("no rule for path, returning 404", "path", path, "method", r.Method)
+		http.Error(w, "Not Found", http.StatusNotFound)
+		if s.metrics != nil {
+			// Use sentinel label to bound metric cardinality under path-scan traffic.
+			s.metrics.IncHTTPInboundRequestsTotal("_unknown_", r.Method, "404")
+		}
+		return
+	}
+
 	defer r.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, MaxInboundBodySize))

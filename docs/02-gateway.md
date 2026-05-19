@@ -155,6 +155,17 @@ headers:
 
 For tokens that refresh (OAuth2, time-limited API keys), pair with the `nats-auth-manager` companion binary. It manages token refresh, stores them in NATS KV, and rules read them with `{@kv.tokens.<provider>:access_token}`. See the [nats-auth-manager README](../README.md) for setup.
 
-## Dynamic paths via KV rule store
+## Path matching
 
-When [KV rule storage](./08-kv-rule-store.md) is enabled, HTTP paths are handled by a catch-all handler — adding or removing inbound webhook rules takes effect immediately without restart. The same applies to outbound rules: a new NATS trigger gets its consumer created automatically on KV update.
+Inbound HTTP paths are handled differently depending on rule source:
+
+| Mode | Handler registration | 404 source | New paths require |
+|------|----------------------|------------|-------------------|
+| **File-based** | One `ServeMux` handler per configured path at startup | `ServeMux` exact-match | Process restart |
+| **KV-backed** | Single catch-all handler at `/` with O(1) path-existence check | Path check in catch-all handler | No restart — takes effect on next KV update |
+
+Both modes return a real `404 Not Found` for paths with no matching rule. In KV mode the path-existence check happens **before** the request body is read or enqueued, so path-scan traffic does not consume queue capacity or worker time.
+
+To bound Prometheus metric cardinality under path-scan traffic, 404 responses in KV mode are recorded with the sentinel path label `_unknown_` rather than the actual request path. Matched-path responses (2xx, 503) still use the real path.
+
+Outbound rules (NATS trigger + HTTP action) benefit from KV mode similarly: a new NATS trigger gets its JetStream consumer created automatically on KV update, no restart required. See [08 KV Rule Store](./08-kv-rule-store.md) for the full reload mechanics.

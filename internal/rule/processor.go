@@ -303,6 +303,19 @@ func (p *Processor) GetHTTPPaths() []string {
 	return paths
 }
 
+// HasHTTPPath returns true if any loaded rule has an HTTP trigger for the given path.
+func (p *Processor) HasHTTPPath(path string) bool {
+	if len(p.httpPathIndex[path]) > 0 {
+		return true
+	}
+	if kvMap, ok := p.httpKVRules.Load().(map[string][]*Rule); ok {
+		if len(kvMap[path]) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // GetAllRules returns all loaded rules (NATS, HTTP, and schedule)
 func (p *Processor) GetAllRules() []*Rule {
 	return p.allRules
