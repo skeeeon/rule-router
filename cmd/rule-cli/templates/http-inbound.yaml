@@ -7,7 +7,10 @@
 #
 - trigger:
     http:
-      # The HTTP path the gateway will listen on.
+      # The HTTP path the gateway will listen on. Supports NATS-style
+      # wildcards on path segments: "/webhooks/*/events" matches one
+      # segment, "/api/>" matches one or more trailing segments. Exact
+      # and wildcard rules both fire when both match a request.
       path: "/webhooks/github"
       # (Optional) The HTTP method to match (e.g., "POST"). Defaults to all.
       method: "POST"

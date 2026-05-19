@@ -6,6 +6,11 @@
 - Added `publishResponse` to HTTP actions: on a 2xx response, the body (capped at 1 MB) is republished to a NATS subject. Works in the scheduler (cron-poll → NATS) and the gateway/router outbound path (NATS event → HTTP call → NATS result). Subject templates resolve against the trigger context only; publish failures log but do not fail the action.
 - Added `schedule-poll` template to `rule-cli` (`rule-cli new --template=schedule-poll`) demonstrating the HTTP-poll-to-NATS pattern.
 - Web rule builder: "Publish Response" toggle and subject input added to the HTTP action form.
+- Inbound gateway HTTP paths now support NATS-style wildcards: `*` matches one segment, `>` matches one or more trailing segments (e.g. `/webhooks/*/events`, `/api/>`). Works for both file-loaded and KV-loaded rules. When an exact rule and a wildcard rule both match a request, both fire — same semantics as NATS subjects.
+
+### Improvements
+- Unified the inbound gateway HTTP handler: a single catch-all handler now serves both file-loaded and KV-loaded rules, removing the file/KV mode split and the `SetKVMode` wiring.
+- `MatchTokens` hot path rewritten to use slice equality instead of `strings.Join` + string compare. Eliminates one allocation per NATS message dispatch on exact-match rules (~5× faster on the microbenchmark).
 
 ## [0.11.0] - 2026-04-15
 

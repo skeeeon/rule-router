@@ -54,9 +54,11 @@ trigger:
 ```yaml
 trigger:
   http:
-    path: "/webhooks/github"   # Exact path match
+    path: "/webhooks/github"   # Exact or NATS-style wildcard: /webhooks/*/events, /api/>
     method: "POST"             # Optional, defaults to all methods
 ```
+
+HTTP paths support the same wildcard syntax as NATS subjects, with `/` as the separator: `*` matches one segment, `>` matches one or more trailing segments and must be the final segment. Exact and wildcard rules both fire when both match. See [02 Gateway — Path matching](./02-gateway.md#path-matching) for details.
 
 **Schedule Trigger** (scheduler feature): Fires on a cron schedule.
 ```yaml

@@ -186,9 +186,11 @@ onUnmounted(() => { document.removeEventListener('keydown', onEscape) })
           </tbody></table>
 
           <h3>HTTP Trigger</h3>
-          <p class="help-text">Receive HTTP webhooks at a path:</p>
+          <p class="help-text">Receive HTTP webhooks at a path. Supports NATS-style wildcards (slash-separated):</p>
           <table class="help-table"><tbody>
-            <tr><td class="mono">/webhooks/github</td><td>Path must start with /</td></tr>
+            <tr><td class="mono">/webhooks/github</td><td>Exact path match (must start with /)</td></tr>
+            <tr><td class="mono">/webhooks/*/events</td><td>Single-segment wildcard</td></tr>
+            <tr><td class="mono">/api/&gt;</td><td>Multi-segment wildcard (must be last)</td></tr>
             <tr><td class="mono">method</td><td>Optional — defaults to all methods</td></tr>
           </tbody></table>
 

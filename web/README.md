@@ -134,7 +134,7 @@ This is equivalent to running `rule-cli check --rule <yaml> --message <json>`.
 
 The builder supports the full rule YAML format used by all Rule Router applications:
 
-- **Triggers**: NATS subject (with wildcards), HTTP path + method, or Cron schedule + timezone — all support per-trigger debounce
+- **Triggers**: NATS subject (with wildcards), HTTP path + method (paths support NATS-style wildcards too: `/webhooks/*/events`, `/api/>`), or Cron schedule + timezone — all support per-trigger debounce
 - **Conditions**: Nested AND/OR groups, 15 operators including array operators (`any`, `all`, `none`), `in`/`not_in` membership lists, KV lookups, time-based fields. Variables resolve on both sides of a condition (`{temperature}` `gt` `{@kv.thresholds.{device.id}:max}`).
 - **Actions**: Publish to NATS subject or make HTTP requests, with payload templates, passthrough, merge, forEach iteration, forEach filters, headers, debounce, plus HTTP-only options for retry and publish-response (publish the HTTP response back to a NATS subject).
 

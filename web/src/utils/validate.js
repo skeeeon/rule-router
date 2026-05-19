@@ -37,8 +37,8 @@ function validateTrigger(trigger, errors) {
   } else if (trigger.type === 'http') {
     if (!trigger.http.path) {
       errors.push({ path: 'trigger.http.path', message: 'Path is required' })
-    } else if (!trigger.http.path.startsWith('/')) {
-      errors.push({ path: 'trigger.http.path', message: 'Path must start with /' })
+    } else {
+      validateHTTPPath(trigger.http.path, 'trigger.http.path', errors)
     }
     if (trigger.http.method && !HTTP_METHODS.includes(trigger.http.method.toUpperCase())) {
       errors.push({ path: 'trigger.http.method', message: 'Invalid HTTP method' })
@@ -187,6 +187,32 @@ function validateNATSSubject(subject, path, errors) {
     }
     if (t.includes('*') && t !== '*') {
       errors.push({ path, message: '* wildcard must be a full token' })
+      return
+    }
+  }
+}
+
+// Mirrors internal/rule/path_matcher.go::ValidatePathPattern.
+function validateHTTPPath(httpPath, path, errors) {
+  if (!httpPath.startsWith('/')) {
+    errors.push({ path, message: 'Path must start with /' })
+    return
+  }
+  const trimmed = httpPath.replace(/^\/+/, '').replace(/\/+$/, '')
+  if (trimmed === '') return // "/" is valid
+  const tokens = trimmed.split('/')
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i]
+    if (t === '') {
+      errors.push({ path, message: 'Path cannot have empty segments (//)' })
+      return
+    }
+    if (t === '>' && i !== tokens.length - 1) {
+      errors.push({ path, message: '> wildcard must be the last segment' })
+      return
+    }
+    if (t !== '*' && t !== '>' && (t.includes('*') || t.includes('>'))) {
+      errors.push({ path, message: 'Wildcard must be a full segment (e.g. /webhooks/*/events)' })
       return
     }
   }

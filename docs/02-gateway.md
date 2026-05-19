@@ -157,15 +157,37 @@ For tokens that refresh (OAuth2, time-limited API keys), pair with the `nats-aut
 
 ## Path matching
 
-Inbound HTTP paths are handled differently depending on rule source:
+Inbound requests flow through a single catch-all handler that delegates path matching to the rule engine. This applies uniformly to file-loaded and KV-loaded rules: a new rule path becomes live on the next KV update (or process restart for file-loaded rules) with no `ServeMux` re-registration.
 
-| Mode | Handler registration | 404 source | New paths require |
-|------|----------------------|------------|-------------------|
-| **File-based** | One `ServeMux` handler per configured path at startup | `ServeMux` exact-match | Process restart |
-| **KV-backed** | Single catch-all handler at `/` with O(1) path-existence check | Path check in catch-all handler | No restart — takes effect on next KV update |
+Paths can be exact or contain NATS-style wildcards:
 
-Both modes return a real `404 Not Found` for paths with no matching rule. In KV mode the path-existence check happens **before** the request body is read or enqueued, so path-scan traffic does not consume queue capacity or worker time.
+| Syntax | Matches | Example |
+|--------|---------|---------|
+| Exact | The path verbatim | `/webhooks/github` matches only `/webhooks/github` |
+| `*` | Exactly one path segment | `/webhooks/*/events` matches `/webhooks/github/events`, not `/webhooks/github/pr/events` |
+| `>` | One or more trailing segments (must be the last segment) | `/api/>` matches `/api/v1`, `/api/v1/users/42`, etc. |
 
-To bound Prometheus metric cardinality under path-scan traffic, 404 responses in KV mode are recorded with the sentinel path label `_unknown_` rather than the actual request path. Matched-path responses (2xx, 503) still use the real path.
+Wildcards may appear in any segment except `>`, which must be terminal. `/api/*/>` is valid; `/api/>/legacy` is rejected at load time.
+
+When both an exact rule and a wildcard rule match the same request, **both fire**. Method filtering applies uniformly after matching — a `POST`-only wildcard will not match a `GET` request even if the path matches.
+
+Wildcards play directly with the `{@path.N}` template variables: a rule on `/webhooks/*/events` can publish to `tenants.{@path.1}.events` to route per-tenant.
+
+```yaml
+- trigger:
+    http:
+      path: "/webhooks/*/events"
+      method: "POST"
+  action:
+    nats:
+      subject: "tenants.{@path.1}.events"
+      payload: "{@passthrough}"
+```
+
+### Unknown paths and metric cardinality
+
+Requests with no matching rule receive `404 Not Found`. The path-existence check happens **before** the request body is read or enqueued, so path-scan traffic does not consume queue capacity or worker time.
+
+To bound Prometheus metric cardinality under path-scan traffic, 404 responses are recorded with the sentinel path label `_unknown_` rather than the actual request path. Matched responses (2xx, 503) use the real request path, so wildcard rules that match high-cardinality URLs (e.g. UUIDs in segments) can grow metric series — use wildcards judiciously or scope them tightly.
 
 Outbound rules (NATS trigger + HTTP action) benefit from KV mode similarly: a new NATS trigger gets its JetStream consumer created automatically on KV update, no restart required. See [08 KV Rule Store](./08-kv-rule-store.md) for the full reload mechanics.
