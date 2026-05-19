@@ -120,15 +120,11 @@ function onOperatorChange() {
 
       <!-- in/not_in: comma-separated list input -->
       <div v-if="isListOp" class="field compact">
-        <input
+        <FieldSuggestInput
           v-model="listValueDisplay"
           placeholder="val1, val2, val3"
-          :class="{ error: errorFor(`${prefix}.value`) }"
-          autocapitalize="off"
-          autocorrect="off"
-          autocomplete="off"
-          spellcheck="false"
-        >
+          :error="!!errorFor(`${prefix}.value`)"
+        />
         <span class="field-error" v-if="errorFor(`${prefix}.value`)">
           {{ errorFor(`${prefix}.value`).message }}
         </span>
@@ -136,15 +132,11 @@ function onOperatorChange() {
 
       <!-- Standard value input -->
       <div v-else-if="!isArrayOp && item.operator !== 'exists'" class="field compact">
-        <input
+        <FieldSuggestInput
           v-model="item.value"
           :placeholder="OPERATOR_PLACEHOLDERS[item.operator] || 'value'"
-          :class="{ error: errorFor(`${prefix}.value`) }"
-          autocapitalize="off"
-          autocorrect="off"
-          autocomplete="off"
-          spellcheck="false"
-        >
+          :error="!!errorFor(`${prefix}.value`)"
+        />
         <span class="field-error" v-if="errorFor(`${prefix}.value`)">
           {{ errorFor(`${prefix}.value`).message }}
         </span>

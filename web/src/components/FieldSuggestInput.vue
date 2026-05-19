@@ -36,7 +36,9 @@ const messageSuggestions = computed(() =>
 )
 
 const suggestions = computed(() => {
-  if (query.value === null) return []
+  // Wait until the user has typed at least one character after `{` so a bare
+  // `{` doesn't pop a noisy dropdown.
+  if (!query.value) return []
   const q = query.value
   // When the user has typed `@`, narrow to context vars (they all start with @).
   // Otherwise show message fields first, then context vars as a hint of what's
@@ -46,7 +48,7 @@ const suggestions = computed(() => {
     ? contextVars.value
     : [...messageSuggestions.value, ...contextVars.value]
   return pool
-    .filter(f => !q || f.path.toLowerCase().includes(q))
+    .filter(f => f.path.toLowerCase().includes(q))
     .slice(0, 12)
 })
 

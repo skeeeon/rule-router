@@ -7,14 +7,28 @@ A visual rule builder for the Rule Router platform. Build rules with a guided fo
 - **Guided Form**: Step-by-step rule creation — Trigger, Conditions, Action — with type-specific fields that appear as needed.
 - **Live YAML Preview**: See the generated YAML update in real time as you fill in the form.
 - **Rule Testing (WASM)**: Test rules against sample JSON messages directly in the browser using the real Go rule engine compiled to WebAssembly. Full fidelity with production evaluation — no drift, no approximation.
-- **Multi-Rule Support**: Build multiple rules, group them into separate files, or combine into one.
+- **Sample Message Inspector**: Paste a sample JSON message once; the builder extracts dot-notation field paths and shares them between autocomplete, payload chips, and the rule tester.
+- **Field & Context-Variable Autocomplete**: Type `{` in a condition field/value, forEach input, or other variable-aware input to suggest message fields from your sample. Type `{@` to surface the full context-variable catalog (`@time.*`, `@date.*`, `@signature.*`, `@timestamp()`, `@uuid4()`, …) plus trigger-derived tokens like `@subject.0..N` from your NATS subject or `@path.0..N` from your HTTP path. Schedule rules see only the variables that make sense without a message (Time, Date, Func, KV).
+- **Cron Builder**: Simple tab with field-by-field controls and presets ("Every 5 min", "Hourly", "Daily 9am", "Weekdays 9am", …); Advanced tab for raw cron expressions. Human-readable description plus next-run preview powered by `cron-parser` / `cronstrue`. Optional IANA timezone.
+- **Multi-Rule Support**: Build multiple rules, group them into separate files, or combine into one. Rules are shown as collapsed cards with summaries, error badges, duplicate, and remove actions.
 - **Per-File Organization**: Assign filenames to rules — rules with the same filename group into one YAML output. Download or push individual files or all at once.
 - **KV Push**: Push rules directly to a NATS KV bucket via WebSocket. Authenticate with a `.creds` file. Connection settings are saved in session storage.
 - **KV Pull**: Load existing rules from a NATS KV bucket, edit them in the form, and push back.
-- **Client-Side Validation**: Validates rules as you type — trigger subjects, cron expressions, HTTP paths, condition operators, and more.
+- **Client-Side Validation**: Validates rules as you type — trigger subjects, cron expressions, HTTP paths, condition operators, and more. Inline error counts surface on collapsed rule cards.
+- **Reference Help (`?`)**: Built-in modal documents every variable, operator, template feature, and trigger type — no need to leave the page.
 - **Auto-Save**: Rules are automatically saved to localStorage and restored on page load.
 - **Dark Mode**: Follows system preference automatically, with a manual toggle (System / Light / Dark) that persists to local storage.
 - **Responsive**: Two-panel layout on desktop; bottom drawer for YAML preview on mobile.
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `?` | Open the Reference modal |
+| `Cmd/Ctrl + S` | Download the active rule's YAML file |
+| `Esc` | Close modals |
+| `↑` / `↓` | Navigate autocomplete suggestions |
+| `Enter` / `Tab` | Accept the highlighted suggestion |
 
 ## Quick Start
 
@@ -91,10 +105,10 @@ These stubs only affect the WASM build target (`GOOS=js GOARCH=wasm`). The norma
 
 ## Rule Testing
 
-The **Test Rule** panel appears below the Action section in the rule editor. To test a rule:
+The **Test Rule** panel appears below the Action section in the rule editor. The sample message is shared with the **Sample Message** inspector at the top of the rule editor — paste it once and it powers both autocomplete and testing. To test a rule:
 
 1. Expand the "Test Rule" section
-2. Paste a sample JSON message
+2. Make sure the **Sample Message** inspector has a JSON payload (or paste one into the tester's message field)
 3. The subject/path is auto-populated from your trigger (editable for wildcard subjects)
 4. Optionally provide mock headers or KV data
 5. Click **Run Test**
@@ -120,9 +134,9 @@ This is equivalent to running `rule-cli check --rule <yaml> --message <json>`.
 
 The builder supports the full rule YAML format used by all Rule Router applications:
 
-- **Triggers**: NATS subject (with wildcards), HTTP path + method, or Cron schedule + timezone
-- **Conditions**: Nested AND/OR groups, 15 operators including array operators (`any`, `all`, `none`), KV lookups, time-based fields
-- **Actions**: Publish to NATS subject or make HTTP requests, with payload templates, passthrough, merge, forEach iteration, filters, headers, retry, and debounce
+- **Triggers**: NATS subject (with wildcards), HTTP path + method, or Cron schedule + timezone — all support per-trigger debounce
+- **Conditions**: Nested AND/OR groups, 15 operators including array operators (`any`, `all`, `none`), `in`/`not_in` membership lists, KV lookups, time-based fields. Variables resolve on both sides of a condition (`{temperature}` `gt` `{@kv.thresholds.{device.id}:max}`).
+- **Actions**: Publish to NATS subject or make HTTP requests, with payload templates, passthrough, merge, forEach iteration, forEach filters, headers, debounce, plus HTTP-only options for retry and publish-response (publish the HTTP response back to a NATS subject).
 
 Rules built with this UI are identical to hand-written YAML and can be validated with `rule-cli lint`.
 
