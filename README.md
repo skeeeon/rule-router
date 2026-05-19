@@ -50,11 +50,15 @@ The platform uses a simple `Trigger -> Conditions -> Action` model defined in YA
 Detailed documentation on the rule engine's features can be found in the `docs/` directory:
 
 *   **[01 - Core Concepts](./docs/01-core-concepts.md)**: Triggers, Conditions, Actions, and Environment Variables.
-*   **[02 - System Variables & Functions](./docs/02-system-variables.md)**: Full reference for all `@` variables and functions.
-*   **[03 - Array Processing](./docs/03-array-processing.md)**: Guide to using `forEach` and array operators (`any`, `all`, `none`).
-*   **[04 - Primitive & Array Root Messages](./docs/04-primitive-messages.md)**: How to handle non-object JSON payloads.
-*   **[05 - Security](./docs/05-security.md)**: Guide to Cryptographic Signature Verification.
-*   **[06 - KV Rule Store](./docs/06-kv-rule-store.md)**: Store rules in NATS KV with hot-reload and GitOps push workflow.
+*   **[02 - Gateway](./docs/02-gateway.md)**: Inbound (HTTP→NATS) and outbound (NATS→HTTP) flows, fire-and-forget vs ACK-on-success semantics, and `publishResponse`.
+*   **[03 - Scheduler](./docs/03-scheduler.md)**: Cron triggers, scheduler-specific context, polling-to-eventing, and KV-driven fan-out.
+*   **[04 - System Variables & Functions](./docs/04-system-variables.md)**: Full reference for all `@` variables and functions.
+*   **[05 - Array Processing](./docs/05-array-processing.md)**: Guide to using `forEach` and array operators (`any`, `all`, `none`).
+*   **[06 - Primitive & Array Root Messages](./docs/06-primitive-messages.md)**: How to handle non-object JSON payloads.
+*   **[07 - Security](./docs/07-security.md)**: Guide to Cryptographic Signature Verification.
+*   **[08 - KV Rule Store](./docs/08-kv-rule-store.md)**: Store rules in NATS KV with hot-reload and GitOps push workflow.
+*   **[09 - Patterns](./docs/09-patterns.md)**: Recipe catalogue from simple routing through stateful cross-source correlation.
+*   **[10 - Troubleshooting](./docs/10-troubleshooting.md)**: Common failure modes and how to diagnose them.
 *   **[Rule Builder Web UI](./web/README.md)**: Visual rule creation, live YAML preview, in-browser rule testing via WASM, and NATS KV push/pull.
 *   **[Docker Deployment](#quick-start)**: Docker Compose setup for local development and deployment.
 

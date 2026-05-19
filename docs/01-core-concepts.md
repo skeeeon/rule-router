@@ -212,28 +212,7 @@ conditions:
 
 ### Available Operators
 
-**Comparison:**
-- `eq` - Equals
-- `neq` - Not equals
-- `gt` - Greater than
-- `lt` - Less than
-- `gte` - Greater than or equal
-- `lte` - Less than or equal
-- `exists` - Field exists (not null)
-
-**String/Array:**
-- `contains` - String contains substring or array contains element
-- `not_contains` - Inverse of contains
-- `in` - Value is in array
-- `not_in` - Value is not in array
-
-**Array Operators:**
-- `any` - At least one array element matches nested conditions
-- `all` - All array elements match nested conditions
-- `none` - No array elements match nested conditions
-
-**Time-Based:**
-- `recent` - Timestamp is within time window (e.g., `"5s"`, `"1m"`, `"1h"`)
+See [04 System Variables — Condition Operators](./04-system-variables.md#condition-operators) for the canonical reference covering comparison, string/array, time-based, and array-iteration operators.
 
 ## 3. Actions (The "Then")
 
@@ -501,52 +480,6 @@ If an environment variable is not set, the system will:
 
 **Best Practice**: Always set required environment variables before starting the application, or the rule may not work as intended.
 
-## Complete Example: Variable Comparisons with KV
+## Worked examples
 
-```yaml
-# Dynamic threshold management with KV store
-# KV: sensor_config["temp-001"] = {"max_temp": 35, "critical_temp": 45}
-# Message: {"sensor_id": "temp-001", "temperature": 38, "location": "server_room"}
-
-- trigger:
-    nats:
-      subject: "sensors.temperature"
-  
-  conditions:
-    operator: and
-    items:
-      # Temperature exceeds configured max (warning level)
-      - field: "{temperature}"
-        operator: gt
-        value: "{@kv.sensor_config.{sensor_id}:max_temp}"
-      
-      # But below critical level
-      - field: "{temperature}"
-        operator: lt
-        value: "{@kv.sensor_config.{sensor_id}:critical_temp}"
-      
-      # Only during business hours
-      - field: "{@time.hour}"
-        operator: gte
-        value: 9
-      - field: "{@time.hour}"
-        operator: lt
-        value: 17
-  
-  action:
-    nats:
-      subject: "alerts.temperature.warning.{sensor_id}"
-      payload: |
-        {
-          "alert": "Temperature warning - exceeds threshold",
-          "sensor_id": "{sensor_id}",
-          "location": "{location}",
-          "current_temperature": {temperature},
-          "thresholds": {
-            "max": "{@kv.sensor_config.{sensor_id}:max_temp}",
-            "critical": "{@kv.sensor_config.{sensor_id}:critical_temp}"
-          },
-          "triggered_at": "{@timestamp.iso}",
-          "alert_id": "{@uuid7()}"
-        }
-```
+For end-to-end worked examples combining triggers, conditions, KV lookups, time, and actions, see [09 Patterns](./09-patterns.md).

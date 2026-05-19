@@ -1,12 +1,11 @@
 # Array Processing
 
-The rule engine provides powerful array processing capabilities for handling batch messages. This is essential when third-party systems send multiple events in a single message, or when you need to check if any element in an array matches specific criteria.
+The rule engine provides array processing capabilities for handling batch messages. This is essential when third-party systems send multiple events in a single message, or when you need to check if any element in an array matches specific criteria.
 
 ## Array Operators in Conditions
 
-Use array operators to check if a message is relevant by inspecting array contents.
+Use array operators to check if a message is relevant by inspecting array contents. The full operator reference is in [04 System Variables](./04-system-variables.md#condition-operators); the operators specific to array iteration are:
 
-**Available Operators:**
 - `any`: At least one array element matches nested conditions
 - `all`: All array elements match nested conditions
 - `none`: No array elements match nested conditions
@@ -16,17 +15,17 @@ Use array operators to check if a message is relevant by inspecting array conten
 conditions:
   operator: and
   items:
-    - field: "{type}"                    # ✅ NEW: Explicit template syntax
+    - field: "{type}"
       operator: eq
       value: "BATCH_NOTIFICATION"
     
     # Check if ANY notification in the array is critical
-    - field: "{notifications}"           # ✅ NEW: Explicit template syntax
+    - field: "{notifications}"
       operator: any
       conditions:
-        operator: and  # Required for nested conditions
+        operator: and
         items:
-          - field: "{severity}"          # ✅ NEW: Explicit template syntax
+          - field: "{severity}"
             operator: eq
             value: "critical"
 ```
@@ -41,20 +40,11 @@ conditions:
 
 Generate **one action per array element** using `forEach`. This is the key feature for batch processing.
 
-### NEW: Consistent Brace Syntax
-
-**All variable references now use `{braces}` for consistency:**
-- Condition fields: `{field}` ✅
-- Condition values: `{field}` or literal ✅
-- ForEach fields: `{arrayField}` ✅ **NEW!**
-- Action subjects: `{field}` ✅
-- Action payloads: `{field}` ✅
-
 **Basic Syntax:**
 ```yaml
 action:
   nats:
-    forEach: "{notifications}"           # ✅ NEW: Braces required!
+    forEach: "{notifications}"
     subject: "alerts.{id}"
     payload: '{"id": "{id}", "message": "{message}"}'
 ```
@@ -63,11 +53,11 @@ action:
 ```yaml
 action:
   nats:
-    forEach: "{notifications}"           # ✅ NEW: Braces required!
+    forEach: "{notifications}"
     filter:                              # Only process elements matching these conditions
-      operator: and                      # Required
+      operator: and
       items:
-        - field: "{severity}"            # ✅ Explicit template syntax
+        - field: "{severity}"
           operator: eq
           value: "critical"
     subject: "alerts.critical.{id}"
@@ -110,13 +100,13 @@ When using `forEach`, template variables can refer to either:
 | Context | `{field}` resolves to | `{@msg.field}` resolves to |
 |---------|----------------------|---------------------------|
 | Normal action (no forEach) | Root message field | Root message field (explicit) |
-| ForEach action | Current array element field | Root message field (explicit) |
+| ForEach action | Current array element field | Root message field |
 
 **Example:**
 ```yaml
 action:
   nats:
-    forEach: "{alerts}"                  # ✅ NEW: Braces required!
+    forEach: "{alerts}"
     subject: "alerts.{alertId}"
     payload: |
       {
@@ -128,21 +118,21 @@ action:
       }
 ```
 
-## ForEach with Variable Comparisons (NEW!)
+## ForEach with Variable Comparisons
 
-You can now use variable comparisons in forEach filters:
+Filters can compare element fields to root message fields, KV values, or system variables:
 
 ```yaml
 # Message: {"min_value": 50, "readings": [{"value": 30}, {"value": 75}, {"value": 90}]}
 action:
   nats:
-    forEach: "{readings}"                # ✅ Braces required!
+    forEach: "{readings}"
     filter:
       operator: and
       items:
-        - field: "{value}"               # ✅ Element field
+        - field: "{value}"               # Element field
           operator: gt
-          value: "{@msg.min_value}"      # ✅ Compare to root message field!
+          value: "{@msg.min_value}"      # Root message field
     subject: "sensors.high-reading.{@uuid7()}"
     payload: |
       {
@@ -156,13 +146,13 @@ action:
 # KV: thresholds["sensor-batch"] = {"min": 10, "max": 100}
 action:
   nats:
-    forEach: "{readings}"                # ✅ Braces required!
+    forEach: "{readings}"
     filter:
       operator: and
       items:
-        - field: "{value}"               # ✅ Element field
+        - field: "{value}"
           operator: gte
-          value: "{@kv.thresholds.{@msg.sensor_type}:min}"  # ✅ Dynamic KV threshold!
+          value: "{@kv.thresholds.{@msg.sensor_type}:min}"
         - field: "{value}"
           operator: lte
           value: "{@kv.thresholds.{@msg.sensor_type}:max}"
@@ -174,7 +164,6 @@ action:
 
 **Scenario**: Security system sends batch motion alerts. Generate one alert per camera.
 
-**Rule:**
 ```yaml
 - trigger:
     nats:
@@ -183,32 +172,30 @@ action:
   conditions:
     operator: and
     items:
-      # Check message type
-      - field: "{type}"                  # ✅ Explicit template syntax
+      - field: "{type}"
         operator: eq
         value: "MOTION_BATCH"
       
       # Check if ANY alert is from a camera we care about
-      - field: "{alerts}"                # ✅ Explicit template syntax
+      - field: "{alerts}"
         operator: any
         conditions:
           operator: and
           items:
-            - field: "{deviceType}"      # ✅ Explicit template syntax
+            - field: "{deviceType}"
               operator: eq
               value: "camera"
   
   action:
     nats:
-      # Generate one alert per camera motion event
-      forEach: "{alerts}"                # ✅ NEW: Braces required!
+      forEach: "{alerts}"
       filter:
         operator: and
         items:
-          - field: "{deviceType}"        # ✅ Explicit template syntax
+          - field: "{deviceType}"
             operator: eq
             value: "camera"
-          - field: "{motionDetected}"    # ✅ Explicit template syntax
+          - field: "{motionDetected}"
             operator: eq
             value: true
       subject: "alerts.motion.{buildingId}.{cameraId}"
@@ -236,8 +223,8 @@ ForEach works with primitive arrays (strings, numbers) using the `{@value}` acce
 # Message: {"action": "provision", "device_ids": ["device-001", "device-002"]}
 action:
   nats:
-    forEach: "{device_ids}"              # ✅ Braces required!
-    subject: "devices.provision.{@value}"  # Access primitive with @value
+    forEach: "{device_ids}"
+    subject: "devices.provision.{@value}"
     payload: |
       {
         "device_id": "{@value}",
@@ -251,7 +238,7 @@ action:
 # Message: {"sensor_id": "temp-001", "readings": [23.5, 24.1, 25.3, 26.0]}
 action:
   nats:
-    forEach: "{readings}"                # ✅ Braces required!
+    forEach: "{readings}"
     filter:
       operator: and
       items:
@@ -275,7 +262,7 @@ ForEach supports deeply nested array paths:
 # Message: {"data": {"sensors": {"readings": [{"value": 10}]}}}
 action:
   nats:
-    forEach: "{data.sensors.readings}"   # ✅ Nested path with braces
+    forEach: "{data.sensors.readings}"
     subject: "sensors.reading.{@uuid7()}"
     payload: '{"value": {value}}'
 ```
@@ -288,7 +275,7 @@ When the entire message is an array:
 # Message: [{"device": "dev1"}, {"device": "dev2"}]
 action:
   nats:
-    forEach: "{@items}"                  # ✅ Root array with braces
+    forEach: "{@items}"
     subject: "devices.{device}.status"
     payload: '{"device": "{device}"}'
 ```
@@ -403,17 +390,14 @@ When an array exceeds the limit, processing stops at the limit and the remaining
 
 ## Best Practices
 
-✅ **DO:**
-- Use braces for all variable references: `{field}`, `{@items}`, `{@msg.field}`
+**DO:**
 - Use `filter` to limit iterations
 - Use array operators in conditions to pre-filter messages
-- Use `{@msg}` prefix explicitly when accessing root message fields
+- Use `{@msg}` prefix explicitly when accessing root message fields in forEach
 - Test with empty arrays and non-matching elements
 
-❌ **DON'T:**
-- Forget braces on forEach: `forEach: "field"` ❌ Should be `forEach: "{field}"` ✅
+**DON'T:**
 - Process unbounded arrays without limits
 - Duplicate logic between array operators and forEach filters
 - Assume all array elements are objects (primitives need `{@value}`)
 - Forget that `{field}` resolves to array element in forEach context
-

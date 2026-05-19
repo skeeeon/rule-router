@@ -87,7 +87,7 @@ field: "{@kv.config.app:database.connection.host}"
 | `{@signature.valid}` | Whether signature verification passed | `true` / `false` |
 | `{@signature.pubkey}` | Signer's public key | `UDXU4RCRBVXEZ...` |
 
-**Note:** Requires signature verification to be enabled in configuration. See the [Security documentation](./05-security.md) for details.
+**Note:** Requires signature verification to be enabled in configuration. See the [Security documentation](./07-security.md) for details.
 
 ## Template Functions
 
@@ -145,51 +145,6 @@ All system variables can be used in conditions with these operators:
 
 This is most commonly used to drop stale events from queue backlogs (`recent: "1m"` to ignore anything older than a minute).
 
-## Complete Example: Using Multiple System Variables
+## Worked examples
 
-```yaml
-- trigger:
-    nats:
-      subject: "sensors.*.>"
-  
-  conditions:
-    operator: and
-    items:
-      # Time-based: only during business hours
-      - field: "{@time.hour}"
-        operator: gte
-        value: 9
-      - field: "{@time.hour}"
-        operator: lt
-        value: 17
-      
-      # Day-based: weekdays only
-      - field: "{@day.number}"
-        operator: lte
-        value: 5
-      
-      # KV lookup: check if sensor is active
-      - field: "{@kv.sensors.{@subject.1}:active}"
-        operator: eq
-        value: true
-      
-      # Value check
-      - field: "{temperature}"
-        operator: gt
-        value: 25
-  
-  action:
-    nats:
-      subject: "alerts.{@subject.1}.{@date.iso}"
-      payload: |
-        {
-          "sensor": "{@subject.1}",
-          "location": "{@subject.2}",
-          "temperature": {temperature},
-          "sensorName": "{@kv.sensors.{@subject.1}:name}",
-          "timestamp": "{@timestamp()}",
-          "alertId": "{@uuid7()}",
-          "dayOfWeek": "{@day.name}",
-          "hour": {@time.hour}
-        }
-```
+For end-to-end examples combining time, KV, subject context, and template functions, see [09 Patterns](./09-patterns.md).
