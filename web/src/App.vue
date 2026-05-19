@@ -4,6 +4,7 @@ import { createRule, createConditions, groupRulesByFile, uid } from './utils/sta
 import { rulesToYaml } from './utils/yaml.js'
 import { validateRule } from './utils/validate.js'
 import { parseYamlToRules } from './utils/parse.js'
+import { buildContextVars } from './utils/context-vars.js'
 import TriggerForm from './components/TriggerForm.vue'
 import ConditionsBuilder from './components/ConditionsBuilder.vue'
 import ActionForm from './components/ActionForm.vue'
@@ -123,6 +124,11 @@ watch(() => state.rules, (rules) => {
 }, { deep: true })
 
 const activeRule = computed(() => state.rules[state.activeIndex])
+
+// Context-variable catalog (@subject.N, @time.*, etc.) derived from the active
+// rule's trigger. Provided to FieldSuggestInput for autocomplete.
+const contextVars = computed(() => buildContextVars(activeRule.value?.trigger))
+provide('contextVars', contextVars)
 
 // Validation errors per rule, indexed alongside state.rules.
 const allErrors = computed(() => state.rules.map(r => validateRule(r)))

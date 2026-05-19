@@ -1648,6 +1648,18 @@ textarea:focus-visible {
   font-size: 12px;
 }
 
+.suggest-category {
+  font-size: 9px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  margin-left: auto;
+  margin-right: 6px;
+}
+
 .suggest-type {
   font-size: 10px;
   color: var(--text-muted);

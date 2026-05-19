@@ -10,6 +10,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue'])
 
 const inspectedFields = inject('inspectedFields', ref([]))
+const contextVars = inject('contextVars', ref([]))
 
 const inputEl = ref(null)
 const showSuggestions = ref(false)
@@ -26,12 +27,25 @@ const query = computed(() => {
   return afterOpen.toLowerCase()
 })
 
-const suggestions = computed(() => {
-  if (query.value === null || inspectedFields.value.length === 0) return []
-  const q = query.value
-  // Filter to leaf fields (not object/array containers, except root arrays)
-  return inspectedFields.value
+// Message fields from the parsed sample JSON, marked with a 'msg' category so
+// the dropdown can distinguish them from context vars.
+const messageSuggestions = computed(() =>
+  inspectedFields.value
     .filter(f => f.type !== 'object')
+    .map(f => ({ ...f, category: 'msg' }))
+)
+
+const suggestions = computed(() => {
+  if (query.value === null) return []
+  const q = query.value
+  // When the user has typed `@`, narrow to context vars (they all start with @).
+  // Otherwise show message fields first, then context vars as a hint of what's
+  // available.
+  const startsWithAt = q.startsWith('@')
+  const pool = startsWithAt
+    ? contextVars.value
+    : [...messageSuggestions.value, ...contextVars.value]
+  return pool
     .filter(f => !q || f.path.toLowerCase().includes(q))
     .slice(0, 12)
 })
@@ -87,16 +101,19 @@ function onKeydown(e) {
 function pick(field) {
   const val = props.modelValue || ''
   const lastOpen = val.lastIndexOf('{')
-  // Replace from the `{` to end with the completed field
+  // Replace from the `{` to end with the completed field. Prefix entries that
+  // end with `.` (e.g. @header., @msg.) get inserted without the closing brace
+  // so the user can keep typing the suffix.
   const before = val.slice(0, lastOpen)
-  const completed = `{${field.path}}`
+  const isPrefix = field.path.endsWith('.')
+  const completed = isPrefix ? `{${field.path}` : `{${field.path}}`
   emit('update:modelValue', before + completed)
   showSuggestions.value = false
   nextTick(() => inputEl.value?.focus())
 }
 
 function typeLabel(type) {
-  const labels = { string: 'str', number: 'num', boolean: 'bool', array: 'arr', null: 'null' }
+  const labels = { string: 'str', number: 'num', boolean: 'bool', array: 'arr', null: 'null', func: 'fn' }
   return labels[type] || type
 }
 </script>
@@ -126,8 +143,10 @@ function typeLabel(type) {
         class="suggest-item"
         :class="{ active: i === selectedIndex }"
         @mousedown.prevent="pick(s)"
+        :title="s.sample || ''"
       >
         <code>{<span>{{ s.path }}</span>}</code>
+        <span v-if="s.category && s.category !== 'msg'" class="suggest-category">{{ s.category }}</span>
         <span class="suggest-type">{{ typeLabel(s.type) }}</span>
       </div>
     </div>
