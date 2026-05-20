@@ -29,6 +29,11 @@ var (
 	kvVariablePattern = regexp.MustCompile(`\{([^}]+)\}`)
 )
 
+// KVStores is the typed bucket map used by the non-WASM build. The WASM build
+// aliases this name to a no-op type so NewKVContext has the same signature
+// across both builds — preventing the silent drift CLAUDE.md warns about.
+type KVStores = map[string]jetstream.KeyValue
+
 // parsedKVField caches the result of parsing a KV field specification string.
 // This avoids repeated SplitN/SplitPathRespectingBraces on the same resolved field.
 type parsedKVField struct {
@@ -48,7 +53,7 @@ type KVContext struct {
 }
 
 // NewKVContext creates a new KV context with the provided KV stores and optional local cache
-func NewKVContext(stores map[string]jetstream.KeyValue, logger *logger.Logger, localCache *LocalKVCache) *KVContext {
+func NewKVContext(stores KVStores, logger *logger.Logger, localCache *LocalKVCache) *KVContext {
 	kvCtx := &KVContext{
 		stores:     make(map[string]jetstream.KeyValue),
 		logger:     logger.With("component", "kv"),

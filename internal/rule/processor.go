@@ -38,11 +38,19 @@ type Processor struct {
 	maxForEachIters  int // Configurable forEach iteration limit
 	throttle         *ThrottleManager
 
-	// KV-based rule storage: atomically swapped values for lock-free reads.
-	// These are populated by RuleKVManager when KV rules are enabled.
-	kvRules          atomic.Value // holds map[string][]*Rule — NATS subject → rules
-	httpKVRules      atomic.Value // holds *HTTPKVRuleSet — exact paths + pattern rules
-	kvScheduleRules  atomic.Value // holds []*Rule — schedule-triggered rules from KV
+	// KV-based rule storage: a single atomic.Value holds the whole rule set so
+	// reloads swap NATS, HTTP, and Schedule rules in one operation. Three
+	// separate Stores (the old layout) left a window where readers could see
+	// new NATS rules but old HTTP rules (or vice versa) during reload.
+	kvRuleSet atomic.Value // holds *KVRuleSet
+}
+
+// KVRuleSet is the unit of atomic rule reload: NATS, HTTP, and Schedule rules
+// bundled together so a single Store updates all three coherently.
+type KVRuleSet struct {
+	NATS     map[string][]*Rule // NATS subject → rules
+	HTTP     *HTTPKVRuleSet     // exact paths + pattern rules (non-nil)
+	Schedule []*Rule            // schedule-triggered rules
 }
 
 // HTTPPatternRule pairs an HTTP-triggered rule with its compiled path matcher.
@@ -52,7 +60,7 @@ type HTTPPatternRule struct {
 }
 
 // HTTPKVRuleSet holds KV-loaded HTTP rules bucketed by exact path and pattern.
-// Both buckets are non-nil after a successful ReplaceHTTPRules call.
+// Carried inside *KVRuleSet; Exact is always non-nil after ReplaceKVRuleSet.
 type HTTPKVRuleSet struct {
 	Exact    map[string][]*Rule
 	Patterns []*HTTPPatternRule
@@ -332,11 +340,11 @@ func (p *Processor) GetHTTPPaths() []string {
 	for _, pr := range p.httpPatternRules {
 		pathSet[pr.Rule.Trigger.HTTP.Path] = true
 	}
-	if kvSet, ok := p.httpKVRules.Load().(*HTTPKVRuleSet); ok && kvSet != nil {
-		for path := range kvSet.Exact {
+	if set := p.loadKVRuleSet(); set != nil {
+		for path := range set.HTTP.Exact {
 			pathSet[path] = true
 		}
-		for _, pr := range kvSet.Patterns {
+		for _, pr := range set.HTTP.Patterns {
 			pathSet[pr.Rule.Trigger.HTTP.Path] = true
 		}
 	}
@@ -359,17 +367,24 @@ func (p *Processor) HasHTTPPath(path string) bool {
 			return true
 		}
 	}
-	if kvSet, ok := p.httpKVRules.Load().(*HTTPKVRuleSet); ok && kvSet != nil {
-		if len(kvSet.Exact[path]) > 0 {
+	if set := p.loadKVRuleSet(); set != nil {
+		if len(set.HTTP.Exact[path]) > 0 {
 			return true
 		}
-		for _, pr := range kvSet.Patterns {
+		for _, pr := range set.HTTP.Patterns {
 			if MatchPath(pr.Matcher, path) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// loadKVRuleSet returns the current KV-loaded rule set, or nil if no KV rules
+// have been loaded yet. Lock-free; safe to call from any goroutine.
+func (p *Processor) loadKVRuleSet() *KVRuleSet {
+	set, _ := p.kvRuleSet.Load().(*KVRuleSet)
+	return set
 }
 
 // GetAllRules returns all loaded rules (NATS, HTTP, and schedule)
@@ -380,58 +395,36 @@ func (p *Processor) GetAllRules() []*Rule {
 // GetScheduleRules returns all schedule-triggered rules.
 // Returns KV-loaded schedule rules when set (even if empty); falls back to file-loaded rules.
 func (p *Processor) GetScheduleRules() []*Rule {
-	if kv, ok := p.kvScheduleRules.Load().([]*Rule); ok {
-		return kv
+	if set := p.loadKVRuleSet(); set != nil {
+		return set.Schedule
 	}
 	return p.scheduleRules
 }
 
-// ReplaceScheduleRules atomically swaps the KV-loaded schedule rule set.
-// Called by RuleKVManager when KV Watch detects changes to schedule-triggered rules.
-func (p *Processor) ReplaceScheduleRules(rules []*Rule) {
-	p.kvScheduleRules.Store(rules)
-	p.logger.Debug("KV schedule rules replaced", "count", len(rules))
-}
+// ReplaceKVRuleSet atomically swaps the entire KV-loaded rule set (NATS, HTTP,
+// and Schedule) in one operation. Called by RuleKVManager on every KV change.
+// Caller must pass a non-nil *KVRuleSet with a non-nil HTTP field.
+func (p *Processor) ReplaceKVRuleSet(set *KVRuleSet) {
+	p.kvRuleSet.Store(set)
 
-// ReplaceRules atomically swaps the KV-loaded NATS rule set.
-// Called by RuleKVManager when KV Watch detects changes.
-// The map is keyed by trigger subject (e.g., "sensors.tank.>").
-func (p *Processor) ReplaceRules(rules map[string][]*Rule) {
-	p.kvRules.Store(rules)
-
-	total := 0
-	for _, rs := range rules {
-		total += len(rs)
+	natsTotal := 0
+	for _, rs := range set.NATS {
+		natsTotal += len(rs)
 	}
-	p.logger.Debug("KV rules replaced", "subjects", len(rules), "totalRules", total)
+	httpTotal := len(set.HTTP.Patterns)
+	for _, rs := range set.HTTP.Exact {
+		httpTotal += len(rs)
+	}
+	p.logger.Debug("KV rule set replaced",
+		"natsSubjects", len(set.NATS),
+		"natsRules", natsTotal,
+		"httpExactPaths", len(set.HTTP.Exact),
+		"httpPatternRules", len(set.HTTP.Patterns),
+		"scheduleRules", len(set.Schedule))
 
 	if p.metrics != nil {
-		p.metrics.SetRulesActive(float64(total))
+		p.metrics.SetRulesActive(float64(natsTotal + httpTotal + len(set.Schedule)))
 	}
-}
-
-// ReplaceHTTPRules atomically swaps the KV-loaded HTTP rule set.
-// Called by RuleKVManager when KV Watch detects changes.
-// The set partitions rules into an exact-path map and a slice of compiled
-// wildcard pattern rules. A nil set is normalized to an empty one.
-func (p *Processor) ReplaceHTTPRules(set *HTTPKVRuleSet) {
-	if set == nil {
-		set = &HTTPKVRuleSet{
-			Exact:    make(map[string][]*Rule),
-			Patterns: nil,
-		}
-	}
-	p.httpKVRules.Store(set)
-
-	total := 0
-	for _, rs := range set.Exact {
-		total += len(rs)
-	}
-	total += len(set.Patterns)
-	p.logger.Debug("KV HTTP rules replaced",
-		"exactPaths", len(set.Exact),
-		"patternRules", len(set.Patterns),
-		"totalRules", total)
 }
 
 // ProcessForSubscription processes a message using O(1) lookup by trigger subject.
@@ -439,12 +432,12 @@ func (p *Processor) ReplaceHTTPRules(set *HTTPKVRuleSet) {
 // messageSubject is the actual message subject (e.g., "sensors.tank.001") used for template variables.
 // Falls back to ProcessNATS (pattern matching) if no KV rules are loaded.
 func (p *Processor) ProcessForSubscription(triggerSubject, messageSubject string, payload []byte, headers map[string]string) ([]*Action, error) {
-	ruleMap, _ := p.kvRules.Load().(map[string][]*Rule)
-	if ruleMap == nil {
+	set := p.loadKVRuleSet()
+	if set == nil {
 		return p.ProcessNATS(messageSubject, payload, headers)
 	}
 
-	rules := ruleMap[triggerSubject]
+	rules := set.NATS[triggerSubject]
 	if len(rules) == 0 {
 		return p.ProcessNATS(messageSubject, payload, headers)
 	}
@@ -583,11 +576,11 @@ func (p *Processor) findHTTPRules(path, method string) []*Rule {
 		}
 	}
 
-	if kvSet, ok := p.httpKVRules.Load().(*HTTPKVRuleSet); ok && kvSet != nil {
-		if kvExact := kvSet.Exact[path]; len(kvExact) > 0 {
+	if set := p.loadKVRuleSet(); set != nil {
+		if kvExact := set.HTTP.Exact[path]; len(kvExact) > 0 {
 			rulesForPath = append(rulesForPath, kvExact...)
 		}
-		for _, pr := range kvSet.Patterns {
+		for _, pr := range set.HTTP.Patterns {
 			if MatchPath(pr.Matcher, path) {
 				rulesForPath = append(rulesForPath, pr.Rule)
 			}

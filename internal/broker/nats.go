@@ -34,6 +34,11 @@ const (
 
 	// watcherShutdownTimeout is the maximum time to wait for KV watchers to stop
 	watcherShutdownTimeout = 5 * time.Second
+
+	// drainTimeout bounds how long the NATS connection will wait for in-flight
+	// publishes to drain before forcibly closing on shutdown. Without this,
+	// Drain() can block indefinitely when the server is unreachable.
+	drainTimeout = 10 * time.Second
 )
 
 // NATSBroker connects to external NATS JetStream servers with KV support and local caching
@@ -48,9 +53,10 @@ type NATSBroker struct {
 	kvStores  map[string]jetstream.KeyValue
 
 	// Local KV cache for performance optimization
-	localKVCache *rule.LocalKVCache
-	kvWatchers   []jetstream.KeyWatcher
-	kvWatcherWg  sync.WaitGroup // Tracks KV watcher goroutines for graceful shutdown
+	localKVCache  *rule.LocalKVCache
+	kvWatchersMu  sync.Mutex // protects kvWatchers across reconnect/shutdown
+	kvWatchers    []jetstream.KeyWatcher
+	kvWatcherWg   sync.WaitGroup // Tracks KV watcher goroutines for graceful shutdown
 
 	// Stream resolver for JetStream stream discovery
 	streamResolver *StreamResolver
@@ -375,7 +381,9 @@ func (b *NATSBroker) watchKVBucket(bucketName string, keyFilter string) error {
 		return fmt.Errorf("failed to create watcher for bucket %s (filter %q): %w", bucketName, keyFilter, err)
 	}
 
+	b.kvWatchersMu.Lock()
 	b.kvWatchers = append(b.kvWatchers, watcher)
+	b.kvWatchersMu.Unlock()
 
 	// Start goroutine to process watch updates with WaitGroup tracking
 	b.kvWatcherWg.Add(1)
@@ -389,6 +397,42 @@ func (b *NATSBroker) watchKVBucket(bucketName string, keyFilter string) error {
 		"keyFilter", keyFilter)
 
 	return nil
+}
+
+// restartKVWatchers stops every existing KV bucket watcher and re-creates
+// them. Called from the NATS ReconnectHandler so cache updates resume after
+// the connection drops and reconnects. Safe no-op when KV is disabled or no
+// watchers were started yet.
+func (b *NATSBroker) restartKVWatchers() {
+	if !b.config.KV.Enabled || !b.config.KV.LocalCache.Enabled {
+		return
+	}
+	// Bail out if the broker is shutting down — Close() has already cancelled
+	// the context and is iterating the watcher slice itself.
+	if b.ctx.Err() != nil {
+		return
+	}
+
+	b.kvWatchersMu.Lock()
+	prev := b.kvWatchers
+	b.kvWatchers = nil
+	b.kvWatchersMu.Unlock()
+
+	if len(prev) == 0 {
+		return
+	}
+
+	b.logger.Info("re-establishing KV watchers after reconnect", "previousCount", len(prev))
+
+	for i, w := range prev {
+		if err := w.Stop(); err != nil {
+			b.logger.Warn("failed to stop stale KV watcher during reconnect", "index", i, "error", err)
+		}
+	}
+
+	if err := b.subscribeToKVChanges(); err != nil {
+		b.logger.Error("failed to re-establish KV watchers after reconnect", "error", err)
+	}
 }
 
 // processKVWatchUpdates processes updates from a KV watcher
@@ -559,6 +603,10 @@ func (b *NATSBroker) buildNATSOptions() ([]nats.Option, error) {
 				b.metrics.SetNATSConnectionStatus(true)
 				b.metrics.IncNATSReconnects()
 			}
+			// KV watchers hold consumer handles that become stale across a
+			// reconnect — silently stop delivering updates. Re-establish them
+			// so the local KV cache keeps up with bucket changes.
+			b.restartKVWatchers()
 		}),
 		nats.ClosedHandler(func(nc *nats.Conn) {
 			b.logger.Error("NATS connection permanently closed", "error", nc.LastError())
@@ -567,6 +615,7 @@ func (b *NATSBroker) buildNATSOptions() ([]nats.Option, error) {
 			}
 		}),
 		nats.ReconnectJitter(reconnectJitterMin, reconnectJitterMax),
+		nats.DrainTimeout(drainTimeout),
 	)
 
 	if b.config.NATS.CredsFile != "" {
@@ -762,7 +811,11 @@ func (b *NATSBroker) Close() error {
 	}
 
 	// Stop all KV watchers explicitly (belt and suspenders with context cancellation)
-	for i, watcher := range b.kvWatchers {
+	b.kvWatchersMu.Lock()
+	watchers := b.kvWatchers
+	b.kvWatchers = nil
+	b.kvWatchersMu.Unlock()
+	for i, watcher := range watchers {
 		if err := watcher.Stop(); err != nil {
 			errors = append(errors, fmt.Errorf("failed to stop KV watcher %d: %w", i, err))
 		}

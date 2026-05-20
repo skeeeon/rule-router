@@ -341,7 +341,8 @@ func TestExecuteHTTPAction_2xxStatusCodes(t *testing.T) {
 }
 
 func TestExecuteHTTPAction_DefaultRetry(t *testing.T) {
-	// When no retry config is provided, defaults to 3 attempts
+	// With no retry config, retries are disabled — exactly one attempt is made.
+	// Callers must opt in via action.Retry.MaxAttempts to enable retries.
 	var attempts int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&attempts, 1)
@@ -353,7 +354,7 @@ func TestExecuteHTTPAction_DefaultRetry(t *testing.T) {
 	action := &rule.HTTPAction{
 		URL:    server.URL,
 		Method: "GET",
-		// No Retry config — defaults apply
+		// No Retry config — retries off by default.
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -363,8 +364,8 @@ func TestExecuteHTTPAction_DefaultRetry(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if atomic.LoadInt32(&attempts) != 3 {
-		t.Fatalf("expected 3 default attempts, got %d", attempts)
+	if atomic.LoadInt32(&attempts) != 1 {
+		t.Fatalf("expected 1 default attempt (retries off), got %d", attempts)
 	}
 }
 

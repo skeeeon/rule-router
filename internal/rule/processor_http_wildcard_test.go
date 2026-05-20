@@ -236,7 +236,7 @@ func TestProcessHTTP_KVRulesetWithPatterns(t *testing.T) {
 		Exact:    map[string][]*Rule{},
 		Patterns: []*HTTPPatternRule{{Rule: &kvRule, Matcher: matcher}},
 	}
-	processor.ReplaceHTTPRules(set)
+	processor.ReplaceKVRuleSet(&KVRuleSet{HTTP: set})
 
 	if !processor.HasHTTPPath("/kv/anything/ok") {
 		t.Error("KV pattern should be matched by HasHTTPPath")
@@ -251,7 +251,7 @@ func TestProcessHTTP_KVRulesetWithPatterns(t *testing.T) {
 	}
 
 	// Swap to empty set and confirm matches disappear (atomic swap).
-	processor.ReplaceHTTPRules(&HTTPKVRuleSet{Exact: map[string][]*Rule{}})
+	processor.ReplaceKVRuleSet(&KVRuleSet{HTTP: &HTTPKVRuleSet{Exact: map[string][]*Rule{}}})
 	if processor.HasHTTPPath("/kv/anything/ok") {
 		t.Error("after swap, KV pattern should no longer match")
 	}
@@ -275,10 +275,10 @@ func TestProcessHTTP_FileAndKVExactAndPatternAllFire(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPathMatcher: %v", err)
 	}
-	processor.ReplaceHTTPRules(&HTTPKVRuleSet{
+	processor.ReplaceKVRuleSet(&KVRuleSet{HTTP: &HTTPKVRuleSet{
 		Exact:    map[string][]*Rule{"/webhooks/github": {&kvExact}},
 		Patterns: []*HTTPPatternRule{{Rule: &kvPattern, Matcher: matcher}},
-	})
+	}})
 
 	actions, err := processor.ProcessHTTP("/webhooks/github", "POST", []byte(`{}`), nil)
 	if err != nil {

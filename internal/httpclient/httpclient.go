@@ -60,6 +60,9 @@ func NewHTTPExecutor(
 	publisher ResponsePublisher,
 ) *HTTPExecutor {
 	log = log.With("component", "http-client")
+	if cfg.TLS.InsecureSkipVerify {
+		log.Warn("TLS certificate verification is disabled for outbound HTTP requests — connections are vulnerable to MITM attacks (httpclient.tls.insecureSkipVerify=true)")
+	}
 	return &HTTPExecutor{
 		client: &http.Client{
 			Timeout: cfg.Timeout,
@@ -78,10 +81,14 @@ func NewHTTPExecutor(
 	}
 }
 
-// ExecuteHTTPAction makes an HTTP request with retry logic
+// ExecuteHTTPAction makes an HTTP request with retry logic.
+//
+// Retries are off by default: maxAttempts=1 unless the rule explicitly sets
+// action.Retry.MaxAttempts. This avoids silently double-writing on POST/PATCH
+// when a failed request actually reached the server. Callers who know their
+// endpoint is idempotent opt in per-rule.
 func (e *HTTPExecutor) ExecuteHTTPAction(ctx context.Context, action *rule.HTTPAction) error {
-	// Get retry config (use defaults if not specified)
-	maxAttempts := 3
+	maxAttempts := 1
 	initialDelay := retryInitialDelay
 	maxDelay := retryMaxDelay
 

@@ -145,12 +145,13 @@ func (s *InboundServer) Start(ctx context.Context) error {
 
 	// Create HTTP server
 	s.httpServer = &http.Server{
-		Addr:           s.serverCfg.Address,
-		Handler:        mux,
-		ReadTimeout:    s.serverCfg.ReadTimeout,
-		WriteTimeout:   s.serverCfg.WriteTimeout,
-		IdleTimeout:    s.serverCfg.IdleTimeout,
-		MaxHeaderBytes: s.serverCfg.MaxHeaderBytes,
+		Addr:              s.serverCfg.Address,
+		Handler:           mux,
+		ReadTimeout:       s.serverCfg.ReadTimeout,
+		ReadHeaderTimeout: s.serverCfg.ReadTimeout,
+		WriteTimeout:      s.serverCfg.WriteTimeout,
+		IdleTimeout:       s.serverCfg.IdleTimeout,
+		MaxHeaderBytes:    s.serverCfg.MaxHeaderBytes,
 	}
 
 	// Start the fixed-size pool of worker goroutines.

@@ -92,6 +92,7 @@ type Subscription struct {
 	cancel       context.CancelFunc
 	logger       *logger.Logger
 	consumerCfg  *config.ConsumerConfig
+	wg           sync.WaitGroup // tracks just this subscription's workers
 }
 
 // NewSubscriptionManager creates a new subscription manager.
@@ -181,8 +182,14 @@ func (sm *SubscriptionManager) AddAndStartSubscription(ctx context.Context, stre
 	return sm.startSubscription(ctx, sub)
 }
 
+// removeSubscriptionTimeout bounds how long RemoveSubscription will wait for
+// in-flight workers to finish before logging a warning and returning.
+const removeSubscriptionTimeout = 10 * time.Second
+
 // RemoveSubscription stops and removes a subscription by subject.
-// Stops the iterator and cancels the context so workers drain naturally.
+// Stops the iterator, cancels the context, and waits for the subscription's
+// workers to exit so we don't leave goroutines holding the (now-deleted)
+// Subscription struct after this returns.
 func (sm *SubscriptionManager) RemoveSubscription(subject string) {
 	sm.mu.Lock()
 	sub, exists := sm.subscriptions[subject]
@@ -200,7 +207,18 @@ func (sm *SubscriptionManager) RemoveSubscription(subject string) {
 		sub.cancel()
 	}
 
-	sm.logger.Debug("subscription removed", "subject", subject)
+	done := make(chan struct{})
+	go func() {
+		sub.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		sm.logger.Debug("subscription removed", "subject", subject)
+	case <-time.After(removeSubscriptionTimeout):
+		sm.logger.Warn("subscription workers did not exit within timeout, abandoning",
+			"subject", subject, "timeout", removeSubscriptionTimeout)
+	}
 }
 
 // Start begins consuming messages from all subscriptions using Messages() iterator.
@@ -268,10 +286,12 @@ func (sm *SubscriptionManager) startSubscription(ctx context.Context, sub *Subsc
 		"pullExpiry", sm.consumerCfg.FetchTimeout,
 		"heartbeat", heartbeatDuration)
 
-	// Start worker pool - each worker calls iter.Next() in a blocking loop
-	// This creates a work queue pattern where multiple workers compete for messages
+	// Start worker pool - each worker calls iter.Next() in a blocking loop.
+	// Workers are tracked by both the manager-wide wg (used by Stop) and the
+	// per-subscription wg (used by RemoveSubscription).
 	for i := 0; i < sub.Workers; i++ {
 		sm.wg.Add(1)
+		sub.wg.Add(1)
 		go sm.messageWorker(subCtx, sub, i)
 	}
 
@@ -287,6 +307,7 @@ func (sm *SubscriptionManager) startSubscription(ctx context.Context, sub *Subsc
 // that leverages JetStream's internal optimizations.
 func (sm *SubscriptionManager) messageWorker(ctx context.Context, sub *Subscription, workerID int) {
 	defer sm.wg.Done()
+	defer sub.wg.Done()
 
 	sm.logger.Debug("message worker started",
 		"subject", sub.Subject,

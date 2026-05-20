@@ -5,6 +5,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"time"
 
 	"github.com/go-co-op/gocron/v2"
@@ -100,12 +101,31 @@ func (app *SchedulerApp) registerScheduleRule(r *rule.Rule, opts ...gocron.JobOp
 	// Capture rule for closure
 	capturedRule := r
 
+	// LimitModeReschedule drops overlapping fires rather than queueing them, so a
+	// slow rule (e.g. HTTP action against a hanging endpoint) can't stack up jobs
+	// faster than they complete. Combined with the recover() below this keeps a
+	// single misbehaving rule from taking the whole scheduler down.
+	jobOpts := append([]gocron.JobOption{
+		gocron.WithSingletonMode(gocron.LimitModeReschedule),
+	}, opts...)
+
 	_, err := app.scheduler.NewJob(
 		gocron.CronJob(cronExpr, false), // false = standard 5-field cron (no seconds)
 		gocron.NewTask(func() {
+			defer func() {
+				if r := recover(); r != nil {
+					app.logger.Error("panic recovered in scheduled job",
+						"panic", r,
+						"cron", capturedRule.Trigger.Schedule.Cron,
+						"stack", string(debug.Stack()))
+					if app.metrics != nil {
+						app.metrics.IncActionPublishFailures()
+					}
+				}
+			}()
 			app.executeScheduleRule(capturedRule)
 		}),
-		opts...,
+		jobOpts...,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to register cron job: %w", err)

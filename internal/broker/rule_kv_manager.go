@@ -299,9 +299,11 @@ func (m *RuleKVManager) pushRulesToProcessor() []*rule.Rule {
 		}
 	}
 
-	m.processor.ReplaceRules(natsRules)
-	m.processor.ReplaceHTTPRules(httpRules)
-	m.processor.ReplaceScheduleRules(scheduleRules)
+	m.processor.ReplaceKVRuleSet(&rule.KVRuleSet{
+		NATS:     natsRules,
+		HTTP:     httpRules,
+		Schedule: scheduleRules,
+	})
 	return scheduleRules
 }
 

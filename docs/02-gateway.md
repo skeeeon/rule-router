@@ -115,7 +115,7 @@ Full reference is in [01 Core Concepts](./01-core-concepts.md). Short version:
 
 | Field | Default | Notes |
 |-------|---------|-------|
-| `maxAttempts` | 3 | Total including the first. `1` disables retry. |
+| `maxAttempts` | 1 | Total including the first. Set `>1` to enable retry. Off by default — retrying POST/PATCH can double-write if a failed request actually reached the server. |
 | `initialDelay` | `"1s"` | Delay before second attempt. |
 | `maxDelay` | `"30s"` | Cap on the backoff. |
 

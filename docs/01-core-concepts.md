@@ -253,7 +253,7 @@ action:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `maxAttempts` | int | `3` | Total attempts including the first. `1` disables retry. |
+| `maxAttempts` | int | `1` | Total attempts including the first. Defaults to 1 (no retry) — opt in explicitly per rule. Retrying POST/PATCH can double-write if a failed request actually reached the server, so the safe default is off. |
 | `initialDelay` | duration string | `"1s"` | Delay before the second attempt. Format: Go duration (`"500ms"`, `"2s"`, `"1m"`). |
 | `maxDelay` | duration string | `"30s"` | Cap on the backoff. Prevents runaway delays on long retry chains. |
 

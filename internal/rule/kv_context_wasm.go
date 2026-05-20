@@ -19,6 +19,11 @@ var (
 	kvVariablePattern = regexp.MustCompile(`\{([^}]+)\}`)
 )
 
+// KVStores mirrors the non-WASM type alias so NewKVContext's signature matches
+// across builds. WASM has no jetstream dependency, so we use any-valued map —
+// nil is the only value callers actually pass in this build.
+type KVStores = map[string]any
+
 type parsedKVField struct {
 	bucket   string
 	key      string
@@ -36,7 +41,7 @@ type KVContext struct {
 
 // NewKVContext creates a KV context backed by local cache only.
 // The stores parameter is accepted for API compatibility but ignored in WASM.
-func NewKVContext(stores interface{}, logger *logger.Logger, localCache *LocalKVCache) *KVContext {
+func NewKVContext(stores KVStores, logger *logger.Logger, localCache *LocalKVCache) *KVContext {
 	kvCtx := &KVContext{
 		logger:     logger.With("component", "kv"),
 		localCache: localCache,
