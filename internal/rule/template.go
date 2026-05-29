@@ -92,12 +92,20 @@ func (te *TemplateEngine) parseRecursive(input string, context *EvaluationContex
 
 					// Now resolvedVarName is ready (e.g. "@kv.mybucket:key")
 					// Resolve it against the context
-					val, _ := context.ResolveValue(resolvedVarName)
+					val, found := context.ResolveValue(resolvedVarName)
 
 					// System functions check (optimized to avoid regex)
 					if strings.HasSuffix(resolvedVarName, "()") && strings.HasPrefix(resolvedVarName, "@") {
 						sb.WriteString(te.processSystemFunction(resolvedVarName[1:])) // strip @
 					} else {
+						// A variable that doesn't resolve renders as an empty
+						// string. That's intentional (templates stay lenient), but
+						// it silently masks typos like {sensor.reeding}, so leave a
+						// debug breadcrumb for operators chasing blank fields.
+						if !found {
+							te.logger.Debug("template variable did not resolve; rendering empty",
+								"variable", resolvedVarName)
+						}
 						sb.WriteString(te.convertToString(val))
 					}
 
