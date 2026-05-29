@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	json "github.com/goccy/go-json"
 	"rule-router/internal/logger"
@@ -19,16 +20,21 @@ var (
 	kvVariablePattern = regexp.MustCompile(`\{([^}]+)\}`)
 )
 
-// KVStores mirrors the non-WASM type alias so NewKVContext's signature matches
-// across builds. WASM has no jetstream dependency, so we use any-valued map —
-// nil is the only value callers actually pass in this build.
-type KVStores = map[string]any
+// maxParseCacheSize bounds the parsed-field cache (see kv_context.go for the
+// rationale). Kept in sync with the non-WASM build to avoid drift.
+const maxParseCacheSize = 1024
 
+// parsedKVField caches the result of parsing a KV field specification string.
 type parsedKVField struct {
 	bucket   string
 	key      string
 	jsonPath []string
 }
+
+// KVStores mirrors the non-WASM type alias so NewKVContext's signature matches
+// across builds. WASM has no jetstream dependency, so we use any-valued map —
+// nil is the only value callers actually pass in this build.
+type KVStores = map[string]any
 
 // KVContext provides access to KV data for rule evaluation.
 // In WASM builds, only local cache is supported (no NATS KV stores).
@@ -36,7 +42,9 @@ type KVContext struct {
 	logger     *logger.Logger
 	localCache *LocalKVCache
 	traverser  *JSONPathTraverser
-	parseCache map[string]*parsedKVField
+
+	parseMu    sync.RWMutex              // guards parseCache (kept in sync with non-WASM build)
+	parseCache map[string]*parsedKVField // bounded cache of parsed field specs
 }
 
 // NewKVContext creates a KV context backed by local cache only.
@@ -100,10 +108,29 @@ func (kv *KVContext) GetFieldWithContext(field string, msgData map[string]interf
 }
 
 func (kv *KVContext) parseKVField(field string) (bucket, key string, jsonPath []string, err error) {
-	if cached, ok := kv.parseCache[field]; ok {
+	kv.parseMu.RLock()
+	cached, ok := kv.parseCache[field]
+	kv.parseMu.RUnlock()
+	if ok {
 		return cached.bucket, cached.key, cached.jsonPath, nil
 	}
 
+	bucket, key, jsonPath, err = kv.parseKVFieldUncached(field)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	kv.parseMu.Lock()
+	if len(kv.parseCache) < maxParseCacheSize {
+		kv.parseCache[field] = &parsedKVField{bucket: bucket, key: key, jsonPath: jsonPath}
+	}
+	kv.parseMu.Unlock()
+
+	return bucket, key, jsonPath, nil
+}
+
+// parseKVFieldUncached performs the actual parse without consulting the cache.
+func (kv *KVContext) parseKVFieldUncached(field string) (bucket, key string, jsonPath []string, err error) {
 	if !strings.HasPrefix(field, "@kv.") {
 		return "", "", nil, fmt.Errorf("KV field must start with '@kv.', got: %s", field)
 	}
@@ -120,7 +147,6 @@ func (kv *KVContext) parseKVField(field string) (bucket, key string, jsonPath []
 		if bucket == "" || key == "" {
 			return "", "", nil, fmt.Errorf("KV bucket and key cannot be empty in field: %s", field)
 		}
-		kv.parseCache[field] = &parsedKVField{bucket: bucket, key: key, jsonPath: []string{}}
 		return bucket, key, []string{}, nil
 	}
 
@@ -144,7 +170,6 @@ func (kv *KVContext) parseKVField(field string) (bucket, key string, jsonPath []
 	}
 
 	if jsonPathPart == "" {
-		kv.parseCache[field] = &parsedKVField{bucket: bucket, key: key, jsonPath: []string{}}
 		return bucket, key, []string{}, nil
 	}
 
@@ -153,7 +178,6 @@ func (kv *KVContext) parseKVField(field string) (bucket, key string, jsonPath []
 		return "", "", nil, fmt.Errorf("invalid JSON path syntax in field %s: %w", field, err)
 	}
 
-	kv.parseCache[field] = &parsedKVField{bucket: bucket, key: key, jsonPath: jsonPath}
 	return bucket, key, jsonPath, nil
 }
 

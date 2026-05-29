@@ -8,20 +8,32 @@ import (
 	"time"
 )
 
+// sweepInterval bounds how often Allow walks the state map to evict expired
+// entries. Eviction is opportunistic (piggybacked on Allow) rather than run on
+// a background goroutine, since the Processor — and this ThrottleManager — is
+// recreated on reload and a goroutine would need separate lifecycle management.
+const sweepInterval = 5 * time.Minute
+
 // ThrottleManager provides per-rule throttle state with fire-first semantics.
 // The first message for a given key is allowed through immediately;
 // subsequent messages within the window are suppressed.
 // Thread-safe via a single mutex. State resets naturally on reload
 // since Processor (and its ThrottleManager) is recreated.
+//
+// Each entry stores the moment its suppression window expires. High-cardinality
+// keys (e.g. templated by order/device ID) would otherwise accumulate forever,
+// so Allow periodically sweeps and drops expired entries.
 type ThrottleManager struct {
-	mu    sync.Mutex
-	state map[string]time.Time
+	mu        sync.Mutex
+	expiry    map[string]time.Time
+	lastSweep time.Time
 }
 
 // NewThrottleManager creates a new ThrottleManager.
 func NewThrottleManager() *ThrottleManager {
 	return &ThrottleManager{
-		state: make(map[string]time.Time),
+		expiry:    make(map[string]time.Time),
+		lastSweep: time.Now(),
 	}
 }
 
@@ -33,11 +45,27 @@ func (tm *ThrottleManager) Allow(key string, window time.Duration) bool {
 	defer tm.mu.Unlock()
 
 	now := time.Now()
-	if last, ok := tm.state[key]; ok && now.Sub(last) < window {
+	tm.sweepExpired(now)
+
+	if exp, ok := tm.expiry[key]; ok && now.Before(exp) {
 		return false
 	}
-	tm.state[key] = now
+	tm.expiry[key] = now.Add(window)
 	return true
+}
+
+// sweepExpired drops entries whose suppression window has elapsed. It runs at
+// most once per sweepInterval and assumes the caller holds tm.mu.
+func (tm *ThrottleManager) sweepExpired(now time.Time) {
+	if now.Sub(tm.lastSweep) < sweepInterval {
+		return
+	}
+	for k, exp := range tm.expiry {
+		if !now.Before(exp) {
+			delete(tm.expiry, k)
+		}
+	}
+	tm.lastSweep = now
 }
 
 // ThrottleKey builds the composite key for throttle lookups.

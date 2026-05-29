@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
@@ -29,18 +30,27 @@ var (
 	kvVariablePattern = regexp.MustCompile(`\{([^}]+)\}`)
 )
 
-// KVStores is the typed bucket map used by the non-WASM build. The WASM build
-// aliases this name to a no-op type so NewKVContext has the same signature
-// across both builds — preventing the silent drift CLAUDE.md warns about.
-type KVStores = map[string]jetstream.KeyValue
+// maxParseCacheSize bounds the parsed-field cache. Static KV specs
+// (e.g. "@kv.bucket.key:path") resolve to the same string every evaluation
+// and benefit from caching; there are only as many distinct static specs as
+// appear across all rules, so they fit comfortably under this cap and stay
+// cached. Templated specs (e.g. "@kv.customers.{customer_id}:tier") resolve to
+// a different string per message — they never hit the cache anyway, so once the
+// cap is reached we simply stop adding, which keeps the map bounded.
+const maxParseCacheSize = 1024
 
-// parsedKVField caches the result of parsing a KV field specification string.
-// This avoids repeated SplitN/SplitPathRespectingBraces on the same resolved field.
+// parsedKVField caches the result of parsing a KV field specification string,
+// avoiding repeated SplitN/SplitPathRespectingBraces on the same resolved field.
 type parsedKVField struct {
 	bucket   string
 	key      string
 	jsonPath []string
 }
+
+// KVStores is the typed bucket map used by the non-WASM build. The WASM build
+// aliases this name to a no-op type so NewKVContext has the same signature
+// across both builds — preventing the silent drift CLAUDE.md warns about.
+type KVStores = map[string]jetstream.KeyValue
 
 // KVContext provides access to NATS Key-Value stores for rule evaluation and templating
 // Now includes local cache support for improved performance
@@ -49,7 +59,9 @@ type KVContext struct {
 	logger     *logger.Logger
 	localCache *LocalKVCache        // Local cache for performance optimization
 	traverser  *JSONPathTraverser   // Shared JSON path traversal
-	parseCache map[string]*parsedKVField // Cache for parsed KV field specs
+
+	parseMu    sync.RWMutex                 // guards parseCache (shared across worker goroutines)
+	parseCache map[string]*parsedKVField    // bounded cache of parsed field specs
 }
 
 // NewKVContext creates a new KV context with the provided KV stores and optional local cache
@@ -256,11 +268,32 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
 // If no colon is present, the entire value is returned (jsonPath is empty).
 // If a colon is present with no path, the entire value is also returned.
 func (kv *KVContext) parseKVField(field string) (bucket, key string, jsonPath []string, err error) {
-	// Check parse cache first — avoids repeated string splitting for the same field spec
-	if cached, ok := kv.parseCache[field]; ok {
+	kv.parseMu.RLock()
+	cached, ok := kv.parseCache[field]
+	kv.parseMu.RUnlock()
+	if ok {
 		return cached.bucket, cached.key, cached.jsonPath, nil
 	}
 
+	bucket, key, jsonPath, err = kv.parseKVFieldUncached(field)
+	if err != nil {
+		return "", "", nil, err
+	}
+
+	kv.parseMu.Lock()
+	// Bounded: stop adding once full. Static specs (the ones that actually
+	// benefit) populate early and stay; per-message templated specs that would
+	// grow the map without ever being reused are simply not cached.
+	if len(kv.parseCache) < maxParseCacheSize {
+		kv.parseCache[field] = &parsedKVField{bucket: bucket, key: key, jsonPath: jsonPath}
+	}
+	kv.parseMu.Unlock()
+
+	return bucket, key, jsonPath, nil
+}
+
+// parseKVFieldUncached performs the actual parse without consulting the cache.
+func (kv *KVContext) parseKVFieldUncached(field string) (bucket, key string, jsonPath []string, err error) {
 	if !strings.HasPrefix(field, "@kv.") {
 		return "", "", nil, fmt.Errorf("KV field must start with '@kv.', got: %s", field)
 	}
@@ -284,7 +317,6 @@ func (kv *KVContext) parseKVField(field string) (bucket, key string, jsonPath []
 			return "", "", nil, fmt.Errorf("KV key name cannot be empty in field: %s", field)
 		}
 
-		kv.parseCache[field] = &parsedKVField{bucket: bucket, key: key, jsonPath: []string{}}
 		return bucket, key, []string{}, nil // Return empty path slice
 	}
 
@@ -314,7 +346,6 @@ func (kv *KVContext) parseKVField(field string) (bucket, key string, jsonPath []
 
 	// Empty path after colon is a valid way to get the whole value
 	if jsonPathPart == "" {
-		kv.parseCache[field] = &parsedKVField{bucket: bucket, key: key, jsonPath: []string{}}
 		return bucket, key, []string{}, nil // Return empty path slice
 	}
 
@@ -329,7 +360,6 @@ func (kv *KVContext) parseKVField(field string) (bucket, key string, jsonPath []
 		"key", key,
 		"jsonPath", jsonPath)
 
-	kv.parseCache[field] = &parsedKVField{bucket: bucket, key: key, jsonPath: jsonPath}
 	return bucket, key, jsonPath, nil
 }
 
