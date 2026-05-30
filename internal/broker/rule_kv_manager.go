@@ -307,7 +307,6 @@ func (m *RuleKVManager) pushRulesToProcessor() []*rule.Rule {
 	return scheduleRules
 }
 
-
 // hasScheduleRules returns true if any rule in the slice has a schedule trigger.
 func (m *RuleKVManager) hasScheduleRules(rules []rule.Rule) bool {
 	for _, r := range rules {

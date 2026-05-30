@@ -12,6 +12,15 @@
 - Unified the inbound gateway HTTP handler: a single catch-all handler now serves both file-loaded and KV-loaded rules, removing the file/KV mode split and the `SetKVMode` wiring.
 - `MatchTokens` hot path rewritten to use slice equality instead of `strings.Join` + string compare. Eliminates one allocation per NATS message dispatch on exact-match rules (~5× faster on the microbenchmark).
 
+### Fixes
+- `RR_*` environment overrides now apply to keys absent from the config file (e.g. `RR_NATS_USERNAME`, `RR_FEATURES_GATEWAY`). Previously Viper's `AutomaticEnv` only resolved keys already present in the YAML, so credential and feature-flag env vars were silently ignored and file-less, env-only operation didn't work. The documented override keys are now bound explicitly.
+- Removed the CLI override flags (`--nats-urls`, `--metrics-enabled`, `--metrics-addr`, `--metrics-path`, `--log-level`): they were bound to a different Viper instance than the config loader used and never took effect. Use the equivalent `RR_*` environment variables instead.
+- KV-loaded rules now receive unique throttle/debounce indices. Previously every KV-loaded rule shared index `0`, so two rules in the same phase resolving to the same key collided in the throttle map and one rule's traffic could suppress another's.
+- Outbound NATS publishes and HTTP actions are now bound to the consumer's ack-wait window. A slow upstream can no longer outlive redelivery and fire the action twice; if it can't finish in time the message is NAK'd and redelivered cleanly.
+- HTTP path / NATS subject wildcards no longer match empty segments: `*` requires a non-empty token, so `/webhooks//events` no longer matches `/webhooks/*/events` (and `a..c` no longer matches `a.*.c`).
+- Dropped the templated outbound URL from the `http_outbound_requests_total` and `http_outbound_duration_seconds` metric labels (keeping `status_code`) to prevent unbounded Prometheus cardinality from per-request URLs.
+- Removed dead message terminal-error classification that matched standard-library JSON error types the rule engine (which uses `goccy/go-json`) never produces. Unparseable payloads continue to be handled leniently by the engine.
+
 ## [0.11.0] - 2026-04-15
 
 ### Features

@@ -28,10 +28,10 @@ type PatternRule struct {
 
 // IndexStats tracks index performance metrics
 type IndexStats struct {
-	exactLookups   uint64
-	patternChecks  uint64
-	matches        uint64
-	lastUpdated    time.Time
+	exactLookups  uint64
+	patternChecks uint64
+	matches       uint64
+	lastUpdated   time.Time
 }
 
 // NewRuleIndex creates a new rule index

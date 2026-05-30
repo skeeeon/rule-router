@@ -53,10 +53,10 @@ type NATSBroker struct {
 	kvStores  map[string]jetstream.KeyValue
 
 	// Local KV cache for performance optimization
-	localKVCache  *rule.LocalKVCache
-	kvWatchersMu  sync.Mutex // protects kvWatchers across reconnect/shutdown
-	kvWatchers    []jetstream.KeyWatcher
-	kvWatcherWg   sync.WaitGroup // Tracks KV watcher goroutines for graceful shutdown
+	localKVCache *rule.LocalKVCache
+	kvWatchersMu sync.Mutex // protects kvWatchers across reconnect/shutdown
+	kvWatchers   []jetstream.KeyWatcher
+	kvWatcherWg  sync.WaitGroup // Tracks KV watcher goroutines for graceful shutdown
 
 	// Stream resolver for JetStream stream discovery
 	streamResolver *StreamResolver
@@ -856,5 +856,3 @@ func (b *NATSBroker) Close() error {
 	b.logger.Info("successfully closed all NATS broker connections")
 	return nil
 }
-
-

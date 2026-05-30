@@ -178,4 +178,3 @@ func createProviders(configs []authmgr.ProviderConfig, log *logger.Logger) ([]pr
 
 	return providerList, nil
 }
-

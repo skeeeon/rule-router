@@ -30,10 +30,10 @@ type evaluateOptions struct {
 
 // evaluateResult is the JSON structure returned to JavaScript.
 type evaluateResult struct {
-	Matched         bool            `json:"matched"`
-	Actions         []actionResult  `json:"actions"`
-	Error           string          `json:"error,omitempty"`
-	ValidationError string          `json:"validationError,omitempty"`
+	Matched         bool           `json:"matched"`
+	Actions         []actionResult `json:"actions"`
+	Error           string         `json:"error,omitempty"`
+	ValidationError string         `json:"validationError,omitempty"`
 }
 
 type actionResult struct {

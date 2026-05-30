@@ -11,7 +11,7 @@ import (
 // Uses fire-first semantics: allows the first message through immediately,
 // then suppresses subsequent messages for the duration of the window.
 type DebounceConfig struct {
-	Window string `json:"window" yaml:"window"`             // Duration string: "5s", "1m", etc.
+	Window string `json:"window" yaml:"window"`               // Duration string: "5s", "1m", etc.
 	Key    string `json:"key,omitempty" yaml:"key,omitempty"` // Template key: "{@subject}", "{sensor_id}", etc. Defaults to full subject/path.
 }
 
@@ -65,7 +65,7 @@ type NATSAction struct {
 	Merge       bool              `json:"merge,omitempty" yaml:"merge,omitempty"`
 	Headers     map[string]string `json:"headers,omitempty" yaml:"headers,omitempty"`
 	RawPayload  []byte            `json:"-" yaml:"-"` // Populated during processing
-	
+
 	// Array iteration fields for forEach functionality
 	// ForEach must use template syntax: "{arrayField}" or "{nested.array}" or "{@items}"
 	ForEach  string          `json:"forEach,omitempty" yaml:"forEach,omitempty"`
@@ -139,9 +139,10 @@ type Conditions struct {
 //   - System variable: "{@time.hour}"
 //
 // This enables powerful variable-to-variable comparisons:
-//   field: "{temperature}"
-//   operator: gt
-//   value: "{@kv.sensor_config.{sensor_id}:max_temp}"
+//
+//	field: "{temperature}"
+//	operator: gt
+//	value: "{@kv.sensor_config.{sensor_id}:max_temp}"
 //
 // Type preservation:
 //   - Numbers remain numbers for accurate numeric comparison
@@ -149,8 +150,8 @@ type Conditions struct {
 //   - Booleans remain booleans
 //   - Type coercion is performed automatically when needed
 type Condition struct {
-	Field    string      `json:"field" yaml:"field"`       // Template: "{temperature}" or "{@time.hour}"
-	Operator string      `json:"operator" yaml:"operator"` // eq, gt, contains, etc.
+	Field    string      `json:"field" yaml:"field"`                     // Template: "{temperature}" or "{@time.hour}"
+	Operator string      `json:"operator" yaml:"operator"`               // eq, gt, contains, etc.
 	Value    interface{} `json:"value,omitempty" yaml:"value,omitempty"` // Literal or template: 30 or "{@kv.config:max_temp}"
 
 	// For array operators (any/all/none) - nested conditions to evaluate against array elements
@@ -230,12 +231,12 @@ type HTTPRequestContext struct {
 // NewHTTPRequestContext creates an HTTPRequestContext from path and method
 func NewHTTPRequestContext(path, method string) *HTTPRequestContext {
 	tokens := strings.Split(strings.Trim(path, "/"), "/")
-	
+
 	// Handle root path
 	if len(tokens) == 1 && tokens[0] == "" {
 		tokens = []string{}
 	}
-	
+
 	return &HTTPRequestContext{
 		Path:       path,
 		PathTokens: tokens,

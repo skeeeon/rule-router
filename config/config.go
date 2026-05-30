@@ -202,12 +202,12 @@ type HTTPClientTLS struct {
 
 // NATSConfig contains NATS connection and JetStream configuration
 type NATSConfig struct {
-	URLs      []string `json:"urls" yaml:"urls" mapstructure:"urls"`
-	Username  string   `json:"username" yaml:"username" mapstructure:"username"`
-	Password  string   `json:"password" yaml:"password" mapstructure:"password"`
-	Token     string   `json:"token" yaml:"token" mapstructure:"token"`
-	NKeySeedFile string `json:"nkeySeedFile" yaml:"nkeySeedFile" mapstructure:"nkeySeedFile"`
-	CredsFile string   `json:"credsFile" yaml:"credsFile" mapstructure:"credsFile"`
+	URLs         []string `json:"urls" yaml:"urls" mapstructure:"urls"`
+	Username     string   `json:"username" yaml:"username" mapstructure:"username"`
+	Password     string   `json:"password" yaml:"password" mapstructure:"password"`
+	Token        string   `json:"token" yaml:"token" mapstructure:"token"`
+	NKeySeedFile string   `json:"nkeySeedFile" yaml:"nkeySeedFile" mapstructure:"nkeySeedFile"`
+	CredsFile    string   `json:"credsFile" yaml:"credsFile" mapstructure:"credsFile"`
 
 	TLS struct {
 		Enable   bool   `json:"enable" yaml:"enable" mapstructure:"enable"`
@@ -224,15 +224,15 @@ type NATSConfig struct {
 
 // ConsumerConfig contains JetStream consumer configuration
 type ConsumerConfig struct {
-	ConsumerPrefix  string        `json:"consumerPrefix" yaml:"consumerPrefix" mapstructure:"consumerPrefix"`
-	WorkerCount int           `json:"workerCount" yaml:"workerCount" mapstructure:"workerCount"`
-	FetchBatchSize  int           `json:"fetchBatchSize" yaml:"fetchBatchSize" mapstructure:"fetchBatchSize"`
-	FetchTimeout    time.Duration `json:"fetchTimeout" yaml:"fetchTimeout" mapstructure:"fetchTimeout"`
-	MaxAckPending   int           `json:"maxAckPending" yaml:"maxAckPending" mapstructure:"maxAckPending"`
-	AckWaitTimeout  time.Duration `json:"ackWaitTimeout" yaml:"ackWaitTimeout" mapstructure:"ackWaitTimeout"`
-	MaxDeliver      int           `json:"maxDeliver" yaml:"maxDeliver" mapstructure:"maxDeliver"`
-	DeliverPolicy   string        `json:"deliverPolicy" yaml:"deliverPolicy" mapstructure:"deliverPolicy"`
-	ReplayPolicy    string        `json:"replayPolicy" yaml:"replayPolicy" mapstructure:"replayPolicy"`
+	ConsumerPrefix string        `json:"consumerPrefix" yaml:"consumerPrefix" mapstructure:"consumerPrefix"`
+	WorkerCount    int           `json:"workerCount" yaml:"workerCount" mapstructure:"workerCount"`
+	FetchBatchSize int           `json:"fetchBatchSize" yaml:"fetchBatchSize" mapstructure:"fetchBatchSize"`
+	FetchTimeout   time.Duration `json:"fetchTimeout" yaml:"fetchTimeout" mapstructure:"fetchTimeout"`
+	MaxAckPending  int           `json:"maxAckPending" yaml:"maxAckPending" mapstructure:"maxAckPending"`
+	AckWaitTimeout time.Duration `json:"ackWaitTimeout" yaml:"ackWaitTimeout" mapstructure:"ackWaitTimeout"`
+	MaxDeliver     int           `json:"maxDeliver" yaml:"maxDeliver" mapstructure:"maxDeliver"`
+	DeliverPolicy  string        `json:"deliverPolicy" yaml:"deliverPolicy" mapstructure:"deliverPolicy"`
+	ReplayPolicy   string        `json:"replayPolicy" yaml:"replayPolicy" mapstructure:"replayPolicy"`
 }
 
 // ConnectionConfig contains NATS connection settings
@@ -282,9 +282,9 @@ type KVRulesConfig struct {
 
 // KVConfig contains Key-Value store configuration
 type KVConfig struct {
-	Enabled    bool              `json:"enabled" yaml:"enabled" mapstructure:"enabled"`
-	Buckets    []KVBucketConfig  `json:"buckets" yaml:"buckets" mapstructure:"buckets"`
-	Rules      KVRulesConfig     `json:"rules" yaml:"rules" mapstructure:"rules"`
+	Enabled    bool             `json:"enabled" yaml:"enabled" mapstructure:"enabled"`
+	Buckets    []KVBucketConfig `json:"buckets" yaml:"buckets" mapstructure:"buckets"`
+	Rules      KVRulesConfig    `json:"rules" yaml:"rules" mapstructure:"rules"`
 	LocalCache struct {
 		Enabled bool `json:"enabled" yaml:"enabled" mapstructure:"enabled"`
 	} `json:"localCache" yaml:"localCache" mapstructure:"localCache"`
@@ -324,6 +324,20 @@ func Load(path string) (*Config, error) {
 	v.SetEnvPrefix("RR") // e.g., RR_NATS_URLS
 	v.AutomaticEnv()
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_")) // Allows RR_HTTP_SERVER_ADDRESS
+
+	// AutomaticEnv only resolves keys Viper already knows about. Defaults here are
+	// applied by mutating the struct (setDefaults), so a key absent from the config
+	// file is unknown to Viper and its RR_* var would be silently ignored. Bind the
+	// keys we document as env-overridable so they work even with no value in the
+	// file (credentials, feature flags, etc.).
+	for _, key := range []string{
+		"features.router", "features.gateway", "features.scheduler",
+		"nats.urls", "nats.username", "nats.password", "nats.token",
+		"logging.level",
+		"metrics.enabled", "metrics.address", "metrics.path",
+	} {
+		_ = v.BindEnv(key)
+	}
 
 	// Read the configuration file
 	if err := v.ReadInConfig(); err != nil {
@@ -386,7 +400,6 @@ func Load(path string) (*Config, error) {
 
 	return &config, nil
 }
-
 
 // setDefaults applies default values to the configuration
 func setDefaults(cfg *Config) {

@@ -16,14 +16,14 @@ type Metrics struct {
 	registry *prometheus.Registry // Now exposed for HTTP metrics
 
 	// Message processing metrics (shared)
-	messagesTotal             *prometheus.CounterVec
-	messageProcessingBacklog  prometheus.Gauge
-	ruleMatches               prometheus.Counter
-	rulesActive               prometheus.Gauge
-	actionsTotal              *prometheus.CounterVec
-	actionsByType             *prometheus.CounterVec
-	actionPublishFailures     prometheus.Counter
-	templateOpsTotal          *prometheus.CounterVec
+	messagesTotal            *prometheus.CounterVec
+	messageProcessingBacklog prometheus.Gauge
+	ruleMatches              prometheus.Counter
+	rulesActive              prometheus.Gauge
+	actionsTotal             *prometheus.CounterVec
+	actionsByType            *prometheus.CounterVec
+	actionPublishFailures    prometheus.Counter
+	templateOpsTotal         *prometheus.CounterVec
 
 	// NATS connection metrics (shared)
 	natsConnectionStatus prometheus.Gauge
@@ -272,7 +272,9 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 				Name: "http_outbound_requests_total",
 				Help: "Total number of outbound HTTP requests",
 			},
-			[]string{"url", "status_code"},
+			// Labelled by status_code only: outbound URLs are templated from
+			// message data and would be unbounded-cardinality as a label.
+			[]string{"status_code"},
 		),
 		httpOutboundDuration: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
@@ -280,7 +282,7 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 				Help:    "Duration of outbound HTTP requests",
 				Buckets: prometheus.DefBuckets,
 			},
-			[]string{"url"},
+			[]string{"status_code"},
 		),
 	}
 
@@ -457,12 +459,12 @@ func (m *Metrics) ObserveHTTPRequestDuration(path, method string, seconds float6
 }
 
 // HTTP Outbound metrics (http-gateway only)
-func (m *Metrics) IncHTTPOutboundRequestsTotal(url, statusCode string) {
-	m.httpOutboundRequestsTotal.WithLabelValues(url, statusCode).Inc()
+func (m *Metrics) IncHTTPOutboundRequestsTotal(statusCode string) {
+	m.httpOutboundRequestsTotal.WithLabelValues(statusCode).Inc()
 }
 
-func (m *Metrics) ObserveHTTPOutboundDuration(url string, seconds float64) {
-	m.httpOutboundDuration.WithLabelValues(url).Observe(seconds)
+func (m *Metrics) ObserveHTTPOutboundDuration(statusCode string, seconds float64) {
+	m.httpOutboundDuration.WithLabelValues(statusCode).Observe(seconds)
 }
 
 // GetStats returns current statistics

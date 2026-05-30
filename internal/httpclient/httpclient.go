@@ -183,7 +183,7 @@ func (e *HTTPExecutor) makeHTTPRequest(ctx context.Context, action *rule.HTTPAct
 	resp, err := e.client.Do(req)
 	if err != nil {
 		if e.metrics != nil {
-			e.metrics.IncHTTPOutboundRequestsTotal(action.URL, "error")
+			e.metrics.IncHTTPOutboundRequestsTotal("error")
 		}
 		return fmt.Errorf("HTTP request failed: %w", err)
 	}
@@ -195,8 +195,9 @@ func (e *HTTPExecutor) makeHTTPRequest(ctx context.Context, action *rule.HTTPAct
 	// Record metrics
 	duration := time.Since(start).Seconds()
 	if e.metrics != nil {
-		e.metrics.IncHTTPOutboundRequestsTotal(action.URL, fmt.Sprintf("%d", resp.StatusCode))
-		e.metrics.ObserveHTTPOutboundDuration(action.URL, duration)
+		statusLabel := fmt.Sprintf("%d", resp.StatusCode)
+		e.metrics.IncHTTPOutboundRequestsTotal(statusLabel)
+		e.metrics.ObserveHTTPOutboundDuration(statusLabel, duration)
 	}
 
 	// Check status code (2xx = success)

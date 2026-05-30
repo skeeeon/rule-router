@@ -1486,11 +1486,11 @@ func TestArrayOperator_ShortCircuitBehavior(t *testing.T) {
 	}
 
 	tests := []struct {
-		name  string
-		data  map[string]interface{}
-		cond  Condition
-		want  bool
-		desc  string
+		name string
+		data map[string]interface{}
+		cond Condition
+		want bool
+		desc string
 	}{
 		{
 			name: "any short-circuits on first match",

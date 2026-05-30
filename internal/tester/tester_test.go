@@ -652,4 +652,3 @@ func TestHasVariableComparisonsRecursive(t *testing.T) {
 		})
 	}
 }
-

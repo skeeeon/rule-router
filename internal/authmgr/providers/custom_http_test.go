@@ -258,4 +258,3 @@ func TestNewCustomHTTPProvider(t *testing.T) {
 		t.Errorf("headers length = %d, want 2", len(provider.headers))
 	}
 }
-

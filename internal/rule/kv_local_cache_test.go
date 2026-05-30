@@ -155,12 +155,12 @@ func TestLocalKVCache_MultipleBuckets(t *testing.T) {
 
 	t.Run("delete from one bucket doesn't affect others", func(t *testing.T) {
 		cache.Delete("bucket1", "key1")
-		
+
 		_, exists := cache.Get("bucket1", "key1")
 		if exists {
 			t.Error("expected key1 to be deleted from bucket1")
 		}
-		
+
 		_, exists = cache.Get("bucket2", "key1")
 		if !exists {
 			t.Error("expected key1 to still exist in bucket2")
@@ -329,7 +329,7 @@ func TestLocalKVCache_NilValues(t *testing.T) {
 		if !exists {
 			t.Error("expected nil-key to exist")
 		}
-		
+
 		_, exists = cache.Get("bucket1", "missing-key")
 		if exists {
 			t.Error("expected missing-key to not exist")
@@ -353,7 +353,7 @@ func TestLocalKVCache_ConcurrentAccess(t *testing.T) {
 				defer wg.Done()
 				for j := 0; j < iterations; j++ {
 					key := "key-" + string(rune(id))
-					value := id * 1000 + j
+					value := id*1000 + j
 					cache.Set("bucket1", key, value)
 				}
 			}(i)
@@ -370,7 +370,7 @@ func TestLocalKVCache_ConcurrentAccess(t *testing.T) {
 	// Concurrent reads
 	t.Run("concurrent reads", func(t *testing.T) {
 		cache.Set("shared", "key", "value")
-		
+
 		for i := 0; i < concurrency; i++ {
 			wg.Add(1)
 			go func() {
@@ -452,7 +452,7 @@ func BenchmarkLocalKVCache_GetComplex(b *testing.B) {
 // BenchmarkLocalKVCache_GetStats benchmarks statistics collection
 func BenchmarkLocalKVCache_GetStats(b *testing.B) {
 	cache := NewLocalKVCache(logger.NewNopLogger())
-	
+
 	// Add some data
 	for i := 0; i < 100; i++ {
 		bucket := "bucket-" + string(rune(i%10))
@@ -496,7 +496,7 @@ func BenchmarkLocalKVCache_ConcurrentWrites(b *testing.B) {
 // BenchmarkLocalKVCache_MixedOperations benchmarks realistic workload
 func BenchmarkLocalKVCache_MixedOperations(b *testing.B) {
 	cache := NewLocalKVCache(logger.NewNopLogger())
-	
+
 	// Pre-populate
 	for i := 0; i < 100; i++ {
 		cache.Set("benchmark", "key-"+string(rune(i)), i)

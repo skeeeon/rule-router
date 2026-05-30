@@ -29,10 +29,10 @@ func TestParseDeliverPolicy(t *testing.T) {
 	broker := newTestBroker()
 
 	tests := []struct {
-		name       string
-		policy     string
-		want       jetstream.DeliverPolicy
-		wantErr    bool
+		name    string
+		policy  string
+		want    jetstream.DeliverPolicy
+		wantErr bool
 	}{
 		{"all policy", "all", jetstream.DeliverAllPolicy, false},
 		{"new policy", "new", jetstream.DeliverNewPolicy, false},
@@ -175,4 +175,3 @@ func TestGenerateConsumerName(t *testing.T) {
 		})
 	}
 }
-

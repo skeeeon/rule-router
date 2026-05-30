@@ -8,9 +8,9 @@ import (
 
 // Metrics provides centralized metrics collection for the nats-auth-manager.
 type Metrics struct {
-	AuthSuccessTotal   *prometheus.CounterVec
-	AuthFailuresTotal  *prometheus.CounterVec
-	AuthDuration       *prometheus.HistogramVec
+	AuthSuccessTotal     *prometheus.CounterVec
+	AuthFailuresTotal    *prometheus.CounterVec
+	AuthDuration         *prometheus.HistogramVec
 	KVStoreFailuresTotal *prometheus.CounterVec
 }
 

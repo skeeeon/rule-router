@@ -32,7 +32,7 @@ func (t *JSONPathTraverser) TraversePath(data interface{}, path []string) (inter
 	}
 
 	current := data
-	
+
 	for i, segment := range path {
 		if segment == "" {
 			return nil, fmt.Errorf("empty path segment at position %d", i)
@@ -55,7 +55,7 @@ func (t *JSONPathTraverser) TraversePathString(data interface{}, pathStr string)
 	if pathStr == "" {
 		return data, nil
 	}
-	
+
 	path := strings.Split(pathStr, ".")
 	return t.TraversePath(data, path)
 }
@@ -69,7 +69,7 @@ func (t *JSONPathTraverser) traverseSegment(current interface{}, segment string,
 		if !exists {
 			// Provide helpful context in error message
 			availableKeys := t.getMapKeys(v, 5) // Get first 5 keys for context
-			return nil, fmt.Errorf("key '%s' not found at path position %d (available keys: %s)", 
+			return nil, fmt.Errorf("key '%s' not found at path position %d (available keys: %s)",
 				segment, position, strings.Join(availableKeys, ", "))
 		}
 		return value, nil
@@ -94,13 +94,13 @@ func (t *JSONPathTraverser) traverseSegment(current interface{}, segment string,
 		if err != nil {
 			return nil, fmt.Errorf("at path position %d: %w", position, err)
 		}
-		
+
 		// Bounds check
 		if index < 0 || index >= len(v) {
-			return nil, fmt.Errorf("array index %d out of bounds at path position %d (array length: %d)", 
+			return nil, fmt.Errorf("array index %d out of bounds at path position %d (array length: %d)",
 				index, position, len(v))
 		}
-		
+
 		return v[index], nil
 
 	case nil:
@@ -180,11 +180,11 @@ func SplitPathRespectingBraces(path string) ([]string, error) {
 	if path == "" {
 		return []string{}, nil
 	}
-	
+
 	segments := []string{}
 	currentSegment := strings.Builder{}
 	braceDepth := 0
-	
+
 	for i, char := range path {
 		switch char {
 		case '{':
@@ -214,12 +214,12 @@ func SplitPathRespectingBraces(path string) ([]string, error) {
 			currentSegment.WriteRune(char)
 		}
 	}
-	
+
 	// Check for unclosed braces
 	if braceDepth > 0 {
 		return nil, fmt.Errorf("unmatched '{' in path (missing %d closing brace(s)): %s", braceDepth, path)
 	}
-	
+
 	// Add final segment
 	if currentSegment.Len() > 0 {
 		segments = append(segments, currentSegment.String())
@@ -227,7 +227,7 @@ func SplitPathRespectingBraces(path string) ([]string, error) {
 		// Path ends with dot (e.g., "a.b.")
 		return nil, fmt.Errorf("path cannot end with dot: %s", path)
 	}
-	
+
 	return segments, nil
 }
 

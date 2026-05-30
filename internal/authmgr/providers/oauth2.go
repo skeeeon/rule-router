@@ -97,4 +97,3 @@ func (p *OAuth2Provider) RefreshInterval() time.Duration {
 	// This will be updated after the first authentication
 	return p.refreshBuffer
 }
-

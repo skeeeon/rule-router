@@ -307,7 +307,7 @@ func BenchmarkMarshal_Medium_GoccyJSON(b *testing.B) {
 func BenchmarkNestedAccess_TwoLevel(b *testing.B) {
 	var data map[string]interface{}
 	goccyjson.Unmarshal(mediumMessageJSON, &data)
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Simulate accessing device.id
@@ -321,7 +321,7 @@ func BenchmarkNestedAccess_TwoLevel(b *testing.B) {
 func BenchmarkNestedAccess_ThreeLevel(b *testing.B) {
 	var data map[string]interface{}
 	goccyjson.Unmarshal(mediumMessageJSON, &data)
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Simulate accessing device.location.building
@@ -337,7 +337,7 @@ func BenchmarkNestedAccess_ThreeLevel(b *testing.B) {
 func BenchmarkNestedAccess_FourLevel(b *testing.B) {
 	var data map[string]interface{}
 	goccyjson.Unmarshal(largeMessageJSON, &data)
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Simulate accessing order.customer.profile.preferences.notifications
@@ -506,7 +506,7 @@ func TestJSONCorrectness(t *testing.T) {
 func BenchmarkUnmarshal_Invalid_StdLib(b *testing.B) {
 	invalidJSON := []byte(`{"invalid": json}`)
 	var result map[string]interface{}
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		json.Unmarshal(invalidJSON, &result)
@@ -517,7 +517,7 @@ func BenchmarkUnmarshal_Invalid_StdLib(b *testing.B) {
 func BenchmarkUnmarshal_Invalid_GoccyJSON(b *testing.B) {
 	invalidJSON := []byte(`{"invalid": json}`)
 	var result map[string]interface{}
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		goccyjson.Unmarshal(invalidJSON, &result)

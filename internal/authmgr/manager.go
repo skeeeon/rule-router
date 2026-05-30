@@ -187,4 +187,3 @@ func (m *Manager) Stop() error {
 	m.logger.Info("authentication manager stopped")
 	return nil
 }
-

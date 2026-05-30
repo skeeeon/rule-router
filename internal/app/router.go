@@ -138,5 +138,3 @@ func (app *RouterApp) setupSubscriptions() error {
 	app.logger.Info("all subscriptions configured successfully", "subscriptionCount", len(subjects))
 	return nil
 }
-
-

@@ -57,8 +57,8 @@ func TestExecuteHTTPAction_Success(t *testing.T) {
 
 	executor := newTestExecutor()
 	action := &rule.HTTPAction{
-		URL:    server.URL,
-		Method: "POST",
+		URL:     server.URL,
+		Method:  "POST",
 		Payload: `{"test": true}`,
 	}
 
@@ -76,8 +76,8 @@ func TestExecuteHTTPAction_NonSuccessStatus(t *testing.T) {
 
 	executor := newTestExecutor()
 	action := &rule.HTTPAction{
-		URL:    server.URL,
-		Method: "POST",
+		URL:     server.URL,
+		Method:  "POST",
 		Payload: `{"test": true}`,
 		Retry: &rule.RetryConfig{
 			MaxAttempts:  1,
@@ -105,8 +105,8 @@ func TestExecuteHTTPAction_RetryThenSuccess(t *testing.T) {
 
 	executor := newTestExecutor()
 	action := &rule.HTTPAction{
-		URL:    server.URL,
-		Method: "POST",
+		URL:     server.URL,
+		Method:  "POST",
 		Payload: `{"test": true}`,
 		Retry: &rule.RetryConfig{
 			MaxAttempts:  3,
@@ -188,8 +188,8 @@ func TestExecuteHTTPAction_CustomHeaders(t *testing.T) {
 
 	executor := newTestExecutor()
 	action := &rule.HTTPAction{
-		URL:    server.URL,
-		Method: "POST",
+		URL:     server.URL,
+		Method:  "POST",
 		Payload: `{"test": true}`,
 		Headers: map[string]string{
 			"X-Custom-Header": "custom-value",
@@ -243,8 +243,8 @@ func TestExecuteHTTPAction_CustomContentType(t *testing.T) {
 
 	executor := newTestExecutor()
 	action := &rule.HTTPAction{
-		URL:    server.URL,
-		Method: "POST",
+		URL:     server.URL,
+		Method:  "POST",
 		Payload: `<xml>test</xml>`,
 		Headers: map[string]string{
 			"Content-Type": "application/xml",

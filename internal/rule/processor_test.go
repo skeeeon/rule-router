@@ -144,7 +144,7 @@ func TestProcessor_ComplexIntegration_DeepContext(t *testing.T) {
 		Action: Action{
 			NATS: &NATSAction{
 				// Use subject token 'sensors' (index 1)
-				Subject: "alerts.{@subject.1}.processed", 
+				Subject: "alerts.{@subject.1}.processed",
 				// Complex payload with timestamp and another KV lookup
 				Payload: `{
 					"region": "{@kv.configurations.{data.device.config_id}:region}", 
@@ -515,33 +515,33 @@ func TestProcessNATSActionWithForEach_InvalidSyntax(t *testing.T) {
 	processor := newTestProcessor()
 
 	tests := []struct {
-		name        string
+		name         string
 		forEachField string
-		wantErr     bool
-		errContains string
+		wantErr      bool
+		errContains  string
 	}{
 		{
-			name:        "missing braces",
+			name:         "missing braces",
 			forEachField: "items",
-			wantErr:     true,
-			errContains: "invalid forEach template syntax",
+			wantErr:      true,
+			errContains:  "invalid forEach template syntax",
 		},
 		{
-			name:        "empty braces",
+			name:         "empty braces",
 			forEachField: "{}",
-			wantErr:     true,
-			errContains: "invalid forEach template syntax",
+			wantErr:      true,
+			errContains:  "invalid forEach template syntax",
 		},
 		{
-			name:        "only opening brace",
+			name:         "only opening brace",
 			forEachField: "{items",
-			wantErr:     true,
-			errContains: "invalid forEach template syntax",
+			wantErr:      true,
+			errContains:  "invalid forEach template syntax",
 		},
 		{
-			name:        "valid syntax",
+			name:         "valid syntax",
 			forEachField: "{items}",
-			wantErr:     false,
+			wantErr:      false,
 		},
 	}
 
@@ -1530,14 +1530,14 @@ func TestDeepMerge_NewKeys(t *testing.T) {
 func TestDeepMerge_NestedObjectsRecursed(t *testing.T) {
 	base := map[string]interface{}{
 		"nested": map[string]interface{}{
-			"keep": "yes",
+			"keep":      "yes",
 			"overwrite": "old",
 		},
 	}
 	overlay := map[string]interface{}{
 		"nested": map[string]interface{}{
 			"overwrite": "new",
-			"added": "extra",
+			"added":     "extra",
 		},
 	}
 	result := deepMerge(base, overlay)
@@ -1782,8 +1782,8 @@ func TestProcessNATSAction_Merge_WithTemplateVariables(t *testing.T) {
 	}
 
 	data := map[string]interface{}{
-		"name":     "sensor-1",
-		"reading":  98.6,
+		"name":    "sensor-1",
+		"reading": 98.6,
 	}
 	context := newTemplateTestContext(data, "sensors.temperature.room1", time.Now())
 
@@ -1920,9 +1920,9 @@ func TestProcessHTTPAction_Merge_Basic(t *testing.T) {
 	processor := newTestProcessor()
 
 	action := &HTTPAction{
-		URL:    "https://api.example.com/enrich",
-		Method: "POST",
-		Merge:  true,
+		URL:     "https://api.example.com/enrich",
+		Method:  "POST",
+		Merge:   true,
 		Payload: `{"enriched": true}`,
 	}
 
@@ -2635,4 +2635,3 @@ func TestProcessForEach_KVSourcedArray_WithJsonPath(t *testing.T) {
 		t.Errorf("Action 1 subject = %s, want access.back.command", actions[1].NATS.Subject)
 	}
 }
-

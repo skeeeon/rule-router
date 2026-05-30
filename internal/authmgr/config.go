@@ -29,12 +29,12 @@ type Config struct {
 
 // NATSConfig mirrors rule-router NATS config (connection only)
 type NATSConfig struct {
-	URLs      []string `mapstructure:"urls"`
-	Username  string   `mapstructure:"username"`
-	Password  string   `mapstructure:"password"`
-	Token     string   `mapstructure:"token"`
-	NKeySeedFile string `mapstructure:"nkeySeedFile"`
-	CredsFile string   `mapstructure:"credsFile"`
+	URLs         []string `mapstructure:"urls"`
+	Username     string   `mapstructure:"username"`
+	Password     string   `mapstructure:"password"`
+	Token        string   `mapstructure:"token"`
+	NKeySeedFile string   `mapstructure:"nkeySeedFile"`
+	CredsFile    string   `mapstructure:"credsFile"`
 
 	TLS struct {
 		Enable   bool   `mapstructure:"enable"`
@@ -59,11 +59,11 @@ type MetricsConfig struct {
 
 // ProviderConfig defines an authentication provider
 type ProviderConfig struct {
-	ID            string            `mapstructure:"id"`
-	Type          string            `mapstructure:"type"` // "oauth2" or "custom-http"
-	KVKey         string            `mapstructure:"kvKey"`
-	RefreshBefore string            `mapstructure:"refreshBefore"` // OAuth2 only
-	RefreshEvery  string            `mapstructure:"refreshEvery"`  // Custom HTTP
+	ID            string `mapstructure:"id"`
+	Type          string `mapstructure:"type"` // "oauth2" or "custom-http"
+	KVKey         string `mapstructure:"kvKey"`
+	RefreshBefore string `mapstructure:"refreshBefore"` // OAuth2 only
+	RefreshEvery  string `mapstructure:"refreshEvery"`  // Custom HTTP
 
 	// OAuth2 fields
 	TokenURL     string   `mapstructure:"tokenUrl"`

@@ -38,13 +38,13 @@ type StreamResolver struct {
 // StreamInfo holds comprehensive information about a JetStream stream
 // including mirror/source configuration and storage type
 type StreamInfo struct {
-	Name          string                 // Stream name (e.g., "SENSORS")
-	Subjects      []string               // Primary subject filters (only for non-mirror/source streams)
-	MirrorFilter  string                 // Mirror's FilterSubject (if stream is a mirror)
-	SourceFilters []string               // Source FilterSubjects (if stream has sources)
-	Storage       jetstream.StorageType  // Memory or File storage
-	IsMirror      bool                   // True if this is a mirror stream
-	IsSource      bool                   // True if this stream has sources
+	Name          string                // Stream name (e.g., "SENSORS")
+	Subjects      []string              // Primary subject filters (only for non-mirror/source streams)
+	MirrorFilter  string                // Mirror's FilterSubject (if stream is a mirror)
+	SourceFilters []string              // Source FilterSubjects (if stream has sources)
+	Storage       jetstream.StorageType // Memory or File storage
+	IsMirror      bool                  // True if this is a mirror stream
+	IsSource      bool                  // True if this stream has sources
 }
 
 // streamMatch represents a potential stream match with its properties for sorting.
@@ -408,10 +408,11 @@ func (sr *StreamResolver) explainSelection(match *streamMatch) string {
 // calculateSpecificity returns a score indicating how specific a subject filter is
 // Higher score = more specific
 // Examples:
-//   "sensors.temperature.room1" = 1030 (exact match, 3 tokens)
-//   "sensors.temperature.*" = 310 (exact + single wildcard)
-//   "sensors.>" = 101 (exact + greedy wildcard)
-//   ">" = 1 (catch-all)
+//
+//	"sensors.temperature.room1" = 1030 (exact match, 3 tokens)
+//	"sensors.temperature.*" = 310 (exact + single wildcard)
+//	"sensors.>" = 101 (exact + greedy wildcard)
+//	">" = 1 (catch-all)
 func (sr *StreamResolver) calculateSpecificity(filter string) int {
 	// Exact match (no wildcards) - most specific
 	if !strings.Contains(filter, "*") && !strings.Contains(filter, ">") {
@@ -713,4 +714,3 @@ func (sr *StreamResolver) ValidateRulesHaveStreams(rules []rule.Rule) []error {
 
 	return errs
 }
-

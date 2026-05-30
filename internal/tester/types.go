@@ -11,10 +11,10 @@ import (
 // TestConfig holds optional test-specific configurations.
 // It defines the mock environment for a test run.
 type TestConfig struct {
-	MockTrigger   MockTrigger            `json:"mockTrigger"`
-	MockTime      string                 `json:"mockTime,omitempty"`
-	Headers       map[string]string      `json:"headers,omitempty"`
-	MockSignature *MockSignatureConfig   `json:"mockSignature,omitempty"`
+	MockTrigger   MockTrigger          `json:"mockTrigger"`
+	MockTime      string               `json:"mockTime,omitempty"`
+	Headers       map[string]string    `json:"headers,omitempty"`
+	MockSignature *MockSignatureConfig `json:"mockSignature,omitempty"`
 }
 
 // MockTrigger specifies the type and details of the event that triggers the rule.

@@ -61,8 +61,8 @@ type InboundServer struct {
 	serverCfg  *ServerConfig
 
 	// Worker pool components
-	workQueue chan webhookJob   // Buffered channel acting as a job queue
-	wg        sync.WaitGroup    // Waits for all workers to gracefully shut down
+	workQueue chan webhookJob // Buffered channel acting as a job queue
+	wg        sync.WaitGroup  // Waits for all workers to gracefully shut down
 }
 
 // ServerConfig contains HTTP server configuration.
@@ -86,7 +86,7 @@ type ServerConfig struct {
 
 // PublishConfig contains NATS publish configuration
 type PublishConfig struct {
-	Mode           string        // "jetstream" or "core"
+	Mode           string // "jetstream" or "core"
 	AckTimeout     time.Duration
 	MaxRetries     int
 	RetryBaseDelay time.Duration
@@ -408,5 +408,3 @@ func (s *InboundServer) healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(responseHealthy))
 }
-
-

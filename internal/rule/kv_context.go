@@ -5,10 +5,10 @@
 package rule
 
 import (
-	json "github.com/goccy/go-json"
 	"context"
 	"errors"
 	"fmt"
+	json "github.com/goccy/go-json"
 	"regexp"
 	"strconv"
 	"strings"
@@ -57,11 +57,11 @@ type KVStores = map[string]jetstream.KeyValue
 type KVContext struct {
 	stores     map[string]jetstream.KeyValue
 	logger     *logger.Logger
-	localCache *LocalKVCache        // Local cache for performance optimization
-	traverser  *JSONPathTraverser   // Shared JSON path traversal
+	localCache *LocalKVCache      // Local cache for performance optimization
+	traverser  *JSONPathTraverser // Shared JSON path traversal
 
-	parseMu    sync.RWMutex                 // guards parseCache (shared across worker goroutines)
-	parseCache map[string]*parsedKVField    // bounded cache of parsed field specs
+	parseMu    sync.RWMutex              // guards parseCache (shared across worker goroutines)
+	parseCache map[string]*parsedKVField // bounded cache of parsed field specs
 }
 
 // NewKVContext creates a new KV context with the provided KV stores and optional local cache
@@ -150,7 +150,7 @@ func (kv *KVContext) GetFieldWithContext(field string, msgData map[string]interf
 		kv.logger.Debug("failed to resolve variables in KV field", "field", field, "error", err)
 		return "", false // Return empty string for template processing
 	}
-	
+
 	// If variables couldn't be resolved, return empty string
 	if hasUnresolvedVars {
 		kv.logger.Debug("KV field has unresolved variables, returning empty",
@@ -163,7 +163,7 @@ func (kv *KVContext) GetFieldWithContext(field string, msgData map[string]interf
 
 	// Now do the actual KV lookup (cache first, then NATS KV fallback)
 	value, found := kv.GetField(resolvedField)
-	
+
 	// If KV lookup fails, return empty string (not nil)
 	if !found {
 		kv.logger.Debug("KV lookup failed after variable resolution",
@@ -171,7 +171,7 @@ func (kv *KVContext) GetFieldWithContext(field string, msgData map[string]interf
 			"originalField", field)
 		return "", false
 	}
-	
+
 	return value, true
 }
 
@@ -180,8 +180,8 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
 	// Check if the bucket exists in our configured stores
 	store, exists := kv.stores[bucket]
 	if !exists {
-		kv.logger.Warn("KV bucket not configured", 
-			"bucket", bucket, 
+		kv.logger.Warn("KV bucket not configured",
+			"bucket", bucket,
 			"key", key,
 			"availableBuckets", kv.getBucketNames(),
 			"impact", "KV lookup will fail")
@@ -220,19 +220,19 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
 	// Parse as JSON and traverse the path using shared traverser
 	var jsonObj interface{}
 	if err := json.Unmarshal(rawValue, &jsonObj); err != nil {
-		kv.logger.Warn("failed to parse JSON from KV value", 
-			"bucket", bucket, 
-			"key", key, 
+		kv.logger.Warn("failed to parse JSON from KV value",
+			"bucket", bucket,
+			"key", key,
 			"error", err,
 			"impact", "KV lookup will fail")
 		return nil, false
 	}
 
-    	// Populate the cache after a successful lazy-load
-    	if kv.localCache != nil && kv.localCache.IsEnabled() {
-        	kv.localCache.Set(bucket, key, jsonObj)
-       		kv.logger.Debug("populated KV cache on first read (lazy-load)", "bucket", bucket, "key", key)
-    	}
+	// Populate the cache after a successful lazy-load
+	if kv.localCache != nil && kv.localCache.IsEnabled() {
+		kv.localCache.Set(bucket, key, jsonObj)
+		kv.logger.Debug("populated KV cache on first read (lazy-load)", "bucket", bucket, "key", key)
+	}
 
 	// Skip traversal if path is empty, returning the entire value
 	if len(jsonPath) == 0 {
@@ -245,19 +245,19 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
 
 	value, err := kv.traverser.TraversePath(jsonObj, jsonPath)
 	if err != nil {
-		kv.logger.Warn("JSON path traversal failed on NATS value", 
-			"bucket", bucket, 
-			"key", key, 
-			"jsonPath", jsonPath, 
+		kv.logger.Warn("JSON path traversal failed on NATS value",
+			"bucket", bucket,
+			"key", key,
+			"jsonPath", jsonPath,
 			"error", err,
 			"impact", "KV lookup will fail")
 		return nil, false
 	}
 
-	kv.logger.Debug("NATS KV lookup with JSON path successful", 
-		"bucket", bucket, 
-		"key", key, 
-		"jsonPath", jsonPath, 
+	kv.logger.Debug("NATS KV lookup with JSON path successful",
+		"bucket", bucket,
+		"key", key,
+		"jsonPath", jsonPath,
 		"value", value)
 	return value, true
 }
@@ -376,7 +376,7 @@ func (kv *KVContext) resolveVariablesEnhanced(field string, msgData map[string]i
 	// Replace all {variable} patterns
 	result = kvVariablePattern.ReplaceAllStringFunc(result, func(match string) string {
 		varName := match[1 : len(match)-1] // Remove { and }
-		
+
 		kv.logger.Debug("resolving KV variable", "variable", varName, "inField", field)
 
 		// Try to resolve the variable from different contexts
@@ -492,4 +492,3 @@ func (kv *KVContext) GetStats() map[string]interface{} {
 
 	return stats
 }
-

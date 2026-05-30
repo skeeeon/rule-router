@@ -113,7 +113,7 @@ func (te *TemplateEngine) parseRecursive(input string, context *EvaluationContex
 					i = end + 1
 					continue
 				}
-				// If not valid template structure (e.g. contains quotes/spaces), 
+				// If not valid template structure (e.g. contains quotes/spaces),
 				// treat matching brace as literal and fall through to write char.
 			}
 		}

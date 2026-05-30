@@ -223,9 +223,9 @@ func TestLoadFromDirectory_ValidationErrors(t *testing.T) {
 			errMsg: "NATS trigger subject cannot be empty",
 		},
 		{
-			name: "no action specified",
+			name:        "no action specified",
 			ruleContent: `- trigger: { nats: { subject: a } }`,
-			errMsg: "rule must have either a NATS or HTTP action",
+			errMsg:      "rule must have either a NATS or HTTP action",
 		},
 		{
 			name: "empty nats action subject",
@@ -309,10 +309,10 @@ func TestLoadFromDirectory_ValidationErrors(t *testing.T) {
 // TestConditionField_TemplateSyntaxValidation tests the new template syntax requirement
 func TestConditionField_TemplateSyntaxValidation(t *testing.T) {
 	tests := []struct {
-		name        string
-		field       string
-		shouldPass  bool
-		errMsg      string
+		name       string
+		field      string
+		shouldPass bool
+		errMsg     string
 	}{
 		{
 			name:       "valid message field with braces",
@@ -382,7 +382,7 @@ func TestConditionField_TemplateSyntaxValidation(t *testing.T) {
 			ruleContent := `- trigger: { nats: { subject: a } }
   conditions: { operator: "and", items: [{field: "` + tt.field + `", operator: "exists"}] }
   action: { nats: { subject: b, payload: "" } }`
-			
+
 			tempDir := t.TempDir()
 			createTempRuleFile(t, tempDir, "test.yaml", ruleContent)
 
@@ -406,9 +406,9 @@ func TestConditionField_TemplateSyntaxValidation(t *testing.T) {
 // TestConditionValue_VariableSupport tests that values can be variables or literals
 func TestConditionValue_VariableSupport(t *testing.T) {
 	tests := []struct {
-		name        string
-		value       string
-		shouldPass  bool
+		name       string
+		value      string
+		shouldPass bool
 	}{
 		{
 			name:       "literal number",
@@ -453,7 +453,7 @@ func TestConditionValue_VariableSupport(t *testing.T) {
 			ruleContent := `- trigger: { nats: { subject: a } }
   conditions: { operator: "and", items: [{field: "{temperature}", operator: "gt", value: ` + tt.value + `}] }
   action: { nats: { subject: b, payload: "" } }`
-			
+
 			tempDir := t.TempDir()
 			createTempRuleFile(t, tempDir, "test.yaml", ruleContent)
 
@@ -475,10 +475,10 @@ func TestConditionValue_VariableSupport(t *testing.T) {
 // TestForEach_TemplateSyntaxValidation tests forEach field validation with new syntax
 func TestForEach_TemplateSyntaxValidation(t *testing.T) {
 	tests := []struct {
-		name        string
+		name         string
 		forEachField string
-		shouldPass  bool
-		errMsg      string
+		shouldPass   bool
+		errMsg       string
 	}{
 		{
 			name:         "valid simple array field",
@@ -537,7 +537,7 @@ func TestForEach_TemplateSyntaxValidation(t *testing.T) {
 			loader := newTestLoader()
 			ruleContent := `- trigger: { nats: { subject: a } }
   action: { nats: { forEach: "` + tt.forEachField + `", subject: "out.{id}", payload: "{}" } }`
-			
+
 			tempDir := t.TempDir()
 			createTempRuleFile(t, tempDir, "test.yaml", ruleContent)
 
@@ -697,7 +697,7 @@ func TestVariableComparison_RealWorldScenarios(t *testing.T) {
 
 			if tt.shouldPass {
 				if err != nil {
-					t.Errorf("Expected rule to pass validation (%s), but got error: %v", 
+					t.Errorf("Expected rule to pass validation (%s), but got error: %v",
 						tt.description, err)
 				}
 			} else {
@@ -712,10 +712,10 @@ func TestVariableComparison_RealWorldScenarios(t *testing.T) {
 // Dedicated test suite for KV field validation.
 func TestKVField_Validation(t *testing.T) {
 	tests := []struct {
-		name        string
-		field       string
-		shouldPass  bool
-		errMsg      string
+		name       string
+		field      string
+		shouldPass bool
+		errMsg     string
 	}{
 		{
 			name:       "valid with path",
@@ -780,7 +780,7 @@ func TestKVField_Validation(t *testing.T) {
 			ruleContent := `- trigger: { nats: { subject: a } }
   conditions: { operator: "and", items: [{field: "{` + tt.field + `}", operator: "exists"}] }
   action: { nats: { subject: b, payload: "" } }`
-			
+
 			tempDir := t.TempDir()
 			createTempRuleFile(t, tempDir, "test.yaml", ruleContent)
 

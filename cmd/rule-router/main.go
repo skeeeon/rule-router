@@ -6,11 +6,9 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	flag "github.com/spf13/pflag"
-	"github.com/spf13/viper"
 	"rule-router/config"
 	"rule-router/internal/app"
 	"rule-router/internal/lifecycle"
@@ -115,17 +113,9 @@ func run() error {
 
 // parseFlags parses command line arguments and loads config via Viper
 func parseFlags() (*config.Config, string) {
-	// Define flags
 	configPath := flag.String("config", "config/rule-router.yaml", "path to config file (YAML or JSON)")
 	rulesPath := flag.String("rules", "rules", "path to rules directory")
 	showVersion := flag.Bool("version", false, "print version and exit")
-
-	// Define override flags
-	flag.String("nats-urls", "", "Comma-separated NATS server URLs to override config")
-	flag.Bool("metrics-enabled", true, "Override enabling of metrics server")
-	flag.String("metrics-addr", "", "Override metrics server address")
-	flag.String("metrics-path", "", "Override metrics endpoint path")
-	flag.String("log-level", "", "Override log level (debug, info, warn, error)")
 
 	flag.Parse()
 
@@ -134,20 +124,8 @@ func parseFlags() (*config.Config, string) {
 		os.Exit(0)
 	}
 
-	// Bind flags to Viper
-	v := viper.GetViper()
-	v.BindPFlag("nats.urls", flag.Lookup("nats-urls"))
-	v.BindPFlag("metrics.enabled", flag.Lookup("metrics-enabled"))
-	v.BindPFlag("metrics.address", flag.Lookup("metrics-addr"))
-	v.BindPFlag("metrics.path", flag.Lookup("metrics-path"))
-	v.BindPFlag("logging.level", flag.Lookup("log-level"))
-
-	// Special handling for comma-separated nats.urls string from flag/env
-	if natsURLs := v.GetString("nats.urls"); natsURLs != "" {
-		v.Set("nats.urls", strings.Split(natsURLs, ","))
-	}
-
-	// Load configuration using the new Viper-powered loader
+	// Overrides come from RR_* environment variables (e.g. RR_NATS_URLS,
+	// RR_LOGGING_LEVEL), layered over the config file in config.Load.
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		logger.NewBootstrapLogger().Fatal("failed to load config", "error", err)

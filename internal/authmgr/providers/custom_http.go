@@ -145,4 +145,3 @@ func (p *CustomHTTPProvider) extractJSONPath(data interface{}, path string) (str
 		return "", fmt.Errorf("final value is not a string, got %T", current)
 	}
 }
-

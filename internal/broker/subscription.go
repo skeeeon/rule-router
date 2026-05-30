@@ -4,7 +4,6 @@ package broker
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -36,17 +35,6 @@ const (
 	maxRetryJitter = 25 * time.Millisecond
 )
 
-// Terminal error types - these errors indicate the message is permanently invalid
-// and should not be retried.
-var (
-	// ErrMalformedJSON indicates the message payload contains invalid JSON that cannot be parsed.
-	ErrMalformedJSON = errors.New("malformed JSON payload")
-
-	// ErrInvalidPayload indicates the message payload is structurally invalid
-	// (e.g., missing required fields, wrong types).
-	ErrInvalidPayload = errors.New("invalid message payload")
-)
-
 // HTTPActionExecutor handles HTTP action execution. Implemented by httpclient.HTTPExecutor.
 // Defined here as an interface to keep the broker package decoupled from httpclient.
 type HTTPActionExecutor interface {
@@ -60,6 +48,7 @@ type HTTPActionExecutor interface {
 // For each rule subject, it creates:
 //   - ONE Messages() iterator with internal pre-buffering and optimization
 //   - A pool of "worker" goroutines that call iter.Next() in a blocking loop
+//
 // This leverages JetStream's built-in optimizations while maintaining a work queue pattern.
 type SubscriptionManager struct {
 	natsConn      *nats.Conn
@@ -87,7 +76,7 @@ type Subscription struct {
 	ConsumerName string
 	StreamName   string
 	Consumer     jetstream.Consumer
-	Workers      int // Number of concurrent workers
+	Workers      int                       // Number of concurrent workers
 	iterator     jetstream.MessagesContext // Messages() iterator
 	cancel       context.CancelFunc
 	logger       *logger.Logger
@@ -394,23 +383,13 @@ func (sm *SubscriptionManager) processMessageWithRecovery(ctx context.Context, m
 			"workerID", workerID,
 			"error", err)
 
-		// Differentiate between terminal and transient errors
-		if isTerminalError(err) {
-			// Terminal error: malformed message that will never succeed
-			sm.logger.Warn("terminating malformed message to prevent redelivery loop",
-				"subject", subject)
-			if termErr := msg.Term(); termErr != nil {
-				sm.logger.Error("failed to terminate message",
-					"subject", subject,
-					"error", termErr)
-			}
-		} else {
-			// Transient error: might succeed on retry
-			if nakErr := msg.Nak(); nakErr != nil {
-				sm.logger.Error("failed to NAK message",
-					"subject", subject,
-					"error", nakErr)
-			}
+		// NAK so the message is redelivered; JetStream's MaxDeliver bounds the
+		// attempts and dead-letters one that never succeeds. (Unparseable
+		// payloads are handled leniently in the rule engine, not rejected here.)
+		if nakErr := msg.Nak(); nakErr != nil {
+			sm.logger.Error("failed to NAK message",
+				"subject", subject,
+				"error", nakErr)
 		}
 
 		if sm.metrics != nil {
@@ -456,11 +435,21 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 		return fmt.Errorf("rule processing failed: %w", err)
 	}
 
+	// Bound action execution to the ack window so a slow publish or HTTP call
+	// can't outlive redelivery and fire twice. If it can't finish in time the
+	// message is NAK'd and redelivered cleanly instead of double-firing.
+	actionCtx := ctx
+	if aw := sm.consumerCfg.AckWaitTimeout; aw > 0 {
+		var cancel context.CancelFunc
+		actionCtx, cancel = context.WithTimeout(ctx, aw)
+		defer cancel()
+	}
+
 	// Publish all matched actions
 	for _, action := range actions {
-		// Check for NATS action 
+		// Check for NATS action
 		if action.NATS != nil {
-			if err := sm.publishActionWithRetry(ctx, action.NATS); err != nil {
+			if err := sm.publishActionWithRetry(actionCtx, action.NATS); err != nil {
 				sm.logger.Error("failed to publish NATS action after retries",
 					"actionSubject", action.NATS.Subject,
 					"error", err)
@@ -476,7 +465,7 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 			}
 		} else if action.HTTP != nil {
 			if sm.httpExecutor != nil {
-				if err := sm.httpExecutor.ExecuteHTTPAction(ctx, action.HTTP); err != nil {
+				if err := sm.httpExecutor.ExecuteHTTPAction(actionCtx, action.HTTP); err != nil {
 					sm.logger.Error("failed to execute HTTP action",
 						"url", action.HTTP.URL,
 						"method", action.HTTP.Method,
@@ -671,31 +660,3 @@ func (sm *SubscriptionManager) GetSubscriptionCount() int {
 	defer sm.mu.RUnlock()
 	return len(sm.subscriptions)
 }
-
-// isTerminalError checks if an error is permanent and should not be retried.
-// This is used to decide whether to Terminate or Nak a message.
-//
-// Terminal errors are those where retrying the message would never succeed,
-// such as malformed JSON or structurally invalid payloads.
-func isTerminalError(err error) bool {
-	// Check for our custom terminal error types
-	if errors.Is(err, ErrMalformedJSON) || errors.Is(err, ErrInvalidPayload) {
-		return true
-	}
-
-	// Check for standard library JSON syntax errors
-	var syntaxErr *json.SyntaxError
-	if errors.As(err, &syntaxErr) {
-		return true
-	}
-
-	// Check for JSON unmarshalling type errors (wrong type in payload)
-	var unmarshalTypeErr *json.UnmarshalTypeError
-	if errors.As(err, &unmarshalTypeErr) {
-		return true
-	}
-
-	return false
-}
-
-

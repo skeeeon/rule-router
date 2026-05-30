@@ -25,8 +25,8 @@ type Processor struct {
 	index            *RuleIndex
 	allRules         []*Rule
 	scheduleRules    []*Rule
-	httpExactPaths   map[string][]*Rule  // file-loaded HTTP rules keyed by exact path
-	httpPatternRules []*HTTPPatternRule  // file-loaded HTTP rules with wildcard paths
+	httpExactPaths   map[string][]*Rule // file-loaded HTTP rules keyed by exact path
+	httpPatternRules []*HTTPPatternRule // file-loaded HTTP rules with wildcard paths
 	timeProvider     TimeProvider
 	kvContext        *KVContext
 	logger           *logger.Logger
@@ -196,14 +196,14 @@ func NewProcessor(log *logger.Logger, metrics *metrics.Metrics, kvCtx *KVContext
 		httpExactPaths:   make(map[string][]*Rule),
 		httpPatternRules: make([]*HTTPPatternRule, 0),
 		timeProvider:     NewSystemTimeProvider(),
-		kvContext:       kvCtx,
-		logger:          log.With("component", "processor"),
-		metrics:         metrics,
-		evaluator:       NewEvaluator(log),
-		templater:       NewTemplateEngine(log),
-		sigVerification: sigVerification,
-		maxForEachIters: DefaultMaxForEachIterations,
-		throttle:        NewThrottleManager(),
+		kvContext:        kvCtx,
+		logger:           log.With("component", "processor"),
+		metrics:          metrics,
+		evaluator:        NewEvaluator(log),
+		templater:        NewTemplateEngine(log),
+		sigVerification:  sigVerification,
+		maxForEachIters:  DefaultMaxForEachIterations,
+		throttle:         NewThrottleManager(),
 	}
 
 	if kvCtx != nil {
@@ -405,6 +405,32 @@ func (p *Processor) GetScheduleRules() []*Rule {
 // and Schedule) in one operation. Called by RuleKVManager on every KV change.
 // Caller must pass a non-nil *KVRuleSet with a non-nil HTTP field.
 func (p *Processor) ReplaceKVRuleSet(set *KVRuleSet) {
+	// Assign each rule a unique index so throttle/debounce keys
+	// ({phase}:{index}:{key}) can't collide across KV-loaded rules. The
+	// file-load path does this in LoadRules; KV rules need it here. Each *Rule
+	// lives in exactly one bucket (one trigger type), so a single counter suffices.
+	idx := 0
+	for _, rs := range set.NATS {
+		for _, r := range rs {
+			r.index = idx
+			idx++
+		}
+	}
+	for _, rs := range set.HTTP.Exact {
+		for _, r := range rs {
+			r.index = idx
+			idx++
+		}
+	}
+	for _, pr := range set.HTTP.Patterns {
+		pr.Rule.index = idx
+		idx++
+	}
+	for _, r := range set.Schedule {
+		r.index = idx
+		idx++
+	}
+
 	p.kvRuleSet.Store(set)
 
 	natsTotal := 0
@@ -838,7 +864,7 @@ func ensureObject(item interface{}) map[string]interface{} {
 		// Already an object - return as-is
 		return itemMap
 	}
-	
+
 	// Primitive - wrap it in @value
 	return map[string]interface{}{"@value": item}
 }
@@ -1160,4 +1186,3 @@ func (p *Processor) GetStats() ProcessorStats {
 		Errors:    atomic.LoadUint64(&p.stats.Errors),
 	}
 }
-

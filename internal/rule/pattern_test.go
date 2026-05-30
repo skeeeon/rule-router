@@ -328,7 +328,7 @@ func TestValidatePattern(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := ValidatePattern(tt.pattern)
-			
+
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("ValidatePattern() expected error containing '%s', got nil", tt.errMsg)

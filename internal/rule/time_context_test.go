@@ -19,17 +19,17 @@ func TestTimeContext_AllFields(t *testing.T) {
 		// Time fields
 		{"@time.hour", 14},
 		{"@time.minute", 30},
-		
+
 		// Day fields
 		{"@day.name", "friday"},
 		{"@day.number", 5}, // Friday is 5 (Monday=1, Sunday=7)
-		
+
 		// Date fields
 		{"@date.year", 2024},
 		{"@date.month", 3},
 		{"@date.day", 15},
 		{"@date.iso", "2024-03-15"},
-		
+
 		// Timestamp fields
 		{"@timestamp.unix", fixedTime.Unix()}, // Calculated from the time itself
 		{"@timestamp.iso", "2024-03-15T14:30:45Z"},
@@ -42,7 +42,7 @@ func TestTimeContext_AllFields(t *testing.T) {
 				t.Fatalf("GetField(%s) field not found", tt.field)
 			}
 			if got != tt.want {
-				t.Errorf("GetField(%s) = %v (%T), want %v (%T)", 
+				t.Errorf("GetField(%s) = %v (%T), want %v (%T)",
 					tt.field, got, got, tt.want, tt.want)
 			}
 		})
@@ -197,7 +197,7 @@ func TestTimeContext_SundayHandling(t *testing.T) {
 	}
 
 	if dayNum != 7 {
-		t.Errorf("Sunday day.number = %v, want 7 (Go weekday=%v)", 
+		t.Errorf("Sunday day.number = %v, want 7 (Go weekday=%v)",
 			dayNum, sundayTime.Weekday())
 	}
 
@@ -236,7 +236,7 @@ func TestTimeContext_InvalidField(t *testing.T) {
 	ctx := provider.GetCurrentContext()
 
 	invalidFields := []string{
-		"@time.second",      // Not exposed
+		"@time.second", // Not exposed
 		"@time.invalid",
 		"@day.invalid",
 		"@date.invalid",
@@ -380,7 +380,7 @@ func TestTimeContext_DayNames(t *testing.T) {
 // TestSystemTimeProvider tests the real system time provider
 func TestSystemTimeProvider(t *testing.T) {
 	provider := NewSystemTimeProvider()
-	
+
 	// Get context twice - they should both work
 	ctx1 := provider.GetCurrentContext()
 	ctx2 := provider.GetCurrentContext()
@@ -405,7 +405,7 @@ func TestSystemTimeProvider(t *testing.T) {
 	// Verify timestamps are reasonable (not zero, not far in future)
 	ts1, _ := ctx1.GetField("@timestamp.unix")
 	unix1 := ts1.(int64)
-	
+
 	// Timestamp should be after 2024-01-01 (1704067200) and before 2030-01-01 (1893456000)
 	if unix1 < 1704067200 || unix1 > 1893456000 {
 		t.Errorf("Timestamp out of reasonable range: %v", unix1)

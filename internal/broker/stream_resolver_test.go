@@ -234,11 +234,11 @@ func TestIsSystemStream(t *testing.T) {
 
 func TestFindStreamForSubject(t *testing.T) {
 	tests := []struct {
-		name        string
-		streams     []StreamInfo
-		subject     string
-		wantStream  string
-		wantErr     bool
+		name       string
+		streams    []StreamInfo
+		subject    string
+		wantStream string
+		wantErr    bool
 	}{
 		{
 			name: "single matching stream",
@@ -400,4 +400,3 @@ func TestValidateSubjects(t *testing.T) {
 		})
 	}
 }
-

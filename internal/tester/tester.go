@@ -275,7 +275,7 @@ func analyzeConditions(conds *rule.Conditions, features *RuleFeatures) {
 			if strings.HasPrefix(valueStr, "{") && strings.HasSuffix(valueStr, "}") {
 				features.HasVariableComparisons = true
 				features.ComparisonFields = appendUnique(features.ComparisonFields, item.Field)
-				
+
 				// Check for KV lookups in value
 				if strings.Contains(valueStr, "@kv.") {
 					features.HasKVLookups = true
@@ -299,18 +299,18 @@ func extractKVBucket(field string) string {
 	if !strings.Contains(field, "@kv.") {
 		return ""
 	}
-	
+
 	start := strings.Index(field, "@kv.")
 	if start == -1 {
 		return ""
 	}
-	
+
 	remainder := field[start+4:] // Skip "@kv."
 	parts := strings.SplitN(remainder, ".", 2)
 	if len(parts) > 0 {
 		return parts[0]
 	}
-	
+
 	return ""
 }
 
@@ -352,7 +352,7 @@ func hasVariableComparisonsRecursive(conds *rule.Conditions) bool {
 				return true
 			}
 		}
-		
+
 		// Check nested conditions (for array operators)
 		if item.Conditions != nil {
 			if hasVariableComparisonsRecursive(item.Conditions) {
@@ -360,14 +360,14 @@ func hasVariableComparisonsRecursive(conds *rule.Conditions) bool {
 			}
 		}
 	}
-	
+
 	// Check nested groups
 	for _, group := range conds.Groups {
 		if hasVariableComparisonsRecursive(&group) {
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -379,7 +379,7 @@ func (t *Tester) generateBasicExamples(testDir string, r *rule.Rule, features Ru
 		"status":    "active",
 		"timestamp": "2025-01-15T10:30:00Z",
 	}
-	
+
 	matchBytes, _ := json.MarshalIndent(matchExample, "", "  ")
 	os.WriteFile(filepath.Join(testDir, "match_1.json"), matchBytes, 0644)
 
@@ -389,10 +389,10 @@ func (t *Tester) generateBasicExamples(testDir string, r *rule.Rule, features Ru
 		"status":    "inactive",
 		"timestamp": "2025-01-15T10:30:00Z",
 	}
-	
+
 	notMatchBytes, _ := json.MarshalIndent(notMatchExample, "", "  ")
 	os.WriteFile(filepath.Join(testDir, "not_match_1.json"), notMatchBytes, 0644)
-	
+
 	// Generate README
 	readme := `# Test Suite
 
@@ -416,7 +416,7 @@ This rule uses the new {braces} syntax:
 - Template variables use {braces}: {field}
 - Variable comparisons are now supported: field: "{a}" value: "{b}"
 `
-	
+
 	os.WriteFile(filepath.Join(testDir, "README.md"), []byte(readme), 0644)
 }
 
@@ -427,13 +427,13 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 	if strings.HasPrefix(forEachField, "{") && strings.HasSuffix(forEachField, "}") {
 		fieldName = forEachField[1 : len(forEachField)-1]
 	}
-	
+
 	// Create example match case with array
 	matchExample := map[string]interface{}{
 		"timestamp": "2025-01-15T10:30:00Z",
 		"batch_id":  "batch-001",
 	}
-	
+
 	// Build realistic array data
 	arrayData := []interface{}{
 		map[string]interface{}{
@@ -455,7 +455,7 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 			"type":   "INFO",
 		},
 	}
-	
+
 	// Handle nested paths in forEach field (e.g., "data.items")
 	if strings.Contains(fieldName, ".") {
 		parts := strings.Split(fieldName, ".")
@@ -469,13 +469,13 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 	} else {
 		matchExample[fieldName] = arrayData
 	}
-	
+
 	matchBytes, _ := json.MarshalIndent(matchExample, "", "  ")
 	os.WriteFile(filepath.Join(testDir, "match_1.json"), matchBytes, 0644)
 
 	// Create example output file (array of expected actions)
 	var outputExample []ExpectedOutput
-	
+
 	if r.Action.NATS != nil {
 		// Generate 2 expected NATS actions (assuming filter matches first 2 items)
 		outputExample = []ExpectedOutput{
@@ -503,7 +503,7 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 			},
 		}
 	}
-	
+
 	outputBytes, _ := json.MarshalIndent(outputExample, "", "  ")
 	os.WriteFile(filepath.Join(testDir, "match_1_output.json"), outputBytes, 0644)
 
@@ -512,7 +512,7 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 		"timestamp": "2025-01-15T10:30:00Z",
 		"batch_id":  "batch-002",
 	}
-	
+
 	notMatchArray := []interface{}{
 		map[string]interface{}{
 			"id":     "item-99",
@@ -521,7 +521,7 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 			"type":   "INFO",
 		},
 	}
-	
+
 	if strings.Contains(fieldName, ".") {
 		parts := strings.Split(fieldName, ".")
 		current := notMatchExample
@@ -534,7 +534,7 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 	} else {
 		notMatchExample[fieldName] = notMatchArray
 	}
-	
+
 	notMatchBytes, _ := json.MarshalIndent(notMatchExample, "", "  ")
 	os.WriteFile(filepath.Join(testDir, "not_match_1.json"), notMatchBytes, 0644)
 
@@ -543,7 +543,7 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 		"timestamp": "2025-01-15T10:30:00Z",
 		"batch_id":  "batch-003",
 	}
-	
+
 	if strings.Contains(fieldName, ".") {
 		parts := strings.Split(fieldName, ".")
 		current := emptyArrayExample
@@ -556,10 +556,10 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 	} else {
 		emptyArrayExample[fieldName] = []interface{}{}
 	}
-	
+
 	emptyBytes, _ := json.MarshalIndent(emptyArrayExample, "", "  ")
 	os.WriteFile(filepath.Join(testDir, "not_match_2_empty_array.json"), emptyBytes, 0644)
-	
+
 	// Generate comprehensive README
 	readme := fmt.Sprintf(`# Test Suite for Rule with forEach
 
@@ -608,16 +608,16 @@ Remember the scope rules:
 - **{@time.hour}** → System variables work in both scopes
 
 Example:
-` + "```yaml" + `
+`+"```yaml"+`
 forEach: "{readings}"
 filter:
   items:
     - field: "{value}"          # Element field
       operator: gt
       value: "{@msg.threshold}" # Root message field
-` + "```" + `
+`+"```"+`
 `, forEachField)
-	
+
 	os.WriteFile(filepath.Join(testDir, "README.md"), []byte(readme), 0644)
 }
 
@@ -630,7 +630,7 @@ func (t *Tester) generateVariableComparisonExamples(testDir string, r *rule.Rule
 		"sensor_id":   "sensor-001",
 		"timestamp":   "2025-01-15T10:30:00Z",
 	}
-	
+
 	matchBytes, _ := json.MarshalIndent(matchExample, "", "  ")
 	os.WriteFile(filepath.Join(testDir, "match_1_above_threshold.json"), matchBytes, 0644)
 
@@ -641,7 +641,7 @@ func (t *Tester) generateVariableComparisonExamples(testDir string, r *rule.Rule
 		"sensor_id":   "sensor-001",
 		"timestamp":   "2025-01-15T10:30:00Z",
 	}
-	
+
 	notMatchBytes, _ := json.MarshalIndent(notMatchExample, "", "  ")
 	os.WriteFile(filepath.Join(testDir, "not_match_1_below_threshold.json"), notMatchBytes, 0644)
 
@@ -652,21 +652,21 @@ func (t *Tester) generateVariableComparisonExamples(testDir string, r *rule.Rule
 		"sensor_id": "sensor-001",
 		"timestamp": "2025-01-15T10:30:00Z",
 	}
-	
+
 	missingBytes, _ := json.MarshalIndent(missingExample, "", "  ")
 	os.WriteFile(filepath.Join(testDir, "not_match_2_missing_field.json"), missingBytes, 0644)
-	
+
 	// Create example with type mismatch
 	typeMismatchExample := map[string]interface{}{
-		"temperature": "105",  // String instead of number
+		"temperature": "105", // String instead of number
 		"threshold":   100,
 		"sensor_id":   "sensor-001",
 		"timestamp":   "2025-01-15T10:30:00Z",
 	}
-	
+
 	typeMismatchBytes, _ := json.MarshalIndent(typeMismatchExample, "", "  ")
 	os.WriteFile(filepath.Join(testDir, "match_2_type_coercion.json"), typeMismatchBytes, 0644)
-	
+
 	// Generate comprehensive README
 	readme := `# Test Suite for Rule with Variable Comparisons
 
@@ -819,14 +819,14 @@ value: "{@kv.config.{sensor_id}:max_temp}"
 ` + "```" + `
 **Solution**: Check **mock_kv_data.json** has the bucket and key defined.
 `
-	
+
 	os.WriteFile(filepath.Join(testDir, "README.md"), []byte(readme), 0644)
 }
 
 // generateMockKVData creates a mock KV data file for testing
 func (t *Tester) generateMockKVData(testDir string, buckets []string) {
 	mockKV := make(map[string]map[string]interface{})
-	
+
 	for _, bucket := range buckets {
 		mockKV[bucket] = map[string]interface{}{
 			"example-key": map[string]interface{}{
@@ -838,54 +838,54 @@ func (t *Tester) generateMockKVData(testDir string, buckets []string) {
 			},
 		}
 	}
-	
+
 	kvBytes, _ := json.MarshalIndent(mockKV, "", "  ")
-	
+
 	// Add helpful comment at top
 	comment := `{
   "_comment": "Mock KV data for testing. Structure: bucket -> key -> value",
   "_instructions": "Update this file to match your KV references in the rule",
 `
-	
+
 	// Insert comment after opening brace
 	kvStr := string(kvBytes)
 	kvStr = "{" + comment[1:] + kvStr[1:]
-	
+
 	os.WriteFile(filepath.Join(testDir, "mock_kv_data.json"), []byte(kvStr), 0644)
 }
 
 // printScaffoldTips prints helpful tips based on detected features
 func (t *Tester) printScaffoldTips(features RuleFeatures) {
 	fmt.Println("\n💡 Tips for Your Rule:")
-	
+
 	if features.UsesForEach {
 		fmt.Println("   • This rule uses forEach - example files include array handling")
 		fmt.Println("   • Update match_1_output.json with expected actions (one per array element)")
 		fmt.Println("   • Test with empty arrays and filtered elements")
 	}
-	
+
 	if features.HasVariableComparisons {
 		fmt.Println("   • This rule uses variable comparisons - test with missing fields")
 		fmt.Println("   • Consider type coercion edge cases (string vs number)")
 		fmt.Println("   • Test both passing and failing comparisons")
 	}
-	
+
 	if features.HasKVLookups {
 		fmt.Println("   • This rule uses KV lookups - update mock_kv_data.json")
 		fmt.Printf("   • KV buckets detected: %s\n", strings.Join(features.KVBuckets, ", "))
 		fmt.Println("   • Ensure mock data matches your @kv.bucket.key:path references")
 	}
-	
+
 	if features.HasTimeConditions {
 		fmt.Println("   • This rule uses time conditions - update mockTime in _test_config.json")
 		fmt.Println("   • Test with different hours/days to verify time logic")
 	}
-	
+
 	if features.HasArrayOperators {
 		fmt.Println("   • This rule uses array operators (any/all/none)")
 		fmt.Println("   • Test with arrays of different sizes and match patterns")
 	}
-	
+
 	fmt.Println("\n📖 New v0.4 Syntax Reminders:")
 	fmt.Println("   • All condition fields use {braces}: {temperature}")
 	fmt.Println("   • System variables use {braces}: {@time.hour}, {@kv.bucket.key:field}")

@@ -169,7 +169,7 @@ func (rb *RuleBuilder) getConditionsRecursive(indent string) (*rule.Conditions, 
 				if err != nil {
 					return nil, err
 				}
-				
+
 				// Store value based on type
 				switch valueType {
 				case "variable":
@@ -214,39 +214,39 @@ func (rb *RuleBuilder) getConditionsRecursive(indent string) (*rule.Conditions, 
 // getConditionField prompts for a condition field with validation and auto-fix
 func (rb *RuleBuilder) getConditionField(indent string) (string, error) {
 	prompt := indent + "Field (use {braces}, e.g., {temperature} or {@time.hour}):"
-	
+
 	for {
 		field, err := rb.prompter.Ask(prompt)
 		if err != nil {
 			return "", err
 		}
-		
+
 		// Empty input means user wants to finish
 		if strings.TrimSpace(field) == "" {
 			return "", nil
 		}
-		
+
 		// Check if field uses template syntax
 		if !isTemplateVariable(field) {
 			fmt.Printf("%s    ⚠️  Field must use template syntax with {braces}%s\n", ColorYellow, ColorReset)
-			
+
 			// Offer auto-fix
 			suggested := fmt.Sprintf("{%s}", strings.TrimSpace(field))
 			fmt.Printf("    Did you mean: %s? (Y/n): ", suggested)
 			var response string
 			fmt.Scanln(&response)
 			response = strings.ToLower(strings.TrimSpace(response))
-			
+
 			if response == "" || response == "y" || response == "yes" {
 				fmt.Printf("%s    ✓ Using: %s%s\n", ColorGreen, suggested, ColorReset)
 				return suggested, nil
 			}
-			
+
 			// User declined auto-fix, prompt again
 			fmt.Println("    Please enter field with {braces} or press Enter to skip.")
 			continue
 		}
-		
+
 		return field, nil
 	}
 }
@@ -262,21 +262,21 @@ func (rb *RuleBuilder) getConditionValue(indent, field string) (string, string, 
 	fmt.Println("       3. Literal boolean: true, false")
 	fmt.Println("       4. Literal string: active, \"hello world\"")
 	fmt.Printf("%s    Tip: Use variables for dynamic comparisons!%s\n\n", ColorBlue, ColorReset)
-	
+
 	prompt := indent + "Value (variable or literal):"
-	
+
 	for {
 		valueStr, err := rb.prompter.Ask(prompt)
 		if err != nil {
 			return "", "", err
 		}
-		
+
 		valueStr = strings.TrimSpace(valueStr)
 		if valueStr == "" {
 			fmt.Println("    Value cannot be empty. Please try again.")
 			continue
 		}
-		
+
 		// Check if it's a template variable
 		if isTemplateVariable(valueStr) {
 			// Validate template syntax
@@ -286,29 +286,29 @@ func (rb *RuleBuilder) getConditionValue(indent, field string) (string, string, 
 				fmt.Println("    Please enter a valid template like {field} or {@system.var}")
 				continue
 			}
-			
+
 			// Show what we detected
 			fmt.Printf("%s    ✓ Variable comparison detected: %s%s\n", ColorGreen, valueStr, ColorReset)
-			
+
 			// Offer example of what this means
 			fieldName := extractInnerField(field)
 			fmt.Printf("    This will compare %s against %s dynamically\n", fieldName, varName)
-			
+
 			return valueStr, "variable", nil
 		}
-		
+
 		// Try to parse as number
 		if _, err := strconv.ParseFloat(valueStr, 64); err == nil {
 			fmt.Printf("%s    ✓ Number literal: %s%s\n", ColorGreen, valueStr, ColorReset)
 			return valueStr, "number", nil
 		}
-		
+
 		// Try to parse as boolean
 		if valueStr == "true" || valueStr == "false" {
 			fmt.Printf("%s    ✓ Boolean literal: %s%s\n", ColorGreen, valueStr, ColorReset)
 			return valueStr, "boolean", nil
 		}
-		
+
 		// Default to string
 		// Remove quotes if present (user might have added them)
 		valueStr = strings.Trim(valueStr, "\"")
@@ -358,7 +358,7 @@ func (rb *RuleBuilder) getNATSAction() (*rule.NATSAction, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	subject, _ := rb.prompter.Ask("Enter NATS Action Subject (can use element fields, e.g., 'alerts.{id}'):")
 	payload := `{
   "element_id": "{id}",
@@ -454,39 +454,39 @@ func (rb *RuleBuilder) getPublishResponse() (*rule.PublishResponseSpec, error) {
 // getForEachField prompts for a forEach field with validation and auto-fix
 func (rb *RuleBuilder) getForEachField() (string, error) {
 	prompt := "Enter path to array field (use {braces}, e.g., {notifications} or {data.items}):"
-	
+
 	for {
 		field, err := rb.prompter.Ask(prompt)
 		if err != nil {
 			return "", err
 		}
-		
+
 		field = strings.TrimSpace(field)
 		if field == "" {
 			return "", fmt.Errorf("forEach field cannot be empty")
 		}
-		
+
 		// Check if field uses template syntax
 		if !isTemplateVariable(field) {
 			fmt.Printf("%s    ⚠️  ForEach field must use template syntax with {braces}%s\n", ColorYellow, ColorReset)
-			
+
 			// Offer auto-fix
 			suggested := fmt.Sprintf("{%s}", field)
 			fmt.Printf("    Did you mean: %s? (Y/n): ", suggested)
 			var response string
 			fmt.Scanln(&response)
 			response = strings.ToLower(strings.TrimSpace(response))
-			
+
 			if response == "" || response == "y" || response == "yes" {
 				fmt.Printf("%s    ✓ Using: %s%s\n", ColorGreen, suggested, ColorReset)
 				return suggested, nil
 			}
-			
+
 			// User declined auto-fix, prompt again
 			fmt.Println("    Please enter field with {braces}.")
 			continue
 		}
-		
+
 		// Additional validation: forEach cannot contain wildcards
 		innerField := extractInnerField(field)
 		if strings.Contains(innerField, "*") || strings.Contains(innerField, ">") {
@@ -494,7 +494,7 @@ func (rb *RuleBuilder) getForEachField() (string, error) {
 			fmt.Println("    Please enter a specific array path.")
 			continue
 		}
-		
+
 		return field, nil
 	}
 }

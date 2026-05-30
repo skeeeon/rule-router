@@ -144,10 +144,10 @@ func NewEvaluationContext(
 		sigVerification: sigVerification,
 		logger:          logger,
 	}
-	
+
 	// IMPORTANT: OriginalMsg should point to wrapped version too
 	ctx.OriginalMsg = msgData
-	
+
 	return ctx, nil
 }
 
@@ -295,11 +295,11 @@ func (c *EvaluationContext) resolveSystemField(path string) (interface{}, bool) 
 			"field", path)
 		return nil, false
 	}
-	
+
 	c.logger.Debug("resolved wrapped system field from message",
 		"field", path,
 		"valueType", valueType(value))
-	
+
 	return value, true
 }
 
@@ -323,5 +323,3 @@ func valueType(v interface{}) string {
 		return "unknown"
 	}
 }
-
-

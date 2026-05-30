@@ -3,8 +3,8 @@
 package rule
 
 import (
-	"sync"
 	"rule-router/internal/logger"
+	"sync"
 )
 
 // LocalKVCache provides in-memory caching for NATS KV buckets

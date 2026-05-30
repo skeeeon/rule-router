@@ -12,25 +12,25 @@ import (
 type WildcardType int
 
 const (
-	ExactToken WildcardType = iota
-	SingleWildcard  // *
-	GreedyWildcard  // >
+	ExactToken     WildcardType = iota
+	SingleWildcard              // *
+	GreedyWildcard              // >
 )
 
 // CompiledPattern represents a pre-compiled pattern for efficient matching
 type CompiledPattern struct {
-	exactTokens         []string      // Non-wildcard tokens
+	exactTokens         []string       // Non-wildcard tokens
 	wildcardMap         []WildcardType // Type of each token position
-	hasTerminalWildcard bool          // Ends with >
-	minTokens           int           // Minimum tokens required to match
-	maxTokens           int           // Maximum tokens that can match (-1 for unlimited)
+	hasTerminalWildcard bool           // Ends with >
+	minTokens           int            // Minimum tokens required to match
+	maxTokens           int            // Maximum tokens that can match (-1 for unlimited)
 }
 
 // PatternMatcher handles NATS-style subject pattern matching
 type PatternMatcher struct {
-	pattern  string
-	tokens   []string
-	compiled *CompiledPattern
+	pattern   string
+	tokens    []string
+	compiled  *CompiledPattern
 	isPattern bool
 }
 
@@ -201,7 +201,12 @@ func (pm *PatternMatcher) matchRecursive(subjectTokens []string, subjectIdx int,
 		return pm.matchRecursive(subjectTokens, subjectIdx+1, compiled, patternIdx+1)
 
 	case SingleWildcard:
-		// * matches exactly one token
+		// * matches exactly one non-empty token. An empty segment (the "//" in
+		// /webhooks//events, or ".." in a.b..c) must not satisfy a wildcard —
+		// the validation layer already rejects empty tokens in patterns.
+		if subjectTokens[subjectIdx] == "" {
+			return false
+		}
 		return pm.matchRecursive(subjectTokens, subjectIdx+1, compiled, patternIdx+1)
 
 	case GreedyWildcard:
@@ -317,9 +322,9 @@ func (pc *PatternCache) Stats() map[string]int {
 	defer pc.mu.RUnlock()
 
 	return map[string]int{
-		"size":     len(pc.cache),
-		"maxSize":  pc.maxSize,
-		"enabled":  boolToInt(pc.enabled),
+		"size":    len(pc.cache),
+		"maxSize": pc.maxSize,
+		"enabled": boolToInt(pc.enabled),
 	}
 }
 

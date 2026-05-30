@@ -20,14 +20,14 @@ import (
 
 // BaseApp holds the common, initialized components for any application.
 type BaseApp struct {
-	Logger         *logger.Logger
-	Metrics        *metrics.Metrics
-	Broker         *broker.NATSBroker
-	Processor      *rule.Processor
-	RulesLoader    *rule.RulesLoader
-	RuleKVManager  *broker.RuleKVManager
-	MetricsServer  *http.Server
-	Collector      *metrics.MetricsCollector
+	Logger        *logger.Logger
+	Metrics       *metrics.Metrics
+	Broker        *broker.NATSBroker
+	Processor     *rule.Processor
+	RulesLoader   *rule.RulesLoader
+	RuleKVManager *broker.RuleKVManager
+	MetricsServer *http.Server
+	Collector     *metrics.MetricsCollector
 
 	// metricsServerWg tracks the metrics server goroutine for graceful shutdown
 	metricsServerWg sync.WaitGroup
@@ -181,19 +181,19 @@ func (b *AppBuilder) WithRuleProcessor() *AppBuilder {
 	}
 
 	b.base.Processor = rule.NewProcessor(b.base.Logger, b.base.Metrics, kvContext, sigVerification)
-	
+
 	// Configure forEach iteration limit
 	b.base.Processor.SetMaxForEachIterations(b.cfg.ForEach.MaxIterations)
-	
+
 	if err := b.base.Processor.LoadRules(rules); err != nil {
 		b.err = fmt.Errorf("failed to load rules into processor: %w", err)
 		return b
 	}
 
-	b.base.Logger.Info("rules loaded successfully", 
+	b.base.Logger.Info("rules loaded successfully",
 		"totalRules", len(rules),
 		"maxForEachIterations", b.cfg.ForEach.MaxIterations)
-	
+
 	return b
 }
 
@@ -353,4 +353,3 @@ func (base *BaseApp) Close() error {
 	}
 	return nil
 }
-

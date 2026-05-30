@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -613,12 +613,12 @@ func (l *RulesLoader) validateForEachConfig(forEachField string, filter *Conditi
 	if !IsTemplate(forEachField) {
 		return fmt.Errorf("forEach field must use template syntax {field}, got: %s", forEachField)
 	}
-	
+
 	fieldName := ExtractVariable(forEachField)
 	if fieldName == "" {
 		return fmt.Errorf("invalid forEach template syntax: %s", forEachField)
 	}
-	
+
 	// Ensure it's a valid JSON path (no wildcards)
 	if strings.Contains(fieldName, "*") || strings.Contains(fieldName, ">") {
 		return fmt.Errorf("forEach field cannot contain wildcards: %s", forEachField)
@@ -701,20 +701,20 @@ func (l *RulesLoader) validateConditions(conditions *Conditions) error {
 		if condition.Field == "" {
 			return fmt.Errorf("condition field cannot be empty at index %d", i)
 		}
-		
+
 		// Validate that condition field uses template syntax {field}
 		if !IsTemplate(condition.Field) {
-			return fmt.Errorf("condition field must use template syntax {variable} at index %d, got: %s (did you forget the braces?)", 
+			return fmt.Errorf("condition field must use template syntax {variable} at index %d, got: %s (did you forget the braces?)",
 				i, condition.Field)
 		}
-		
+
 		// Validate that the template is well-formed
 		varName := ExtractVariable(condition.Field)
 		if varName == "" {
-			return fmt.Errorf("condition field has malformed template syntax at index %d: %s (empty variable name)", 
+			return fmt.Errorf("condition field has malformed template syntax at index %d: %s (empty variable name)",
 				i, condition.Field)
 		}
-		
+
 		// Validate operator
 		if !l.isValidOperator(condition.Operator) {
 			return fmt.Errorf("invalid condition operator '%s' at index %d", condition.Operator, i)
@@ -725,9 +725,9 @@ func (l *RulesLoader) validateConditions(conditions *Conditions) error {
 			if condition.Conditions == nil {
 				return fmt.Errorf("array operator '%s' requires nested conditions at index %d", condition.Operator, i)
 			}
-			
+
 			if err := l.validateConditions(condition.Conditions); err != nil {
-				return fmt.Errorf("invalid nested conditions for array operator '%s' at index %d: %w", 
+				return fmt.Errorf("invalid nested conditions for array operator '%s' at index %d: %w",
 					condition.Operator, i, err)
 			}
 		}
@@ -944,4 +944,3 @@ func (l *RulesLoader) isValidOperator(op string) bool {
 	}
 	return validOps[op]
 }
-

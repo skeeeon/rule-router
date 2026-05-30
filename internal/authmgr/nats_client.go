@@ -178,4 +178,3 @@ func buildNATSOptions(cfg *NATSConfig, log *logger.Logger) ([]nats.Option, error
 
 	return opts, nil
 }
-

@@ -16,28 +16,30 @@ func IsTemplate(s string) bool {
 
 // ExtractVariable extracts the variable name from a template string
 // Examples:
-//   "{temperature}" -> "temperature"
-//   "{@time.hour}" -> "@time.hour"
-//   "{@kv.config.sensor:max}" -> "@kv.config.sensor:max"
-//   "temperature" -> "" (not a template)
-//   "{}" -> "" (malformed)
+//
+//	"{temperature}" -> "temperature"
+//	"{@time.hour}" -> "@time.hour"
+//	"{@kv.config.sensor:max}" -> "@kv.config.sensor:max"
+//	"temperature" -> "" (not a template)
+//	"{}" -> "" (malformed)
+//
 // Exported for use in validation (loader.go)
 func ExtractVariable(template string) string {
 	template = strings.TrimSpace(template)
-	
+
 	// Must start with { and end with }
 	if !strings.HasPrefix(template, "{") || !strings.HasSuffix(template, "}") {
 		return ""
 	}
-	
+
 	// Extract content between braces
 	varName := template[1 : len(template)-1]
-	
+
 	// Variable name cannot be empty
 	if strings.TrimSpace(varName) == "" {
 		return ""
 	}
-	
+
 	return varName
 }
 
@@ -46,8 +48,9 @@ func ExtractVariable(template string) string {
 // resolves it using the context. Otherwise, returns the value as-is.
 //
 // This enables variable-to-variable comparisons:
-//   field: "{temperature}"
-//   value: "{@kv.sensor_config.{sensor_id}:max_temp}"
+//
+//	field: "{temperature}"
+//	value: "{@kv.sensor_config.{sensor_id}:max_temp}"
 //
 // Type preservation:
 //   - Numbers stay numbers for accurate numeric comparison
