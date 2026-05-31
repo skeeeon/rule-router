@@ -7,11 +7,28 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
 	"rule-router/internal/logger"
 	"rule-router/internal/rule"
 )
+
+// KV watch re-establishment backoff bounds, shared by RuleKVManager and
+// NATSBroker. Declared as vars (not consts) so tests can shorten them.
+var (
+	kvWatchRetryBaseDelay = 500 * time.Millisecond
+	kvWatchRetryMaxDelay  = 30 * time.Second
+)
+
+// nextKVWatchBackoff doubles the current delay, capped at kvWatchRetryMaxDelay.
+func nextKVWatchBackoff(d time.Duration) time.Duration {
+	d *= 2
+	if d > kvWatchRetryMaxDelay {
+		return kvWatchRetryMaxDelay
+	}
+	return d
+}
 
 // RuleKVManager watches a NATS KV bucket for rule definitions and hot-reloads
 // them into the Processor. It also dynamically creates and removes JetStream
@@ -30,8 +47,13 @@ type RuleKVManager struct {
 	ready               chan struct{}
 	readyOnce           sync.Once
 	watcher             jetstream.KeyWatcher
-	watchOnce           sync.Once
-	watchErr            error
+	cancel              context.CancelFunc // cancels the watch goroutine's context
+	// newWatcher (re)creates the bucket watcher. Set once in Watch (closing over
+	// the KV store) and reused by the self-heal loop to re-establish the watcher
+	// after an unexpected close. Injectable so tests can supply a fake.
+	newWatcher func(context.Context) (jetstream.KeyWatcher, error)
+	watchOnce  sync.Once
+	watchErr   error
 }
 
 // NewRuleKVManager creates a new rule KV manager.
@@ -76,20 +98,36 @@ func (m *RuleKVManager) Watch(ctx context.Context) error {
 			}
 		}
 
-		watcher, err := store.WatchAll(ctx)
+		// Derive a cancellable context so Stop() can unblock the watch
+		// goroutine even when the parent context is still alive (e.g. a
+		// targeted shutdown). Without this, closing the watcher's Updates()
+		// channel would be the only escape, and Stop() could deadlock.
+		watchCtx, cancel := context.WithCancel(ctx)
+
+		// Factory used for both the initial watch and self-healing re-creation
+		// after an unexpected close. WatchAll re-delivers the current value (or
+		// delete marker) for every key on each (re)subscribe, so a recreate
+		// performs a full state re-sync rather than risking missed updates.
+		m.newWatcher = func(c context.Context) (jetstream.KeyWatcher, error) {
+			return store.WatchAll(c)
+		}
+
+		watcher, err := m.newWatcher(watchCtx)
 		if err != nil {
+			cancel()
 			m.watchErr = fmt.Errorf("failed to create watcher for bucket %q: %w", m.kvBucket, err)
 			return
 		}
 
 		m.mu.Lock()
 		m.watcher = watcher
+		m.cancel = cancel
 		m.mu.Unlock()
 
 		m.wg.Add(1)
 		go func() {
 			defer m.wg.Done()
-			m.processWatchUpdates(ctx, watcher)
+			m.runWatch(watchCtx, watcher)
 		}()
 
 		m.logger.Info("rule KV watcher started", "bucket", m.kvBucket)
@@ -121,8 +159,14 @@ func (m *RuleKVManager) SetScheduleRebuildFunc(f func([]*rule.Rule)) {
 func (m *RuleKVManager) Stop() {
 	m.mu.Lock()
 	watcher := m.watcher
+	cancel := m.cancel
 	m.mu.Unlock()
 
+	// Cancel first so the watch goroutine exits via its ctx.Done() case even
+	// if Stop() races with the watcher's channel-close handler.
+	if cancel != nil {
+		cancel()
+	}
 	if watcher != nil {
 		if err := watcher.Stop(); err != nil {
 			m.logger.Error("failed to stop rule KV watcher", "error", err)
@@ -131,13 +175,84 @@ func (m *RuleKVManager) Stop() {
 	m.wg.Wait()
 }
 
-// processWatchUpdates processes updates from the KV watcher.
-func (m *RuleKVManager) processWatchUpdates(ctx context.Context, watcher jetstream.KeyWatcher) {
+// runWatch consumes KV updates and self-heals across unexpected watcher
+// closures. If the Updates() channel closes while the context is still alive
+// (connection loss, server-side consumer deletion), it re-creates the watcher
+// with capped exponential backoff and resumes. It returns only on context
+// cancellation (shutdown / Stop).
+//
+// Re-sync correctness: WatchAll re-delivers the latest value or delete marker
+// for every key on each subscribe, so handleRulePut/handleRuleDelete rebuild
+// the full rule set. Puts are idempotent (overwrite by key) and deletes arrive
+// as markers, so the rule set is not duplicated or silently left stale. The one
+// gap is a key whose delete marker was already compacted away during the
+// outage; such a stale entry would persist until the next explicit change.
+func (m *RuleKVManager) runWatch(ctx context.Context, watcher jetstream.KeyWatcher) {
+	backoff := kvWatchRetryBaseDelay
+	for {
+		// Consume until the channel closes.
+		if m.consumeUpdates(ctx, watcher) {
+			return // clean shutdown
+		}
+		if ctx.Err() != nil {
+			return
+		}
+
+		// Unexpected close: re-establish the watcher with backoff.
+		m.logger.Error("rule KV watcher channel closed unexpectedly; re-establishing",
+			"bucket", m.kvBucket)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+
+			newWatcher, err := m.newWatcher(ctx)
+			if err != nil {
+				m.logger.Error("failed to re-establish rule KV watcher, will retry",
+					"bucket", m.kvBucket, "retryIn", backoff, "error", err)
+				backoff = nextKVWatchBackoff(backoff)
+				continue
+			}
+			// If we were cancelled while creating the watcher, don't leak it.
+			if ctx.Err() != nil {
+				_ = newWatcher.Stop()
+				return
+			}
+
+			watcher = newWatcher
+			m.mu.Lock()
+			m.watcher = watcher
+			m.mu.Unlock()
+			backoff = kvWatchRetryBaseDelay
+			m.logger.Info("rule KV watcher re-established", "bucket", m.kvBucket)
+			break
+		}
+	}
+}
+
+// consumeUpdates reads from the watcher until its Updates() channel closes.
+// Returns true if the loop should terminate permanently (context cancelled),
+// false if the channel closed unexpectedly and the watcher should be
+// re-established by the caller.
+func (m *RuleKVManager) consumeUpdates(ctx context.Context, watcher jetstream.KeyWatcher) bool {
 	for {
 		select {
 		case <-ctx.Done():
-			return
-		case entry := <-watcher.Updates():
+			return true
+		case entry, ok := <-watcher.Updates():
+			if !ok {
+				// Updates() channel closed. A closed channel yields (nil, false)
+				// forever, so we MUST stop reading it here — otherwise this loop
+				// spins at 100% CPU. Clean shutdown if the context is gone;
+				// otherwise signal the caller to re-establish.
+				if ctx.Err() != nil {
+					m.logger.Debug("rule KV watcher stopped", "bucket", m.kvBucket)
+					return true
+				}
+				return false
+			}
 			if entry == nil {
 				// Initial sync complete — all existing keys have been delivered.
 				m.readyOnce.Do(func() { close(m.ready) })

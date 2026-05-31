@@ -55,7 +55,7 @@ type NATSBroker struct {
 	// Local KV cache for performance optimization
 	localKVCache *rule.LocalKVCache
 	kvWatchersMu sync.Mutex // protects kvWatchers across reconnect/shutdown
-	kvWatchers   []jetstream.KeyWatcher
+	kvWatchers   []*kvWatchHandle
 	kvWatcherWg  sync.WaitGroup // Tracks KV watcher goroutines for graceful shutdown
 
 	// Stream resolver for JetStream stream discovery
@@ -84,7 +84,7 @@ func NewNATSBroker(cfg *config.Config, log *logger.Logger, metrics *metrics.Metr
 		config:       cfg,
 		kvStores:     make(map[string]jetstream.KeyValue),
 		localKVCache: rule.NewLocalKVCache(log),
-		kvWatchers:   make([]jetstream.KeyWatcher, 0),
+		kvWatchers:   make([]*kvWatchHandle, 0),
 		consumers:    make(map[string]string),
 		ctx:          ctx,
 		cancel:       cancel,
@@ -366,6 +366,31 @@ func (b *NATSBroker) subscribeToKVChanges() error {
 	return nil
 }
 
+// kvWatchHandle owns a single bucket watcher and the data needed to re-create
+// it. The owning goroutine (runKVWatch) is the sole creator of watchers: it
+// swaps in a fresh one when self-healing after a close. External callers
+// (reconnect restart, shutdown) only ever Stop the current watcher — which the
+// goroutine then either rebuilds (if b.ctx is alive) or exits on (if cancelled).
+// They read the current watcher under the handle's lock.
+type kvWatchHandle struct {
+	bucket    string
+	keyFilter string
+	mu        sync.Mutex
+	watcher   jetstream.KeyWatcher
+}
+
+func (h *kvWatchHandle) current() jetstream.KeyWatcher {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.watcher
+}
+
+func (h *kvWatchHandle) set(w jetstream.KeyWatcher) {
+	h.mu.Lock()
+	h.watcher = w
+	h.mu.Unlock()
+}
+
 // watchKVBucket creates a watcher for a specific KV bucket using the Watch API.
 // The keyFilter controls which keys are watched (e.g. ">" for all, "bldg-a.>" for a subset).
 func (b *NATSBroker) watchKVBucket(bucketName string, keyFilter string) error {
@@ -381,15 +406,17 @@ func (b *NATSBroker) watchKVBucket(bucketName string, keyFilter string) error {
 		return fmt.Errorf("failed to create watcher for bucket %s (filter %q): %w", bucketName, keyFilter, err)
 	}
 
+	h := &kvWatchHandle{bucket: bucketName, keyFilter: keyFilter, watcher: watcher}
+
 	b.kvWatchersMu.Lock()
-	b.kvWatchers = append(b.kvWatchers, watcher)
+	b.kvWatchers = append(b.kvWatchers, h)
 	b.kvWatchersMu.Unlock()
 
 	// Start goroutine to process watch updates with WaitGroup tracking
 	b.kvWatcherWg.Add(1)
 	go func() {
 		defer b.kvWatcherWg.Done()
-		b.processKVWatchUpdates(bucketName, watcher)
+		b.runKVWatch(h)
 	}()
 
 	b.logger.Info("created KV watcher",
@@ -399,53 +426,114 @@ func (b *NATSBroker) watchKVBucket(bucketName string, keyFilter string) error {
 	return nil
 }
 
-// restartKVWatchers stops every existing KV bucket watcher and re-creates
-// them. Called from the NATS ReconnectHandler so cache updates resume after
-// the connection drops and reconnects. Safe no-op when KV is disabled or no
+// restartKVWatchers forces every KV bucket watcher to re-establish after a
+// reconnect. Called from the NATS ReconnectHandler. A reconnect can leave a
+// watcher's server-side consumer stale without closing its Updates() channel,
+// so we Stop each watcher to close the channel; the owning runKVWatch goroutine
+// then rebuilds it (b.ctx is still alive). Safe no-op when KV is disabled or no
 // watchers were started yet.
 func (b *NATSBroker) restartKVWatchers() {
 	if !b.config.KV.Enabled || !b.config.KV.LocalCache.Enabled {
 		return
 	}
 	// Bail out if the broker is shutting down — Close() has already cancelled
-	// the context and is iterating the watcher slice itself.
+	// the context and is stopping the watchers itself.
 	if b.ctx.Err() != nil {
 		return
 	}
 
 	b.kvWatchersMu.Lock()
-	prev := b.kvWatchers
-	b.kvWatchers = nil
+	handles := append([]*kvWatchHandle(nil), b.kvWatchers...)
 	b.kvWatchersMu.Unlock()
 
-	if len(prev) == 0 {
+	if len(handles) == 0 {
 		return
 	}
 
-	b.logger.Info("re-establishing KV watchers after reconnect", "previousCount", len(prev))
+	b.logger.Info("re-establishing KV watchers after reconnect", "count", len(handles))
 
-	for i, w := range prev {
-		if err := w.Stop(); err != nil {
-			b.logger.Warn("failed to stop stale KV watcher during reconnect", "index", i, "error", err)
+	for _, h := range handles {
+		// Stopping closes the watcher's Updates() channel; runKVWatch detects
+		// the close and re-creates the watcher in place.
+		if err := h.current().Stop(); err != nil {
+			b.logger.Warn("failed to stop stale KV watcher during reconnect", "bucket", h.bucket, "error", err)
 		}
-	}
-
-	if err := b.subscribeToKVChanges(); err != nil {
-		b.logger.Error("failed to re-establish KV watchers after reconnect", "error", err)
 	}
 }
 
-// processKVWatchUpdates processes updates from a KV watcher
-func (b *NATSBroker) processKVWatchUpdates(bucketName string, watcher jetstream.KeyWatcher) {
-	b.logger.Debug("starting KV watch processor", "bucket", bucketName)
+// runKVWatch consumes updates for a bucket and self-heals across watcher
+// closures. It re-creates the watcher with capped exponential backoff whenever
+// the channel closes while b.ctx is still alive — whether from a reconnect
+// (forced by restartKVWatchers) or a spontaneous drop (server-side consumer
+// deletion). It returns only when b.ctx is cancelled (shutdown). The fresh
+// watcher re-delivers the current value/delete marker for every key, so the
+// local cache re-syncs.
+func (b *NATSBroker) runKVWatch(h *kvWatchHandle) {
+	b.logger.Debug("starting KV watch processor", "bucket", h.bucket)
 
+	backoff := kvWatchRetryBaseDelay
+	for {
+		if b.consumeKVWatch(h.bucket, h.current()) {
+			return // clean shutdown (b.ctx cancelled)
+		}
+
+		// Channel closed while connected: re-establish with backoff.
+		b.logger.Error("KV watcher channel closed; re-establishing", "bucket", h.bucket)
+		store, exists := b.kvStores[h.bucket]
+		if !exists {
+			b.logger.Error("KV store missing; cannot re-establish watcher", "bucket", h.bucket)
+			return
+		}
+		for {
+			select {
+			case <-b.ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+
+			w, err := store.Watch(b.ctx, h.keyFilter)
+			if err != nil {
+				b.logger.Error("failed to re-establish KV watcher, will retry",
+					"bucket", h.bucket, "retryIn", backoff, "error", err)
+				backoff = nextKVWatchBackoff(backoff)
+				continue
+			}
+			// Don't leak the new watcher if we lost the race with shutdown.
+			if b.ctx.Err() != nil {
+				_ = w.Stop()
+				return
+			}
+
+			h.set(w)
+			backoff = kvWatchRetryBaseDelay
+			b.logger.Info("KV watcher re-established", "bucket", h.bucket)
+			break
+		}
+	}
+}
+
+// consumeKVWatch reads from the watcher until its Updates() channel closes.
+// Returns true if the loop should terminate permanently (context cancelled),
+// false if the channel closed unexpectedly and the watcher should be
+// re-established by the caller.
+func (b *NATSBroker) consumeKVWatch(bucketName string, watcher jetstream.KeyWatcher) bool {
 	for {
 		select {
 		case <-b.ctx.Done():
 			b.logger.Debug("stopping KV watch processor", "bucket", bucketName)
-			return
+			return true
 
-		case entry := <-watcher.Updates():
+		case entry, ok := <-watcher.Updates():
+			if !ok {
+				// Updates() channel closed. A closed channel yields (nil, false)
+				// forever, so we MUST stop reading it here — otherwise this loop
+				// spins at 100% CPU. Clean shutdown if the context is gone;
+				// otherwise signal the caller to re-establish.
+				if b.ctx.Err() != nil {
+					return true
+				}
+				return false
+			}
 			if entry == nil {
 				// Initial values sent, now receiving live updates
 				b.logger.Info("KV watcher initial sync complete", "bucket", bucketName)
@@ -810,14 +898,16 @@ func (b *NATSBroker) Close() error {
 		}
 	}
 
-	// Stop all KV watchers explicitly (belt and suspenders with context cancellation)
+	// Stop all KV watchers explicitly (belt and suspenders with context cancellation).
+	// b.cancel() above already cancelled b.ctx, so the goroutines exit instead of
+	// re-creating once their channels close.
 	b.kvWatchersMu.Lock()
-	watchers := b.kvWatchers
+	handles := b.kvWatchers
 	b.kvWatchers = nil
 	b.kvWatchersMu.Unlock()
-	for i, watcher := range watchers {
-		if err := watcher.Stop(); err != nil {
-			errors = append(errors, fmt.Errorf("failed to stop KV watcher %d: %w", i, err))
+	for i, h := range handles {
+		if err := h.current().Stop(); err != nil {
+			errors = append(errors, fmt.Errorf("failed to stop KV watcher %d (bucket %s): %w", i, h.bucket, err))
 		}
 	}
 
