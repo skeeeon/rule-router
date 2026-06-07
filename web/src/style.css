@@ -296,7 +296,7 @@ body {
 }
 
 .editor-pane .rule-editor {
-  max-width: 820px;
+  max-width: 920px;
   margin: 0 auto;
 }
 
@@ -325,7 +325,7 @@ body {
 }
 
 .yaml-rail {
-  width: 420px;
+  width: clamp(380px, 26vw, 600px);
   flex-shrink: 0;
   border-left: 1px solid var(--border);
   display: flex;
@@ -337,7 +337,7 @@ body {
 /* ── Sidebar: Files ▸ Rules ─────────────────────────── */
 
 .rule-sidebar {
-  width: 280px;
+  width: clamp(260px, 18vw, 360px);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
