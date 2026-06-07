@@ -661,6 +661,78 @@ func (p *Processor) findHTTPRules(path, method string) []*Rule {
 	return matching
 }
 
+// CheckHTTPHMAC enforces fail-closed HMAC verification for an inbound webhook.
+// It returns required=true if any rule matching (path, method) declares an
+// `hmac` block, and ok=true only if the request satisfies every such rule. The
+// gateway returns 401 when required && !ok, before any rule fires.
+//
+// When multiple matched rules declare hmac (uncommon — typically one rule per
+// webhook path), the request must validate against each rule's secret; a
+// mismatch fails closed, which is the safe outcome.
+func (p *Processor) CheckHTTPHMAC(path, method string, body []byte, headers map[string]string) (required, ok bool) {
+	for _, rule := range p.findHTTPRules(path, method) {
+		cfg := rule.Trigger.HTTP.HMAC
+		if cfg == nil {
+			continue
+		}
+		required = true
+
+		result := hmacError
+		if secret, secretOK := p.resolveHMACSecret(cfg.Secret); secretOK {
+			result = verifyHMAC(cfg, secret, body, headers)
+		}
+
+		if p.metrics != nil {
+			p.metrics.IncWebhookHMACVerifications(result)
+		}
+
+		if result != hmacValid {
+			p.logger.Warn("inbound HMAC verification failed",
+				"path", path, "method", method, "header", cfg.Header, "result", result)
+			return true, false
+		}
+	}
+	return required, true
+}
+
+// resolveHMACSecret returns the secret bytes for an HMAC config value. Literal
+// and ${ENV} values arrive already expanded at load time; a {@kv.bucket.key}
+// reference is resolved here against the KV store. Returns ok=false when a KV
+// reference cannot be resolved or the resulting value is empty (→ fail closed).
+func (p *Processor) resolveHMACSecret(secret string) ([]byte, bool) {
+	if strings.HasPrefix(secret, "{@kv.") && strings.HasSuffix(secret, "}") {
+		if p.kvContext == nil {
+			return nil, false
+		}
+		field := secret[1 : len(secret)-1] // strip surrounding { }
+		val, found := p.kvContext.GetFieldWithContext(field, map[string]interface{}{}, nil, nil)
+		if !found {
+			return nil, false
+		}
+		s := secretToString(val)
+		if s == "" {
+			return nil, false
+		}
+		return []byte(s), true
+	}
+	if secret == "" {
+		return nil, false
+	}
+	return []byte(secret), true
+}
+
+// secretToString coerces a KV-resolved value to its string form for use as a secret.
+func secretToString(v interface{}) string {
+	switch s := v.(type) {
+	case string:
+		return s
+	case nil:
+		return ""
+	default:
+		return fmt.Sprintf("%v", s)
+	}
+}
+
 // evaluateRules evaluates a set of rules against a context
 func (p *Processor) evaluateRules(rules []*Rule, context *EvaluationContext, triggerType string) ([]*Action, error) {
 	// Propagate the metrics sink so lazy signature verification can record

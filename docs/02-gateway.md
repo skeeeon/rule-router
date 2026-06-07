@@ -75,6 +75,45 @@ Conditions can filter by header, body, or path. Common shapes:
   operator: exists
 ```
 
+> The `exists` check above only proves a header is *present* — it authenticates nothing. For real authentication, verify the signature with an `hmac` block (next).
+
+### Verifying webhook signatures (HMAC)
+
+Most providers (GitHub, Shopify, …) authenticate webhooks with an **HMAC of the raw body** under a shared secret, carried in a header. Declare an `hmac` block on the HTTP trigger and the gateway verifies it as a **fail-closed gate** — *before* the rule fires. A bad, missing, or unverifiable signature is rejected with **`401 Unauthorized`** and the rule never evaluates (this applies to fire-and-forget and synchronous routes alike).
+
+```yaml
+- trigger:
+    http:
+      path: "/webhooks/github/push"
+      method: "POST"
+      hmac:
+        header: "X-Hub-Signature-256"        # header carrying the signature (required)
+        secret: "${GITHUB_WEBHOOK_SECRET}"    # required; secret forms below
+        algorithm: "sha256"                   # sha256 (default) | sha1
+        encoding: "hex"                       # hex (default) | base64
+        prefix: "sha256="                     # optional; stripped before decoding
+  action:
+    nats:
+      subject: "github.push.{repository.name}"
+      passthrough: true
+```
+
+The HMAC is computed over the **exact received bytes**, before any JSON parsing. This is transport authentication, not a rule condition — you do **not** write a `{@hmac.valid}` check; declaring the block enforces it.
+
+**Secret forms** — one `secret` field, three forms, all existing syntax:
+
+| Form | Example | Resolved |
+|------|---------|----------|
+| Literal | `secret: "s3cr3t"` | as-is (discouraged — keeps the secret in the rule file) |
+| Env var | `secret: "${GITHUB_WEBHOOK_SECRET}"` | at load time from the process environment |
+| KV ref | `secret: "{@kv.secrets.github}"` | per request from a NATS KV bucket |
+
+An unset env var or unresolvable KV reference yields an empty secret, which **fails closed** (every request → `401`) rather than silently accepting unverified payloads.
+
+**Provider coverage.** The generic scheme covers GitHub (`X-Hub-Signature-256`, `sha256=` prefix, hex), Shopify (`X-Shopify-Hmac-Sha256`, base64), and most HMAC webhooks. Timestamp-signed schemes that sign `timestamp.body` with a replay window (Stripe `t=…,v1=…`, Slack `v0:ts:body`) are **not** covered — verify those in a downstream service.
+
+Outcomes are exported as `webhook_hmac_verifications_total{result}` (`valid`/`invalid`/`missing`/`error`); rejections also appear as `http_inbound_requests_total{status="401"}`. See [Observability](./12-observability.md#http-gateway--inbound).
+
 ## Outbound: NATS → HTTP
 
 A NATS trigger with an HTTP action calls an external API in response to an internal event.

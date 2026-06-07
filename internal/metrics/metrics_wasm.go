@@ -20,6 +20,7 @@ func (m *Metrics) SetNATSConnectionStatus(connected bool)                       
 func (m *Metrics) IncNATSReconnects()                                              {}
 func (m *Metrics) IncSignatureVerifications(result string)                         {}
 func (m *Metrics) ObserveSignatureVerificationDuration(seconds float64)            {}
+func (m *Metrics) IncWebhookHMACVerifications(result string)                       {}
 func (m *Metrics) IncKVCacheHits()                                                 {}
 func (m *Metrics) IncKVCacheMisses()                                               {}
 func (m *Metrics) SetKVCacheSize(size float64)                                     {}

@@ -107,7 +107,13 @@ func (rb *RuleBuilder) getTrigger() (*rule.Trigger, error) {
 	case 1: // HTTP
 		path, _ := rb.prompter.Ask("Enter HTTP Trigger Path (e.g., '/webhooks/github'):")
 		method, _ := rb.prompter.AskWithDefault("Enter HTTP Method (e.g., 'POST', press Enter for all):", "")
-		trigger.HTTP = &rule.HTTPTrigger{Path: path, Method: strings.ToUpper(method)}
+		ht := &rule.HTTPTrigger{Path: path, Method: strings.ToUpper(method)}
+		if hmac, err := rb.getHMAC(); err != nil {
+			return nil, err
+		} else if hmac != nil {
+			ht.HMAC = hmac
+		}
+		trigger.HTTP = ht
 	case 2: // Schedule
 		fmt.Println("\n  Cron examples:")
 		fmt.Println("    */5 * * * *    → Every 5 minutes")
@@ -118,6 +124,39 @@ func (rb *RuleBuilder) getTrigger() (*rule.Trigger, error) {
 		trigger.Schedule = &rule.ScheduleTrigger{Cron: cron, Timezone: tz}
 	}
 	return &trigger, nil
+}
+
+// getHMAC optionally builds a fail-closed HMAC verification block for an HTTP
+// trigger. Returns nil when the user declines. Declaring the block makes the
+// gateway verify the signature over the raw body before the rule fires (bad or
+// missing signature → 401); it is transport auth, not a rule condition.
+func (rb *RuleBuilder) getHMAC() (*rule.HMACConfig, error) {
+	add, err := rb.prompter.Confirm("Verify an HMAC signature on inbound requests (fail-closed 401)?")
+	if err != nil || !add {
+		return nil, err
+	}
+
+	header, _ := rb.prompter.AskWithDefault("  Signature header:", "X-Hub-Signature-256")
+	fmt.Println("  Secret accepts a literal, an env ref ${VAR}, or a KV ref {@kv.bucket.key}.")
+	secret, _ := rb.prompter.AskWithDefault("  Shared secret:", "${WEBHOOK_SECRET}")
+
+	algorithm := "" // empty = sha256 default (omitted from YAML)
+	if idx, _ := rb.prompter.Select("  Hash algorithm:", []string{"sha256 (default)", "sha1"}); idx == 1 {
+		algorithm = "sha1"
+	}
+	encoding := "" // empty = hex default (omitted from YAML)
+	if idx, _ := rb.prompter.Select("  Signature encoding:", []string{"hex (default)", "base64"}); idx == 1 {
+		encoding = "base64"
+	}
+	prefix, _ := rb.prompter.AskWithDefault("  Prefix to strip from the header value (e.g. 'sha256=', press Enter for none):", "")
+
+	return &rule.HMACConfig{
+		Header:    strings.TrimSpace(header),
+		Secret:    strings.TrimSpace(secret),
+		Algorithm: algorithm,
+		Encoding:  encoding,
+		Prefix:    prefix,
+	}, nil
 }
 
 func (rb *RuleBuilder) getConditions() (*rule.Conditions, error) {

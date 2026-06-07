@@ -380,6 +380,19 @@ func (s *InboundServer) webhookHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Fail-closed HMAC gate: if any rule matching this path/method declares an
+	// `hmac` block, the request must carry a valid HMAC over the raw body, or it
+	// is rejected here — before any rule fires (sync or fire-and-forget).
+	// CheckHTTPHMAC records the per-result hmac metric.
+	if required, ok := s.processor.CheckHTTPHMAC(path, r.Method, body, headers); required && !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		if s.metrics != nil {
+			s.metrics.IncHTTPInboundRequestsTotal(path, r.Method, "401")
+			s.metrics.ObserveHTTPRequestDuration(path, r.Method, time.Since(start).Seconds())
+		}
+		return
+	}
+
 	// Synchronous routes (respond actions / HTTP↔NATS bridge) are handled inline
 	// in this request goroutine — they must write a response, so they bypass the
 	// fire-and-forget worker queue. Plain webhook routes keep the bounded-queue

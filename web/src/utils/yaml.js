@@ -42,6 +42,9 @@ function pushTrigger(lines, trigger, indent) {
     if (trigger.http.method) {
       lines.push(`${pad}  method: ${yamlString(trigger.http.method)}`)
     }
+    if (trigger.http.hmac) {
+      pushHMAC(lines, trigger.http.hmac, indent + 2)
+    }
     if (trigger.http.debounce) {
       pushDebounce(lines, trigger.http.debounce, indent + 2)
     }
@@ -204,6 +207,22 @@ function pushHeaders(lines, headers, indent) {
   lines.push(`${pad}headers:`)
   for (const [key, value] of entries) {
     lines.push(`${pad}  ${key}: ${yamlString(value)}`)
+  }
+}
+
+function pushHMAC(lines, hmac, indent) {
+  const pad = ' '.repeat(indent)
+  lines.push(`${pad}hmac:`)
+  lines.push(`${pad}  header: ${yamlString(hmac.header)}`)
+  lines.push(`${pad}  secret: ${yamlString(hmac.secret)}`)
+  if (hmac.algorithm && hmac.algorithm !== 'sha256') {
+    lines.push(`${pad}  algorithm: ${yamlString(hmac.algorithm)}`)
+  }
+  if (hmac.encoding && hmac.encoding !== 'hex') {
+    lines.push(`${pad}  encoding: ${yamlString(hmac.encoding)}`)
+  }
+  if (hmac.prefix) {
+    lines.push(`${pad}  prefix: ${yamlString(hmac.prefix)}`)
   }
 }
 

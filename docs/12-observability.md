@@ -108,8 +108,9 @@ Emitted only when `security.verification.enabled` and a rule actually references
 
 | Metric | Type | Labels | Feature | Description |
 |--------|------|--------|---------|-------------|
-| `http_inbound_requests_total` | C | `path`, `method`, `status` | gateway | Inbound requests. Unmatched paths use the sentinel `path="_unknown_"` (see cardinality note). |
+| `http_inbound_requests_total` | C | `path`, `method`, `status` | gateway | Inbound requests. Unmatched paths use the sentinel `path="_unknown_"` (see cardinality note). HMAC rejections appear here as `status="401"`. |
 | `http_request_duration_seconds` | H | `path`, `method` | gateway | Inbound request latency. |
+| `webhook_hmac_verifications_total` | C | `result` = `valid` \| `invalid` \| `missing` \| `error` | gateway | Inbound webhook [HMAC verifications](./02-gateway.md#verifying-webhook-signatures-hmac) by outcome, for paths whose rule declares an `hmac` block. `missing` = no signature header; `error` = misconfiguration (empty secret, unknown algorithm/encoding, unresolvable KV ref). Only `valid` proceeds; everything else returns `401`. |
 | `message_processing_backlog` | G | — | gateway | Depth of the inbound webhook worker queue, sampled on enqueue/dequeue. Climbs toward `inboundQueueSize` when workers can't keep up (a full queue returns `503`). Gateway-only — router pulls from JetStream on demand and has no in-process backlog. |
 
 ### HTTP — outbound

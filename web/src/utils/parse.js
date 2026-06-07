@@ -36,6 +36,16 @@ function rawToRule(raw, file) {
         key: raw.trigger.http.debounce.key || '',
       }
     }
+    if (raw.trigger.http.hmac) {
+      const h = raw.trigger.http.hmac
+      rule.trigger.http.hmac = {
+        header: h.header || '',
+        secret: h.secret || '',
+        algorithm: h.algorithm || 'sha256',
+        encoding: h.encoding || 'hex',
+        prefix: h.prefix || '',
+      }
+    }
   } else if (raw.trigger?.schedule) {
     rule.trigger.type = 'schedule'
     rule.trigger.schedule.cron = raw.trigger.schedule.cron || ''

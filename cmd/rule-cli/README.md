@@ -46,14 +46,18 @@ First, list the available templates:
 ```
 ```
 Available templates:
+  - http-bridge
   - http-forEach
   - http-inbound
+  - http-inbound-hmac
   - http-outbound
+  - http-respond
   - nats-array-operators
   - nats-basic
   - nats-debounce
   - nats-forEach
   - nats-kv-enrichment
+  - nats-reply
   - schedule-basic
   - schedule-poll
   - signature-verification

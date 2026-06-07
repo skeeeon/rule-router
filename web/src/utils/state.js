@@ -11,7 +11,7 @@ export function createRule(file = '') {
     trigger: {
       type: 'nats',
       nats: { subject: '', reply: false, queue: '', debounce: null },
-      http: { path: '', method: '', debounce: null },
+      http: { path: '', method: '', debounce: null, hmac: null },
       schedule: { cron: '', timezone: '' },
     },
     conditions: null,
@@ -79,6 +79,10 @@ export function createCondition() {
 
 export function createDebounce() {
   return { window: '', key: '' }
+}
+
+export function createHMAC() {
+  return { header: '', secret: '', algorithm: 'sha256', encoding: 'hex', prefix: '' }
 }
 
 export function createRetry() {

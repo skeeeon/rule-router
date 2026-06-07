@@ -33,6 +33,9 @@ type Metrics struct {
 	signatureVerificationsTotal   *prometheus.CounterVec
 	signatureVerificationDuration prometheus.Histogram
 
+	// Inbound webhook HMAC verification (fail-closed gateway gate)
+	webhookHMACVerificationsTotal *prometheus.CounterVec
+
 	// KV metrics (shared)
 	kvCacheHits   prometheus.Counter
 	kvCacheMisses prometheus.Counter
@@ -157,6 +160,15 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 				Help:    "Duration of signature verification operations",
 				Buckets: prometheus.DefBuckets,
 			},
+		),
+
+		// Inbound webhook HMAC verification
+		webhookHMACVerificationsTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "webhook_hmac_verifications_total",
+				Help: "Total inbound webhook HMAC verifications by result (valid/invalid/missing/error)",
+			},
+			[]string{"result"},
 		),
 
 		// KV metrics
@@ -300,6 +312,7 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 		m.natsReconnects,
 		m.signatureVerificationsTotal,
 		m.signatureVerificationDuration,
+		m.webhookHMACVerificationsTotal,
 		m.kvCacheHits,
 		m.kvCacheMisses,
 		m.kvCacheSize,
@@ -390,6 +403,11 @@ func (m *Metrics) IncSignatureVerifications(result string) {
 
 func (m *Metrics) ObserveSignatureVerificationDuration(seconds float64) {
 	m.signatureVerificationDuration.Observe(seconds)
+}
+
+// IncWebhookHMACVerifications records an inbound webhook HMAC verification outcome.
+func (m *Metrics) IncWebhookHMACVerifications(result string) {
+	m.webhookHMACVerificationsTotal.WithLabelValues(result).Inc()
 }
 
 // KV metrics

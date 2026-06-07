@@ -1,5 +1,5 @@
 <script setup>
-import { createDebounce } from '../utils/state.js'
+import { createDebounce, createHMAC } from '../utils/state.js'
 import DebounceEditor from './DebounceEditor.vue'
 import CronBuilder from './CronBuilder.vue'
 
@@ -14,6 +14,10 @@ function toggleDebounce(target) {
   } else {
     target.debounce = createDebounce()
   }
+}
+
+function toggleHMAC(target) {
+  target.hmac = target.hmac ? null : createHMAC()
 }
 </script>
 
@@ -92,6 +96,67 @@ function toggleDebounce(target) {
           <option value="">Any</option>
           <option v-for="m in ['GET','POST','PUT','PATCH','DELETE']" :key="m" :value="m">{{ m }}</option>
         </select>
+      </div>
+      <label class="checkbox">
+        <input type="checkbox" :checked="!!trigger.http.hmac" @change="toggleHMAC(trigger.http)">
+        HMAC verification
+      </label>
+      <span class="field-hint">Verify a shared-secret HMAC over the raw body before the rule fires. Invalid or missing signature → 401.</span>
+      <div v-if="trigger.http.hmac" class="fields hmac-fields">
+        <div class="field">
+          <label>Signature header</label>
+          <input
+            v-model="trigger.http.hmac.header"
+            placeholder="X-Hub-Signature-256"
+            :class="{ error: errorFor('trigger.http.hmac.header') }"
+            autocapitalize="off"
+            autocorrect="off"
+            autocomplete="off"
+            spellcheck="false"
+          >
+          <span class="field-error" v-if="errorFor('trigger.http.hmac.header')">
+            {{ errorFor('trigger.http.hmac.header').message }}
+          </span>
+        </div>
+        <div class="field">
+          <label>Secret</label>
+          <input
+            v-model="trigger.http.hmac.secret"
+            placeholder="${GITHUB_WEBHOOK_SECRET}"
+            :class="{ error: errorFor('trigger.http.hmac.secret') }"
+            autocapitalize="off"
+            autocorrect="off"
+            autocomplete="off"
+            spellcheck="false"
+          >
+          <span class="field-hint">Literal, env <code>${VAR}</code>, or KV <code>{@kv.bucket.key}</code></span>
+        </div>
+        <div class="field">
+          <label>Algorithm</label>
+          <select v-model="trigger.http.hmac.algorithm">
+            <option value="sha256">sha256</option>
+            <option value="sha1">sha1</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Encoding</label>
+          <select v-model="trigger.http.hmac.encoding">
+            <option value="hex">hex</option>
+            <option value="base64">base64</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Prefix <span class="optional">(optional)</span></label>
+          <input
+            v-model="trigger.http.hmac.prefix"
+            placeholder="sha256="
+            autocapitalize="off"
+            autocorrect="off"
+            autocomplete="off"
+            spellcheck="false"
+          >
+          <span class="field-hint">Stripped from the header value before decoding</span>
+        </div>
       </div>
       <label class="checkbox">
         <input type="checkbox" :checked="!!trigger.http.debounce" @change="toggleDebounce(trigger.http)">

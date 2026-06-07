@@ -22,7 +22,7 @@ The platform is designed for performance, security, and flexibility in event-dri
 *   **Array Processing**: Native support for batch message processing with array operators and forEach iteration.
 *   **Primitive Message Support**: Handle strings, numbers, arrays, and objects at the root - perfect for IoT protocols and simple formats.
 *   **Bidirectional HTTP Gateway**:
-    *   **Inbound**: "Fire-and-forget" webhook ingestion returns `200 OK` immediately for maximum compatibility.
+    *   **Inbound**: "Fire-and-forget" webhook ingestion returns `200 OK` immediately for maximum compatibility. Optional per-rule **HMAC verification** authenticates provider webhooks (GitHub, Shopify, …) as a fail-closed gate — a bad/missing signature returns `401` before the rule fires.
     *   **Outbound**: "ACK-on-Success" API calls with configurable retries and exponential backoff ensure reliable delivery.
     *   **Synchronous responses**: An HTTP rule can return an evaluated/enriched payload as the response (`respond` action), or bridge the request through NATS request/reply (`request: true`) and return the reply.
 *   **NATS Request/Reply**: Answer requests on a subject via `msg.Respond` (`reply: true` trigger + `respond` action), with optional queue-group load balancing — exposing rule-driven services over core NATS.
@@ -34,7 +34,7 @@ The platform is designed for performance, security, and flexibility in event-dri
     *   **KV Rule Store**: Optionally store rules in a NATS KV bucket with automatic hot-reload on any change. Push rules with `rule-cli kv push` for a GitOps workflow.
     *   **Time-Based Logic**: Create rules that only run at certain times of day, on specific days, or within a time window.
     *   **Debounce / Throttle**: Optional per-rule fire-first suppression on triggers and/or actions with configurable time windows and template-based keys.
-*   **Cryptographic Security**: Verify message integrity and authenticity using NATS NKey signatures.
+*   **Cryptographic Security**: Verify message integrity and authenticity — NATS NKey signatures for NATS publishers, and shared-secret HMAC verification for inbound webhooks.
 *   **Production Ready**: Structured logging, Prometheus metrics, graceful shutdown, and full NATS authentication support.
 
 ## Core Concepts
@@ -57,7 +57,7 @@ Detailed documentation on the rule engine's features can be found in the `docs/`
 *   **[04 - System Variables & Functions](./docs/04-system-variables.md)**: Full reference for all `@` variables and functions.
 *   **[05 - Array Processing](./docs/05-array-processing.md)**: Guide to using `forEach` and array operators (`any`, `all`, `none`).
 *   **[06 - Primitive & Array Root Messages](./docs/06-primitive-messages.md)**: How to handle non-object JSON payloads.
-*   **[07 - Security](./docs/07-security.md)**: Guide to Cryptographic Signature Verification.
+*   **[07 - Security](./docs/07-security.md)**: NKey signature verification for NATS publishers and fail-closed HMAC verification for inbound webhooks.
 *   **[08 - KV Rule Store](./docs/08-kv-rule-store.md)**: Store rules in NATS KV with hot-reload and GitOps push workflow.
 *   **[09 - Patterns](./docs/09-patterns.md)**: Recipe catalogue from simple routing through stateful cross-source correlation.
 *   **[10 - Troubleshooting](./docs/10-troubleshooting.md)**: Common failure modes and how to diagnose them.

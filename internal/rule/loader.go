@@ -178,6 +178,11 @@ func (l *RulesLoader) expandTriggerEnvVars(trigger *Trigger, filePath string, ru
 		trigger.HTTP.Debounce.Window = l.expandEnvVarsInString(trigger.HTTP.Debounce.Window, "trigger.http.debounce.window", filePath, ruleIndex)
 		trigger.HTTP.Debounce.Key = l.expandEnvVarsInString(trigger.HTTP.Debounce.Key, "trigger.http.debounce.key", filePath, ruleIndex)
 	}
+	if trigger.HTTP != nil && trigger.HTTP.HMAC != nil {
+		// Resolve ${ENV} secrets at load time (literals pass through unchanged;
+		// {@kv...} refs are left intact and resolved per-request at the gateway).
+		trigger.HTTP.HMAC.Secret = l.expandEnvVarsInString(trigger.HTTP.HMAC.Secret, "trigger.http.hmac.secret", filePath, ruleIndex)
+	}
 	if trigger.Schedule != nil {
 		trigger.Schedule.Cron = l.expandEnvVarsInString(trigger.Schedule.Cron, "trigger.schedule.cron", filePath, ruleIndex)
 		trigger.Schedule.Timezone = l.expandEnvVarsInString(trigger.Schedule.Timezone, "trigger.schedule.timezone", filePath, ruleIndex)
@@ -424,6 +429,9 @@ func (l *RulesLoader) validateTrigger(trigger *Trigger, filePath string, ruleInd
 			trigger.HTTP.Method = method
 		}
 		if err := l.validateDebounceConfig(trigger.HTTP.Debounce, "trigger.http.debounce"); err != nil {
+			return err
+		}
+		if err := l.validateHMACConfig(trigger.HTTP.HMAC); err != nil {
 			return err
 		}
 	}
@@ -740,6 +748,39 @@ func (l *RulesLoader) validateDebounceConfig(cfg *DebounceConfig, location strin
 	if cfg.Key != "" {
 		if err := l.validateKVFieldsInTemplate(cfg.Key); err != nil {
 			return fmt.Errorf("%s: invalid KV field in debounce key: %w", location, err)
+		}
+	}
+
+	return nil
+}
+
+// validateHMACConfig validates an inbound-webhook HMAC block. Syntax only: it
+// does NOT resolve ${ENV} or {@kv...} secrets (kept WASM-safe and consistent
+// with the project's warn-on-missing-env behavior). Env expansion runs before
+// validation, so a secret is deliberately NOT required to be non-empty here —
+// an unset ${ENV} (which os.Getenv leaves empty, including in the browser
+// tester) or a missing secret fails closed at the gateway gate (401) rather
+// than refusing to load the rule.
+func (l *RulesLoader) validateHMACConfig(cfg *HMACConfig) error {
+	if cfg == nil {
+		return nil
+	}
+
+	if cfg.Header == "" {
+		return fmt.Errorf("trigger.http.hmac.header cannot be empty")
+	}
+
+	if _, ok := hmacHash(cfg.Algorithm); !ok {
+		return fmt.Errorf("trigger.http.hmac.algorithm '%s' is not supported (use 'sha256' or 'sha1')", cfg.Algorithm)
+	}
+	if _, ok, _ := hmacDecode(cfg.Encoding, ""); !ok {
+		return fmt.Errorf("trigger.http.hmac.encoding '%s' is not supported (use 'hex' or 'base64')", cfg.Encoding)
+	}
+
+	// A KV-referenced secret must be a well-formed, static {@kv.bucket.key}.
+	if strings.HasPrefix(cfg.Secret, "{@kv.") && strings.HasSuffix(cfg.Secret, "}") {
+		if err := l.validateKVFieldsInTemplate(cfg.Secret); err != nil {
+			return fmt.Errorf("trigger.http.hmac.secret: invalid KV reference: %w", err)
 		}
 	}
 

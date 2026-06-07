@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Features
+- **Inbound webhook HMAC verification** — an HTTP trigger can declare an `hmac` block (`header`, `secret`, `algorithm` `sha256`/`sha1`, `encoding` `hex`/`base64`, optional `prefix`). The gateway verifies the HMAC over the raw request body as a **fail-closed gate** before any rule fires: a bad, missing, or unverifiable signature returns `401` and the rule never evaluates (both fire-and-forget and synchronous routes). Covers GitHub, Shopify, and most generic HMAC webhooks; timestamp-signed schemes (Stripe/Slack) are out of scope. The `secret` accepts a literal, an env ref `${VAR}`, or a KV ref `{@kv.bucket.key}`. New metric `webhook_hmac_verifications_total{result}`. `rule-cli` gains the `http-inbound-hmac` template and an HMAC step in the interactive builder; the web rule builder gains an HMAC section on HTTP triggers.
+
 ## [0.13.0] - 2026-06-07
 
 ### Features

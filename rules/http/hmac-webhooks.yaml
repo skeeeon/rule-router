@@ -1,0 +1,67 @@
+# Inbound webhook HMAC verification (fail-closed gateway gate)
+#
+# When an HTTP trigger declares an `hmac` block, the gateway verifies a
+# shared-secret HMAC over the RAW request body BEFORE the rule fires. A bad,
+# missing, or unverifiable signature is rejected with 401 and the rule never
+# evaluates. The secret accepts three forms, all using existing syntax:
+#   - literal:  secret: "s3cr3t"
+#   - env var:  secret: "${GITHUB_WEBHOOK_SECRET}"   (expanded at load time)
+#   - KV ref:   secret: "{@kv.secrets.github}"        (resolved per request)
+#
+# Generic scheme only (algorithm: sha256|sha1, encoding: hex|base64, optional
+# prefix). Timestamp-signed variants (Stripe t=…,v1=…; Slack v0:ts:body) are
+# out of scope.
+
+# Example 1: GitHub — HMAC-SHA256, hex, "sha256=" prefix; secret from env.
+# Verify: printf '<body>' | openssl dgst -sha256 -hmac "$GITHUB_WEBHOOK_SECRET"
+- trigger:
+    http:
+      path: "/webhooks/github/push"
+      method: "POST"
+      hmac:
+        header: "X-Hub-Signature-256"
+        secret: "${GITHUB_WEBHOOK_SECRET}"
+        prefix: "sha256="
+  conditions:
+    operator: and
+    items:
+      - field: "{@header.X-GitHub-Event}"
+        operator: eq
+        value: "push"
+  action:
+    nats:
+      subject: "github.push.{repository.name}"
+      payload: |
+        {
+          "event": "push",
+          "repo": "{repository.name}",
+          "ref": "{ref}",
+          "pusher": "{pusher.name}",
+          "received_at": "{@timestamp()}",
+          "event_id": "{@uuid7()}"
+        }
+
+# Example 2: Shopify — HMAC-SHA256, base64, no prefix; secret from NATS KV.
+- trigger:
+    http:
+      path: "/webhooks/shopify/orders"
+      method: "POST"
+      hmac:
+        header: "X-Shopify-Hmac-Sha256"
+        secret: "{@kv.secrets.shopify}"
+        encoding: "base64"
+  conditions:
+    operator: and
+    items:
+      - field: "{@header.X-Shopify-Topic}"
+        operator: eq
+        value: "orders/create"
+  action:
+    nats:
+      subject: "shopify.orders.created"
+      payload: |
+        {
+          "order_id": "{id}",
+          "total": "{total_price}",
+          "received_at": "{@timestamp()}"
+        }

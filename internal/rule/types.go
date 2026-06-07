@@ -56,6 +56,30 @@ type HTTPTrigger struct {
 	Path     string          `json:"path" yaml:"path"`
 	Method   string          `json:"method,omitempty" yaml:"method,omitempty"` // Optional, defaults to all methods
 	Debounce *DebounceConfig `json:"debounce,omitempty" yaml:"debounce,omitempty"`
+
+	// HMAC, when set, makes the inbound gateway verify a shared-secret HMAC over
+	// the raw request body BEFORE the rule fires (fail-closed: bad/missing/
+	// unverifiable signature → 401, rule never evaluates). HTTP triggers only.
+	HMAC *HMACConfig `json:"hmac,omitempty" yaml:"hmac,omitempty"`
+}
+
+// HMACConfig configures fail-closed HMAC verification for an inbound webhook.
+// Covers the generic HMAC scheme used by GitHub, Shopify, and most providers:
+// the signature is HMAC(secret, rawBody), carried in a header. Timestamp-signed
+// variants (Stripe, Slack) are intentionally out of scope.
+type HMACConfig struct {
+	// Header is the request header carrying the signature (e.g. "X-Hub-Signature-256"). Required.
+	Header string `json:"header" yaml:"header"`
+	// Secret is the shared secret. Accepts a literal, an env reference
+	// "${VAR}" (expanded at load time), or a KV reference "{@kv.bucket.key}"
+	// (resolved at request time). Required.
+	Secret string `json:"secret" yaml:"secret"`
+	// Algorithm is the HMAC hash: "sha256" (default) or "sha1".
+	Algorithm string `json:"algorithm,omitempty" yaml:"algorithm,omitempty"`
+	// Encoding of the header's signature value: "hex" (default) or "base64".
+	Encoding string `json:"encoding,omitempty" yaml:"encoding,omitempty"`
+	// Prefix, if set, is stripped from the header value before decoding (e.g. "sha256=").
+	Prefix string `json:"prefix,omitempty" yaml:"prefix,omitempty"`
 }
 
 // Action defines what happens when rule matches (NATS, HTTP, or Respond)
