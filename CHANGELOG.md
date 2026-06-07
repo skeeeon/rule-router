@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Security
+- Bumped the transitive `postcss` dev/build dependency from 8.5.8 to 8.5.15 to clear CVE-2026-41305 (XSS via unescaped `</style>` in CSS stringify output). Build-time only — the web rule-builder does not run untrusted CSS through PostCSS at runtime, so real-world impact for this project was nil; bumped for hygiene and to clear the Dependabot alert.
+
 ## [0.14.0] - 2026-06-07
 
 ### Features
