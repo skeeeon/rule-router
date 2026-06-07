@@ -1,8 +1,9 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 
 const props = defineProps({
-  files: Array,  // [{ file: string, yaml: string, ruleCount: number }]
+  files: Array,         // [{ file: string, yaml: string, ruleCount: number }]
+  activeFile: String,   // filename the workspace currently has selected (syncs the tab)
 })
 
 const emit = defineEmits(['push', 'push-all'])
@@ -11,7 +12,18 @@ const activeTab = ref(0)
 const copied = ref(false)
 const hasMultiple = computed(() => props.files.length > 1)
 
-const activeFile = computed(() => props.files[activeTab.value] || props.files[0])
+const activeFileData = computed(() => props.files[activeTab.value] || props.files[0])
+
+// Keep the visible tab in sync with the rule selected in the workspace.
+watch(
+  () => [props.activeFile, props.files.length],
+  () => {
+    if (!props.activeFile) return
+    const idx = props.files.findIndex(f => f.file === props.activeFile)
+    if (idx >= 0) activeTab.value = idx
+  },
+  { immediate: true }
+)
 
 function clampTab() {
   if (activeTab.value >= props.files.length) {
@@ -21,7 +33,7 @@ function clampTab() {
 
 async function copyToClipboard() {
   clampTab()
-  const text = activeFile.value?.yaml || ''
+  const text = activeFileData.value?.yaml || ''
   try {
     await navigator.clipboard.writeText(text)
   } catch {
@@ -38,7 +50,7 @@ async function copyToClipboard() {
 
 function download() {
   clampTab()
-  const f = activeFile.value
+  const f = activeFileData.value
   if (!f) return
   downloadFile(f.file, f.yaml)
 }
@@ -61,7 +73,7 @@ function downloadFile(name, content) {
 
 function pushFile() {
   clampTab()
-  const f = activeFile.value
+  const f = activeFileData.value
   if (!f) return
   emit('push', { file: f.file, yaml: f.yaml })
 }
@@ -97,7 +109,7 @@ function pushAll() {
     </div>
 
     <!-- YAML content -->
-    <pre class="yaml-code"><code>{{ activeFile?.yaml || '# Build a rule to see the YAML preview' }}</code></pre>
+    <pre class="yaml-code"><code>{{ activeFileData?.yaml || '# Build a rule to see the YAML preview' }}</code></pre>
 
     <!-- Action toolbar -->
     <div class="preview-toolbar">

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, inject, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, inject, nextTick, onMounted, onUnmounted } from 'vue'
 import { createDebounce, createRetry, createConditions, createPublishResponse } from '../utils/state.js'
 import HeadersEditor from './HeadersEditor.vue'
 import DebounceEditor from './DebounceEditor.vue'
@@ -9,8 +9,50 @@ import JsonTextarea from './JsonTextarea.vue'
 
 const props = defineProps({
   action: Object,
+  trigger: Object,
   errorFor: Function,
 })
+
+// What the trigger permits drives which action options are valid.
+// Mirrors loader.validateTriggerActionCompatibility + ProcessSchedule (nil payload).
+const isHttp = computed(() => props.trigger.type === 'http')
+const isSchedule = computed(() => props.trigger.type === 'schedule')
+const natsReply = computed(() => props.trigger.type === 'nats' && props.trigger.nats.reply)
+// A respond action is valid on an HTTP trigger or a NATS request/reply responder.
+const canRespond = computed(() => isHttp.value || natsReply.value)
+// A NATS responder *requires* a respond action — the action type is forced.
+const replyForced = computed(() => natsReply.value)
+
+// Keep the action in a valid shape for the current trigger. Runs on mount and
+// whenever the trigger type / reply flag changes (e.g. user toggles them, or a
+// different rule is selected in the workspace).
+watch(
+  [() => props.trigger.type, natsReply],
+  () => {
+    const a = props.action
+    if (replyForced.value) {
+      a.type = 'respond'
+    } else if (a.type === 'respond' && !canRespond.value) {
+      a.type = 'nats'
+    }
+    // Bridge (request/reply) is only honored on HTTP triggers.
+    if (!isHttp.value) {
+      a.nats.request = false
+      a.nats.timeout = ''
+    }
+    // Schedule has no incoming message — passthrough/merge/forEach are meaningless
+    // (passthrough would publish an empty payload), so clear them.
+    if (isSchedule.value) {
+      for (const act of [a.nats, a.http]) {
+        act.passthrough = false
+        act.merge = false
+        act.forEach = ''
+        act.filter = null
+      }
+    }
+  },
+  { immediate: true }
+)
 
 const inspectedFields = inject('inspectedFields', ref([]))
 const activePayloadInsert = inject('activePayloadInsert', ref(null))
@@ -78,10 +120,15 @@ function toggleOption(target, key, factory) {
 
 <template>
   <div class="action-form">
-    <div class="radio-group">
+    <!-- A NATS request/reply responder must answer with a respond action. -->
+    <div v-if="replyForced" class="reply-banner">
+      <strong>Replies to caller</strong>
+      <span>This NATS responder answers each request with the respond action below.</span>
+    </div>
+    <div v-else class="radio-group">
       <label><input type="radio" v-model="action.type" value="nats"> NATS</label>
       <label><input type="radio" v-model="action.type" value="http"> HTTP</label>
-      <label><input type="radio" v-model="action.type" value="respond"> Respond</label>
+      <label v-if="canRespond"><input type="radio" v-model="action.type" value="respond"> Respond</label>
     </div>
 
     <!-- NATS action -->
@@ -102,12 +149,12 @@ function toggleOption(target, key, factory) {
         </span>
       </div>
 
-      <div class="field">
+      <div v-if="!isSchedule" class="field">
         <label class="checkbox inline">
-          <input type="checkbox" v-model="action.nats.passthrough"> Passthrough
+          <input type="checkbox" v-model="action.nats.passthrough" :disabled="action.nats.merge"> Passthrough
         </label>
         <label class="checkbox inline">
-          <input type="checkbox" v-model="action.nats.merge"> Merge
+          <input type="checkbox" v-model="action.nats.merge" :disabled="action.nats.passthrough"> Merge
         </label>
       </div>
 
@@ -138,7 +185,7 @@ function toggleOption(target, key, factory) {
 
       <!-- Optional features -->
       <div class="option-toggles">
-        <label class="checkbox">
+        <label v-if="!isSchedule" class="checkbox">
           <input type="checkbox" :checked="!!action.nats.forEach" @change="action.nats.forEach = action.nats.forEach ? '' : '{items}'">
           forEach
         </label>
@@ -180,11 +227,12 @@ function toggleOption(target, key, factory) {
       <HeadersEditor v-if="Object.keys(action.nats.headers).length > 0" v-model="action.nats.headers" />
       <DebounceEditor v-if="action.nats.debounce" :debounce="action.nats.debounce" :error-for="errorFor" prefix="action.nats.debounce" />
 
+      <template v-if="isHttp">
       <label class="checkbox">
         <input type="checkbox" v-model="action.nats.request">
         Request/Reply (HTTP↔NATS bridge)
       </label>
-      <span class="field-hint">On an HTTP trigger, send a NATS request and return the reply as the HTTP response. Honored on HTTP triggers only.</span>
+      <span class="field-hint">Send a NATS request and return the reply as the HTTP response.</span>
       <div v-if="action.nats.request" class="field">
         <label>Timeout <span class="optional">(optional)</span></label>
         <input
@@ -200,6 +248,7 @@ function toggleOption(target, key, factory) {
         </span>
         <span class="field-hint">Duration string (e.g. 3s, 500ms). Defaults to 5s.</span>
       </div>
+      </template>
     </div>
 
     <!-- HTTP action -->
@@ -231,12 +280,12 @@ function toggleOption(target, key, factory) {
         </span>
       </div>
 
-      <div class="field">
+      <div v-if="!isSchedule" class="field">
         <label class="checkbox inline">
-          <input type="checkbox" v-model="action.http.passthrough"> Passthrough
+          <input type="checkbox" v-model="action.http.passthrough" :disabled="action.http.merge"> Passthrough
         </label>
         <label class="checkbox inline">
-          <input type="checkbox" v-model="action.http.merge"> Merge
+          <input type="checkbox" v-model="action.http.merge" :disabled="action.http.passthrough"> Merge
         </label>
       </div>
 
@@ -264,7 +313,7 @@ function toggleOption(target, key, factory) {
 
       <!-- Optional features -->
       <div class="option-toggles">
-        <label class="checkbox">
+        <label v-if="!isSchedule" class="checkbox">
           <input type="checkbox" :checked="!!action.http.forEach" @change="action.http.forEach = action.http.forEach ? '' : '{items}'">
           forEach
         </label>
@@ -354,8 +403,8 @@ function toggleOption(target, key, factory) {
         or a NATS reply (NATS trigger with Request/Reply enabled).
       </span>
 
-      <div class="field">
-        <label>Status Code <span class="optional">(HTTP only)</span></label>
+      <div v-if="isHttp" class="field">
+        <label>Status Code <span class="optional">(optional)</span></label>
         <input
           type="number"
           v-model.number="action.respond.statusCode"
@@ -366,15 +415,15 @@ function toggleOption(target, key, factory) {
         <span class="field-error" v-if="errorFor('action.respond.statusCode')">
           {{ errorFor('action.respond.statusCode').message }}
         </span>
-        <span class="field-hint">Ignored for NATS replies. Defaults to 200.</span>
+        <span class="field-hint">HTTP response status. Defaults to 200.</span>
       </div>
 
       <div class="field">
         <label class="checkbox inline">
-          <input type="checkbox" v-model="action.respond.passthrough"> Passthrough
+          <input type="checkbox" v-model="action.respond.passthrough" :disabled="action.respond.merge"> Passthrough
         </label>
         <label class="checkbox inline">
-          <input type="checkbox" v-model="action.respond.merge"> Merge
+          <input type="checkbox" v-model="action.respond.merge" :disabled="action.respond.passthrough"> Merge
         </label>
       </div>
 

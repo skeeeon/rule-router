@@ -45,9 +45,9 @@ function toggleDebounce(target) {
       </div>
       <label class="checkbox">
         <input type="checkbox" v-model="trigger.nats.reply">
-        Request/Reply service
+        Request/Reply responder
       </label>
-      <span class="field-hint">Subscribe via core NATS and answer requests with a respond action (msg.Respond)</span>
+      <span class="field-hint">Subscribe via core NATS and answer each request with a respond action (msg.Respond). The action is forced to Respond.</span>
       <div v-if="trigger.nats.reply" class="field">
         <label>Queue <span class="optional">(optional)</span></label>
         <input

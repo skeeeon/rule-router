@@ -83,6 +83,9 @@ function validateAction(action, errors) {
     if (a.passthrough && a.payload) {
       errors.push({ path: 'action.nats.payload', message: 'Passthrough is enabled — remove payload or disable passthrough' })
     }
+    if (a.passthrough && a.merge) {
+      errors.push({ path: 'action.nats.merge', message: 'Passthrough and merge are mutually exclusive' })
+    }
     if (a.forEach) {
       validateForEach(a.forEach, 'action.nats.forEach', errors)
     }
@@ -114,6 +117,9 @@ function validateAction(action, errors) {
     if (a.passthrough && a.payload) {
       errors.push({ path: 'action.http.payload', message: 'Passthrough is enabled — remove payload or disable passthrough' })
     }
+    if (a.passthrough && a.merge) {
+      errors.push({ path: 'action.http.merge', message: 'Passthrough and merge are mutually exclusive' })
+    }
     if (a.forEach) {
       validateForEach(a.forEach, 'action.http.forEach', errors)
     }
@@ -141,6 +147,9 @@ function validateAction(action, errors) {
     const a = action.respond
     if (a.passthrough && a.payload) {
       errors.push({ path: 'action.respond.payload', message: 'Passthrough is enabled — remove payload or disable passthrough' })
+    }
+    if (a.passthrough && a.merge) {
+      errors.push({ path: 'action.respond.merge', message: 'Passthrough and merge are mutually exclusive' })
     }
     if (a.statusCode !== '' && a.statusCode !== null && a.statusCode !== undefined && a.statusCode !== 0) {
       const code = Number(a.statusCode)

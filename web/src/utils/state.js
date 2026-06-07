@@ -98,3 +98,48 @@ export function groupRulesByFile(rules) {
   }
   return Array.from(map.entries()).map(([file, rules]) => ({ file, rules }))
 }
+
+// Returns the request/reply "mode" chips for a rule, for at-a-glance display in
+// the sidebar. Mirrors the trigger/action combinations from the rule engine.
+export function ruleModes(rule) {
+  const modes = []
+  const t = rule.trigger
+  const a = rule.action
+  if (t.type === 'nats' && t.nats.reply) {
+    modes.push('reply')
+  } else if (a.type === 'respond') {
+    modes.push('respond')
+  } else if (a.type === 'nats' && a.nats.request) {
+    modes.push('bridge')
+  }
+  const activeAction = a.type === 'nats' ? a.nats : a.type === 'http' ? a.http : null
+  if (activeAction?.forEach) modes.push('forEach')
+  return modes
+}
+
+// One-line "trigger → action" summary for a rule. Handles every action type
+// (including respond, which the old card summary dropped).
+export function ruleSummary(rule) {
+  const t = rule.trigger
+  const a = rule.action
+  let trigger = ''
+  if (t.type === 'nats') trigger = `NATS ${t.nats.subject || '…'}`
+  else if (t.type === 'http') trigger = `HTTP ${t.http.method || '*'} ${t.http.path || '…'}`
+  else if (t.type === 'schedule') trigger = `Cron ${t.schedule.cron || '…'}`
+
+  let action = ''
+  if (a.type === 'nats') action = `NATS ${a.nats.subject || '…'}`
+  else if (a.type === 'http') action = `HTTP ${a.http.method || ''} ${a.http.url || '…'}`.trim()
+  else if (a.type === 'respond') action = 'Respond'
+
+  return { trigger, action }
+}
+
+// Generates a filename not already used by any rule, for the "New file" action.
+export function uniqueFileName(rules, base = 'rules') {
+  const used = new Set(rules.map(r => r.file || DEFAULT_FILENAME))
+  if (!used.has(base)) return base
+  let n = 2
+  while (used.has(`${base}-${n}`)) n++
+  return `${base}-${n}`
+}

@@ -1,6 +1,6 @@
 <script setup>
 import { reactive, computed, ref, provide, onMounted, onUnmounted, watch } from 'vue'
-import { createRule, createConditions, groupRulesByFile, uid } from './utils/state.js'
+import { createRule, createConditions, groupRulesByFile, uniqueFileName, DEFAULT_FILENAME, uid } from './utils/state.js'
 import { rulesToYaml } from './utils/yaml.js'
 import { validateRule } from './utils/validate.js'
 import { parseYamlToRules } from './utils/parse.js'
@@ -9,7 +9,7 @@ import TriggerForm from './components/TriggerForm.vue'
 import ConditionsBuilder from './components/ConditionsBuilder.vue'
 import ActionForm from './components/ActionForm.vue'
 import YamlPreview from './components/YamlPreview.vue'
-import RuleCard from './components/RuleCard.vue'
+import RuleSidebar from './components/RuleSidebar.vue'
 import KvPushModal from './components/KvPushModal.vue'
 import KvPullModal from './components/KvPullModal.vue'
 import HelpModal from './components/HelpModal.vue'
@@ -79,9 +79,14 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () 
 
 const state = reactive({
   rules: [createRule()],
-  activeIndex: 0,
+  activeRuleId: null,      // stable id of the selected rule (survives reorder/filter)
+  activeFile: DEFAULT_FILENAME,
   showConditions: false,
+  mobileView: 'list',      // 'list' | 'editor' — master-detail nav on narrow screens
 })
+
+// Select the first rule by default; replaced on mount if localStorage restores.
+state.activeRuleId = state.rules[0].id
 
 // Assign IDs to a rule tree loaded from JSON (which has no IDs)
 function assignIds(rule) {
@@ -110,7 +115,7 @@ onMounted(() => {
       const rules = JSON.parse(saved).map(assignIds)
       if (rules.length > 0) {
         state.rules = rules
-        state.showConditions = !!rules[0].conditions
+        setActive(rules[0].id)
       }
     }
   } catch { /* ignore corrupt data */ }
@@ -123,7 +128,11 @@ watch(() => state.rules, (rules) => {
   } catch { /* quota exceeded — ignore */ }
 }, { deep: true })
 
-const activeRule = computed(() => state.rules[state.activeIndex])
+const activeRule = computed(() => state.rules.find(r => r.id === state.activeRuleId) || null)
+const activeIndex = computed(() => state.rules.findIndex(r => r.id === state.activeRuleId))
+
+// Files ▸ Rules tree for the sidebar (real rule refs, grouped by filename).
+const groups = computed(() => groupRulesByFile(state.rules))
 
 // Context-variable catalog (@subject.N, @time.*, etc.) derived from the active
 // rule's trigger. Provided to FieldSuggestInput for autocomplete.
@@ -132,6 +141,13 @@ provide('contextVars', contextVars)
 
 // Validation errors per rule, indexed alongside state.rules.
 const allErrors = computed(() => state.rules.map(r => validateRule(r)))
+
+// Map of ruleId → error count, for sidebar badges.
+const errorById = computed(() => {
+  const map = {}
+  state.rules.forEach((r, i) => { map[r.id] = allErrors.value[i].length })
+  return map
+})
 
 // Group rules by filename, generate YAML per group, count errors per file.
 const files = computed(() => {
@@ -169,45 +185,80 @@ function openKvPushAll(allFiles) {
   showKvModal.value = true
 }
 
-const errors = computed(() => allErrors.value[state.activeIndex] || [])
+const errors = computed(() => (activeIndex.value >= 0 ? allErrors.value[activeIndex.value] : []) || [])
 
 function errorFor(path) {
   return errors.value.find(e => e.path === path)
 }
 
-function addRule() {
-  const currentFile = activeRule.value?.file || ''
-  state.rules.push(createRule(currentFile))
-  state.activeIndex = state.rules.length - 1
-  state.showConditions = false
-}
-
-function duplicateRule(index) {
-  const clone = JSON.parse(JSON.stringify(state.rules[index]))
-  assignIds(clone)
-  state.rules.splice(index + 1, 0, clone)
-  state.activeIndex = index + 1
-  state.showConditions = !!clone.conditions
-}
-
-function removeRule(index) {
-  if (state.rules.length <= 1) return
-  state.rules.splice(index, 1)
-  if (state.activeIndex >= state.rules.length) {
-    state.activeIndex = state.rules.length - 1
+// Update the active selection without forcing a view change (used internally,
+// e.g. after deleting a rule).
+function setActive(id) {
+  state.activeRuleId = id
+  const r = state.rules.find(x => x.id === id)
+  if (r) {
+    state.activeFile = r.file || DEFAULT_FILENAME
+    state.showConditions = !!r.conditions
   }
 }
 
-function editRule(index) {
-  state.activeIndex = index
-  state.showConditions = !!state.rules[index].conditions
+// Explicit user selection — also navigates to the editor on narrow screens.
+function selectRule(id) {
+  setActive(id)
+  state.mobileView = 'editor'
 }
 
-function collapseRule() {
-  state.activeIndex = -1
+function backToList() {
+  state.mobileView = 'list'
+}
+
+// file === null → add to the active rule's file; otherwise add to the named
+// file (DEFAULT_FILENAME maps back to the empty-file group).
+function addRule(file) {
+  const target = file != null ? file : (activeRule.value?.file || '')
+  const fileVal = target === DEFAULT_FILENAME ? '' : target
+  const rule = createRule(fileVal)
+  state.rules.push(rule)
+  selectRule(rule.id)
+}
+
+function addFile() {
+  const rule = createRule(uniqueFileName(state.rules))
+  state.rules.push(rule)
+  selectRule(rule.id)
+}
+
+function duplicateRule(id) {
+  const index = state.rules.findIndex(r => r.id === id)
+  if (index < 0) return
+  const clone = JSON.parse(JSON.stringify(state.rules[index]))
+  assignIds(clone)
+  state.rules.splice(index + 1, 0, clone)
+  selectRule(clone.id)
+}
+
+function removeRule(id) {
+  if (state.rules.length <= 1) return
+  const index = state.rules.findIndex(r => r.id === id)
+  if (index < 0) return
+  const wasActive = state.activeRuleId === id
+  state.rules.splice(index, 1)
+  if (wasActive) {
+    const next = state.rules[index] || state.rules[index - 1] || state.rules[0]
+    if (next) setActive(next.id)
+  }
+}
+
+// Rename a whole file group — applies to every rule currently in it.
+function renameFile({ from, to }) {
+  for (const r of state.rules) {
+    if ((r.file || DEFAULT_FILENAME) === from) r.file = to
+  }
+  if (state.activeFile === from) state.activeFile = to
 }
 
 function toggleConditions() {
+  if (!activeRule.value) return
   state.showConditions = !state.showConditions
   if (state.showConditions && !activeRule.value.conditions) {
     activeRule.value.conditions = createConditions()
@@ -231,15 +282,16 @@ function resetRules() {
 }
 
 function performReset() {
-  state.rules = [createRule()]
-  state.activeIndex = 0
-  state.showConditions = false
+  const rule = createRule()
+  state.rules = [rule]
+  setActive(rule.id)
+  state.mobileView = 'list'
   localStorage.removeItem('ruleBuilder.rules')
   showResetConfirm.value = false
 }
 
 function downloadActiveYaml() {
-  if (state.activeIndex < 0) return
+  if (!activeRule.value) return
   const file = activeRule.value?.file || 'untitled'
   const group = files.value.find(f => f.file === file)
   if (!group) return
@@ -284,8 +336,8 @@ function loadFromKV(entries) {
   }
   if (rules.length === 0) return
   state.rules = rules
-  state.activeIndex = 0
-  state.showConditions = !!rules[0].conditions
+  setActive(rules[0].id)
+  state.mobileView = 'editor'
   showKvPull.value = false
 }
 
@@ -305,107 +357,106 @@ function loadFromKV(entries) {
       </div>
     </header>
 
-    <div class="app-layout">
-      <div class="builder-panel">
-        <div v-for="(rule, i) in state.rules" :key="rule.id">
-          <!-- Collapsed card for non-active rules -->
-          <RuleCard
-            v-if="i !== state.activeIndex"
-            :rule="rule"
-            :index="i"
-            :error-count="allErrors[i].length"
-            :can-remove="state.rules.length > 1"
-            @edit="editRule(i)"
-            @remove="removeRule(i)"
-            @duplicate="duplicateRule(i)"
-          />
+    <div class="workspace" :class="{ 'show-editor': state.mobileView === 'editor' }">
+      <!-- Left: Files ▸ Rules navigation -->
+      <RuleSidebar
+        :groups="groups"
+        :active-rule-id="state.activeRuleId"
+        :error-by-id="errorById"
+        @select="selectRule"
+        @add="addRule"
+        @new-file="addFile"
+        @duplicate="duplicateRule"
+        @remove="removeRule"
+        @rename-file="renameFile"
+      />
 
-          <!-- Expanded editor for the active rule -->
-          <div v-else class="rule-editor">
-            <div class="rule-editor-header">
-              <span class="rule-editor-label">Rule {{ i + 1 }}</span>
-              <div class="rule-file-input">
-                <input
-                  v-model="rule.file"
-                  placeholder="untitled"
-                  title="Filename — rules with the same name group into one file"
-                  autocapitalize="off"
-                  autocorrect="off"
-                  autocomplete="off"
-                  spellcheck="false"
-                >
-              </div>
-              <div class="rule-editor-actions">
-                <button
-                  class="rule-action-btn collapse"
-                  @click="collapseRule()"
-                  title="Collapse rule"
-                >&#x25B2;</button>
-                <button
-                  class="rule-action-btn"
-                  @click="duplicateRule(i)"
-                  title="Duplicate rule"
-                  aria-label="Duplicate rule"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                  </svg>
-                </button>
-                <button
-                  v-if="state.rules.length > 1"
-                  class="rule-action-btn remove"
-                  @click="removeRule(i)"
-                  title="Remove rule"
-                >&times;</button>
-              </div>
+      <!-- Center: editor for the selected rule -->
+      <main class="editor-pane">
+        <div v-if="activeRule" class="rule-editor">
+          <button class="editor-back" @click="backToList">‹ Rules</button>
+
+          <div class="rule-editor-header">
+            <span class="rule-editor-label">Rule {{ activeIndex + 1 }}</span>
+            <div class="rule-file-input">
+              <input
+                v-model="activeRule.file"
+                placeholder="untitled"
+                title="Filename — move this rule by changing its file"
+                autocapitalize="off"
+                autocorrect="off"
+                autocomplete="off"
+                spellcheck="false"
+              >
             </div>
-
-            <MessageInspector />
-
-            <SectionPanel title="Trigger">
-              <TriggerForm :trigger="rule.trigger" :error-for="errorFor" />
-            </SectionPanel>
-
-            <SectionPanel title="Conditions">
-              <template #header-actions>
-                <button class="toggle-btn" @click="toggleConditions">
-                  {{ state.showConditions ? 'Clear' : 'Add Conditions' }}
-                </button>
-              </template>
-              <ConditionsBuilder
-                v-if="state.showConditions && rule.conditions"
-                v-model="rule.conditions"
-                :error-for="errorFor"
-                prefix="conditions"
-              />
-              <p v-else class="hint">No conditions — action runs on every trigger match.</p>
-            </SectionPanel>
-
-            <SectionPanel title="Action">
-              <ActionForm :action="rule.action" :error-for="errorFor" />
-            </SectionPanel>
-
-            <RuleTester :rule="rule" :yaml="activeFileYaml" />
+            <div class="rule-editor-actions">
+              <button
+                class="rule-action-btn"
+                @click="duplicateRule(activeRule.id)"
+                title="Duplicate rule"
+                aria-label="Duplicate rule"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+              </button>
+              <button
+                v-if="state.rules.length > 1"
+                class="rule-action-btn remove"
+                @click="removeRule(activeRule.id)"
+                title="Remove rule"
+              >&times;</button>
+            </div>
           </div>
+
+          <MessageInspector v-if="activeRule.trigger.type !== 'schedule'" />
+
+          <SectionPanel title="Trigger">
+            <TriggerForm :trigger="activeRule.trigger" :error-for="errorFor" />
+          </SectionPanel>
+
+          <SectionPanel title="Conditions">
+            <template #header-actions>
+              <button class="toggle-btn" @click="toggleConditions">
+                {{ state.showConditions ? 'Clear' : 'Add Conditions' }}
+              </button>
+            </template>
+            <ConditionsBuilder
+              v-if="state.showConditions && activeRule.conditions"
+              v-model="activeRule.conditions"
+              :error-for="errorFor"
+              prefix="conditions"
+            />
+            <p v-else class="hint">No conditions — action runs on every trigger match.</p>
+          </SectionPanel>
+
+          <SectionPanel title="Action">
+            <ActionForm :action="activeRule.action" :trigger="activeRule.trigger" :error-for="errorFor" />
+          </SectionPanel>
+
+          <RuleTester :rule="activeRule" :yaml="activeFileYaml" />
         </div>
 
-        <button class="add-rule-btn" @click="addRule">+ Add Another Rule</button>
-      </div>
+        <div v-else class="editor-empty">
+          <p>No rule selected.</p>
+          <button class="add-rule-btn" @click="addRule(null)">+ Add Rule</button>
+        </div>
+      </main>
 
-      <!-- Desktop: side panel -->
-      <div class="preview-panel desktop-only">
-        <YamlPreview :files="files" @push="openKvPush" @push-all="openKvPushAll" />
+      <!-- Right: YAML preview rail (wide screens only) -->
+      <div class="yaml-rail">
+        <YamlPreview :files="files" :active-file="state.activeFile" @push="openKvPush" @push-all="openKvPushAll" />
       </div>
     </div>
 
-    <!-- Mobile: floating button + drawer -->
-    <button class="drawer-fab mobile-only" @click="showDrawer = true">
+    <!-- Narrow screens: floating button + drawer for the YAML preview -->
+    <button class="drawer-fab" @click="showDrawer = true">
       YAML
     </button>
 
     <Transition name="drawer">
-      <div v-if="showDrawer" class="drawer-overlay mobile-only" @click.self="showDrawer = false">
+      <div v-if="showDrawer" class="drawer-overlay" @click.self="showDrawer = false">
         <div class="drawer">
           <div class="drawer-handle" @click="showDrawer = false">
             <span class="drawer-handle-bar"></span>

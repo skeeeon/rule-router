@@ -10,15 +10,16 @@ A visual rule builder for the Rule Router platform. Build rules with a guided fo
 - **Sample Message Inspector**: Paste a sample JSON message once; the builder extracts dot-notation field paths and shares them between autocomplete, payload chips, and the rule tester.
 - **Field & Context-Variable Autocomplete**: Type `{` in a condition field/value, forEach input, or other variable-aware input to suggest message fields from your sample. Type `{@` to surface the full context-variable catalog (`@time.*`, `@date.*`, `@signature.*`, `@timestamp()`, `@uuid4()`, …) plus trigger-derived tokens like `@subject.0..N` from your NATS subject or `@path.0..N` from your HTTP path. Schedule rules see only the variables that make sense without a message (Time, Date, Func, KV).
 - **Cron Builder**: Simple tab with field-by-field controls and presets ("Every 5 min", "Hourly", "Daily 9am", "Weekdays 9am", …); Advanced tab for raw cron expressions. Human-readable description plus next-run preview powered by `cron-parser` / `cronstrue`. Optional IANA timezone.
-- **Multi-Rule Support**: Build multiple rules, group them into separate files, or combine into one. Rules are shown as collapsed cards with summaries, error badges, duplicate, and remove actions.
-- **Per-File Organization**: Assign filenames to rules — rules with the same filename group into one YAML output. Download or push individual files or all at once.
+- **Workspace Layout**: A `Files ▸ Rules` sidebar lists every rule grouped by file, with a `trigger → action` summary, request/reply mode chips (`reply` / `respond` / `bridge` / `forEach`), and per-rule error counts. Search to filter, click to edit in the center pane, and rename a file in place to move all its rules at once. On narrow screens the sidebar and editor become a master-detail push navigation.
+- **Per-File Organization**: Rules group into YAML files by filename — add a rule to an existing file, create a new file, or move a rule by changing its filename. Download or push individual files or all at once.
 - **KV Push**: Push rules directly to a NATS KV bucket via WebSocket. Authenticate with a `.creds` file. Connection settings are saved in session storage.
 - **KV Pull**: Load existing rules from a NATS KV bucket, edit them in the form, and push back.
-- **Client-Side Validation**: Validates rules as you type — trigger subjects, cron expressions, HTTP paths, condition operators, and more. Inline error counts surface on collapsed rule cards.
+- **Trigger-Aware Actions**: The action form only offers what the trigger supports — a `Respond` action appears for HTTP triggers and NATS request/reply responders; the HTTP↔NATS bridge appears only on HTTP triggers; schedule triggers hide message-only options (passthrough, merge, forEach) since there is no incoming message. Enabling a NATS responder forces a `respond` action.
+- **Client-Side Validation**: Validates rules as you type — trigger subjects, cron expressions, HTTP paths, condition operators, request/reply pairings, and more. Error counts surface in the sidebar per rule and per file.
 - **Reference Help (`?`)**: Built-in modal documents every variable, operator, template feature, and trigger type — no need to leave the page.
 - **Auto-Save**: Rules are automatically saved to localStorage and restored on page load.
 - **Dark Mode**: Follows system preference automatically, with a manual toggle (System / Light / Dark) that persists to local storage.
-- **Responsive**: Two-panel layout on desktop; bottom drawer for YAML preview on mobile.
+- **Responsive**: Three-zone layout on wide screens (sidebar · editor · YAML rail); the rail collapses into a bottom drawer below 1024px, and the sidebar/editor become master-detail push navigation on mobile.
 
 ## Keyboard Shortcuts
 
@@ -134,9 +135,10 @@ This is equivalent to running `rule-cli check --rule <yaml> --message <json>`.
 
 The builder supports the full rule YAML format used by all Rule Router applications:
 
-- **Triggers**: NATS subject (with wildcards), HTTP path + method (paths support NATS-style wildcards too: `/webhooks/*/events`, `/api/>`), or Cron schedule + timezone — all support per-trigger debounce
+- **Triggers**: NATS subject (with wildcards, optional request/reply responder + queue), HTTP path + method (paths support NATS-style wildcards too: `/webhooks/*/events`, `/api/>`), or Cron schedule + timezone — NATS and HTTP triggers support per-trigger debounce
 - **Conditions**: Nested AND/OR groups, 15 operators including array operators (`any`, `all`, `none`), `in`/`not_in` membership lists, KV lookups, time-based fields. Variables resolve on both sides of a condition (`{temperature}` `gt` `{@kv.thresholds.{device.id}:max}`).
-- **Actions**: Publish to NATS subject or make HTTP requests, with payload templates, passthrough, merge, forEach iteration, forEach filters, headers, debounce, plus HTTP-only options for retry and publish-response (publish the HTTP response back to a NATS subject).
+- **Actions**: Publish to a NATS subject, make HTTP requests, or `respond` to the caller, with payload templates, passthrough, merge, forEach iteration, forEach filters, headers, debounce, plus HTTP-only options for retry and publish-response (publish the HTTP response back to a NATS subject).
+- **Request/Reply**: `respond` returns a correlated response — the HTTP response on an HTTP trigger, or a NATS reply on a request/reply responder. An HTTP trigger can also set `request: true` on a NATS action to issue a NATS request and return the reply as the HTTP response (the HTTP↔NATS bridge).
 
 Rules built with this UI are identical to hand-written YAML and can be validated with `rule-cli lint`.
 
