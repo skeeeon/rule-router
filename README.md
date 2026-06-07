@@ -61,6 +61,8 @@ Detailed documentation on the rule engine's features can be found in the `docs/`
 *   **[08 - KV Rule Store](./docs/08-kv-rule-store.md)**: Store rules in NATS KV with hot-reload and GitOps push workflow.
 *   **[09 - Patterns](./docs/09-patterns.md)**: Recipe catalogue from simple routing through stateful cross-source correlation.
 *   **[10 - Troubleshooting](./docs/10-troubleshooting.md)**: Common failure modes and how to diagnose them.
+*   **[11 - Configuration Reference](./docs/11-configuration.md)**: Every config section, field, default, and validation bound.
+*   **[12 - Metrics & Observability](./docs/12-observability.md)**: Full Prometheus metric catalogue, health checks, example queries and alerts.
 *   **[Rule Builder Web UI](./web/README.md)**: Visual rule creation, live YAML preview, in-browser rule testing via WASM, and NATS KV push/pull.
 *   **[Docker Deployment](#quick-start)**: Docker Compose setup for local development and deployment.
 
@@ -320,7 +322,7 @@ You will see the message appear on the `alerts.>` subscription, having been proc
 
 ## Monitoring
 
-All features expose a shared Prometheus metrics endpoint (default `:2112`). Key metrics include:
+All features expose a shared Prometheus metrics endpoint (default `:2112`). The full metric catalogue, health-check surface, and example queries/alerts are in **[12 - Metrics & Observability](./docs/12-observability.md)**. Key metrics include:
 
 **Message Processing:**
 *   `messages_total`: Total messages processed by status.

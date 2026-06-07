@@ -663,6 +663,10 @@ func (p *Processor) findHTTPRules(path, method string) []*Rule {
 
 // evaluateRules evaluates a set of rules against a context
 func (p *Processor) evaluateRules(rules []*Rule, context *EvaluationContext, triggerType string) ([]*Action, error) {
+	// Propagate the metrics sink so lazy signature verification can record
+	// outcomes/latency. Harmless when nil (tests/CLI) or in WASM (no-op stub).
+	context.Metrics = p.metrics
+
 	var actions []*Action
 
 	for _, rule := range rules {

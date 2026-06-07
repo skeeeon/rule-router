@@ -8,6 +8,7 @@ package rule
 import (
 	"encoding/base64"
 	"net/textproto"
+	"time"
 
 	"github.com/nats-io/nkeys"
 )
@@ -45,6 +46,19 @@ func (c *EvaluationContext) verifySignature() {
 
 	c.signerPublicKey = pubKeyStr
 
+	// Both headers are present, so an actual verification attempt begins here.
+	// Record outcome ("valid"/"invalid") and latency exactly once, regardless
+	// of which branch we return from. Skipped paths above (disabled / missing
+	// headers) are intentionally not counted — no verification was attempted.
+	start := time.Now()
+	result := "invalid"
+	defer func() {
+		if c.Metrics != nil {
+			c.Metrics.IncSignatureVerifications(result)
+			c.Metrics.ObserveSignatureVerificationDuration(time.Since(start).Seconds())
+		}
+	}()
+
 	sig, err := base64.StdEncoding.DecodeString(sigBase64)
 	if err != nil {
 		if c.logger != nil {
@@ -64,6 +78,7 @@ func (c *EvaluationContext) verifySignature() {
 
 	if err := user.Verify(c.RawPayload, sig); err == nil {
 		c.sigValid = true
+		result = "valid"
 		if c.logger != nil {
 			var contextType string
 			if c.Subject != nil {

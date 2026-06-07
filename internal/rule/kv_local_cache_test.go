@@ -4,8 +4,89 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"rule-router/internal/logger"
+	"rule-router/internal/metrics"
 )
+
+// gatherMetricValue reads the summed counter/gauge value for a metric family
+// name from a Prometheus registry. Returns 0 if the family is absent.
+func gatherMetricValue(t *testing.T, reg *prometheus.Registry, name string) float64 {
+	t.Helper()
+	fams, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather failed: %v", err)
+	}
+	var sum float64
+	for _, f := range fams {
+		if f.GetName() != name {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			if m.Counter != nil {
+				sum += m.Counter.GetValue()
+			}
+			if m.Gauge != nil {
+				sum += m.Gauge.GetValue()
+			}
+		}
+	}
+	return sum
+}
+
+// TestLocalKVCache_Metrics is a regression guard: it asserts the cache actually
+// emits hit/miss/size metrics once a sink is attached. These series were
+// previously registered but never incremented (always-zero on dashboards).
+func TestLocalKVCache_Metrics(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m, err := metrics.NewMetrics(reg)
+	if err != nil {
+		t.Fatalf("NewMetrics: %v", err)
+	}
+
+	cache := NewLocalKVCache(logger.NewNopLogger())
+	cache.SetMetrics(m)
+
+	// Populate two entries → size gauge reflects entry count.
+	cache.Set("b1", "k1", "v1")
+	cache.Set("b1", "k2", "v2")
+	if got := gatherMetricValue(t, reg, "kv_cache_size"); got != 2 {
+		t.Errorf("kv_cache_size = %v, want 2", got)
+	}
+
+	// Hit increments hits_total.
+	if _, ok := cache.Get("b1", "k1"); !ok {
+		t.Fatal("expected cache hit")
+	}
+	if got := gatherMetricValue(t, reg, "kv_cache_hits_total"); got != 1 {
+		t.Errorf("kv_cache_hits_total = %v, want 1", got)
+	}
+
+	// Miss increments misses_total.
+	if _, ok := cache.Get("b1", "missing"); ok {
+		t.Fatal("expected cache miss")
+	}
+	if got := gatherMetricValue(t, reg, "kv_cache_misses_total"); got != 1 {
+		t.Errorf("kv_cache_misses_total = %v, want 1", got)
+	}
+
+	// Delete and Clear keep the size gauge accurate.
+	cache.Delete("b1", "k1")
+	if got := gatherMetricValue(t, reg, "kv_cache_size"); got != 1 {
+		t.Errorf("kv_cache_size after delete = %v, want 1", got)
+	}
+	cache.Clear()
+	if got := gatherMetricValue(t, reg, "kv_cache_size"); got != 0 {
+		t.Errorf("kv_cache_size after clear = %v, want 0", got)
+	}
+
+	// A disabled cache must not count hits/misses.
+	cache.SetEnabled(false)
+	cache.Get("b1", "k2")
+	if got := gatherMetricValue(t, reg, "kv_cache_misses_total"); got != 1 {
+		t.Errorf("kv_cache_misses_total after disabled get = %v, want 1 (unchanged)", got)
+	}
+}
 
 // TestLocalKVCache_BasicOperations tests Get, Set, Delete operations
 func TestLocalKVCache_BasicOperations(t *testing.T) {

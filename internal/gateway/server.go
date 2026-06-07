@@ -194,6 +194,9 @@ func (s *InboundServer) startWorkers(ctx context.Context) {
 					if !ok {
 						return
 					}
+					if s.metrics != nil {
+						s.metrics.SetMessageProcessingBacklog(float64(len(s.workQueue)))
+					}
 					s.processWebhookWithRecovery(ctx, job.path, job.method, job.body, job.headers, workerID)
 				}
 			}
@@ -400,6 +403,7 @@ func (s *InboundServer) webhookHandler(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(responseAccepted))
 		if s.metrics != nil {
 			s.metrics.IncHTTPInboundRequestsTotal(path, r.Method, "200")
+			s.metrics.SetMessageProcessingBacklog(float64(len(s.workQueue)))
 		}
 	default:
 		s.logger.Warn("inbound work queue full, rejecting request",

@@ -101,7 +101,7 @@ A `forEach` over an array longer than `forEach.maxIterations` (default 100) proc
 
 - Check the `foreach_iterations_total` metric against the array size you expect.
 - Raise the limit in config if needed (`forEach.maxIterations: 1000`).
-- Hard ceiling is 100000 — set to `0` to disable, but be cautious.
+- Hard ceiling is 10000 — set to `0` to disable, but be cautious.
 
 ## Debounce state resets after reload
 

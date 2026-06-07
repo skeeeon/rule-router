@@ -90,6 +90,10 @@ func NewNATSBroker(cfg *config.Config, log *logger.Logger, metrics *metrics.Metr
 		cancel:       cancel,
 	}
 
+	// Attach metrics to the KV cache so hit/miss/size are instrumented
+	// (no-op in builds/tests where metrics is nil).
+	broker.localKVCache.SetMetrics(metrics)
+
 	// Initialize NATS connection
 	if err := broker.initializeNATSConnection(); err != nil {
 		cancel()

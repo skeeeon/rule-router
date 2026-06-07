@@ -4,6 +4,7 @@ package rule
 
 import (
 	"rule-router/internal/logger"
+	"rule-router/internal/metrics"
 	"sync"
 )
 
@@ -14,6 +15,7 @@ type LocalKVCache struct {
 	mu      sync.RWMutex                      // Simple read-write mutex for concurrent access
 	logger  *logger.Logger                    // For debugging and monitoring
 	enabled bool                              // Feature flag for easy disable
+	metrics *metrics.Metrics                  // Optional; nil in tests/CLI/WASM (no-op)
 }
 
 // NewLocalKVCache creates a new local KV cache instance
@@ -26,6 +28,25 @@ func NewLocalKVCache(logger *logger.Logger) *LocalKVCache {
 
 	logger.Info("local KV cache initialized", "enabled", cache.enabled)
 	return cache
+}
+
+// SetMetrics attaches a metrics sink for cache hit/miss/size instrumentation.
+// Optional: when nil (tests, rule-cli, WASM), all metric calls are skipped.
+// Called once by the production owner after construction.
+func (c *LocalKVCache) SetMetrics(m *metrics.Metrics) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.metrics = m
+}
+
+// totalKeysLocked returns the number of cached entries across all buckets.
+// Caller must hold c.mu (read or write).
+func (c *LocalKVCache) totalKeysLocked() int {
+	total := 0
+	for _, keys := range c.cache {
+		total += len(keys)
+	}
+	return total
 }
 
 // Get retrieves a value from the local cache
@@ -42,11 +63,17 @@ func (c *LocalKVCache) Get(bucket, key string) (interface{}, bool) {
 	if bucketData, exists := c.cache[bucket]; exists {
 		if value, exists := bucketData[key]; exists {
 			c.logger.Debug("cache hit", "bucket", bucket, "key", key)
+			if c.metrics != nil {
+				c.metrics.IncKVCacheHits()
+			}
 			return value, true
 		}
 	}
 
 	c.logger.Debug("cache miss", "bucket", bucket, "key", key)
+	if c.metrics != nil {
+		c.metrics.IncKVCacheMisses()
+	}
 	return nil, false
 }
 
@@ -68,6 +95,9 @@ func (c *LocalKVCache) Set(bucket, key string, value interface{}) {
 
 	c.cache[bucket][key] = value
 	c.logger.Debug("cache updated", "bucket", bucket, "key", key)
+	if c.metrics != nil {
+		c.metrics.SetKVCacheSize(float64(c.totalKeysLocked()))
+	}
 }
 
 // Delete removes a value from the local cache
@@ -84,6 +114,9 @@ func (c *LocalKVCache) Delete(bucket, key string) {
 	if bucketData, exists := c.cache[bucket]; exists {
 		delete(bucketData, key)
 		c.logger.Debug("cache entry deleted", "bucket", bucket, "key", key)
+		if c.metrics != nil {
+			c.metrics.SetKVCacheSize(float64(c.totalKeysLocked()))
+		}
 	}
 }
 
@@ -113,6 +146,9 @@ func (c *LocalKVCache) Clear() {
 	previousSize := len(c.cache)
 	c.cache = make(map[string]map[string]interface{})
 	c.logger.Info("cache cleared", "previousBuckets", previousSize)
+	if c.metrics != nil {
+		c.metrics.SetKVCacheSize(0)
+	}
 }
 
 // GetStats returns cache statistics for monitoring

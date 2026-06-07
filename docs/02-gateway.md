@@ -220,6 +220,39 @@ headers:
 
 For tokens that refresh (OAuth2, time-limited API keys), pair with the `nats-auth-manager` companion binary. It manages token refresh, stores them in NATS KV, and rules read them with `{@kv.tokens.<provider>:access_token}`. See the [nats-auth-manager README](../README.md) for setup.
 
+## TLS / HTTPS termination
+
+The inbound HTTP server speaks **plain HTTP only** — there is no TLS configuration on the gateway by design. **Terminate TLS at a reverse proxy or load balancer in front of the gateway** (nginx, Caddy, Envoy, an AWS ALB/NLB, a Kubernetes ingress controller, etc.).
+
+This is the standard deployment shape for a webhook receiver: the proxy owns certificates, renewals, and TLS policy, and forwards plain HTTP to the gateway on the internal network. It keeps certificate management out of the application and lets you reuse the same TLS infrastructure you already run for other services.
+
+```
+Internet ──TLS──▶ proxy / load balancer ──HTTP──▶ rule-router gateway (:8080)
+```
+
+A minimal nginx example:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name webhooks.example.com;
+
+    ssl_certificate     /etc/ssl/certs/webhooks.pem;
+    ssl_certificate_key /etc/ssl/private/webhooks.key;
+
+    location / {
+        proxy_pass http://rule-router:8080;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Notes:
+- The same applies to the metrics endpoint (`:2112`) and the health endpoints — all plain HTTP. Keep them on an internal interface or behind the same proxy/network policy.
+- The **outbound** HTTP client (NATS→HTTP actions) does support TLS settings — see [`http.client.tls`](./11-configuration.md#httpclient--outbound-http-client-gateway--scheduler). That is unrelated to inbound TLS termination.
+
 ## Path matching
 
 Inbound requests flow through a single catch-all handler that delegates path matching to the rule engine. This applies uniformly to file-loaded and KV-loaded rules: a new rule path becomes live on the next KV update (or process restart for file-loaded rules) with no `ServeMux` re-registration.

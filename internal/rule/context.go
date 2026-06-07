@@ -12,6 +12,7 @@ import (
 	json "github.com/goccy/go-json"
 
 	"rule-router/internal/logger"
+	"rule-router/internal/metrics"
 )
 
 // System field prefixes for @ variables
@@ -83,6 +84,10 @@ type EvaluationContext struct {
 	sigValid        bool
 	signerPublicKey string
 	logger          *logger.Logger
+
+	// Metrics sink for signature-verification instrumentation. Optional:
+	// nil in tests/CLI (no-op). Set by the Processor at evaluation time.
+	Metrics *metrics.Metrics
 }
 
 // NewEvaluationContext creates a new evaluation context
@@ -178,6 +183,7 @@ func (c *EvaluationContext) WithElement(element map[string]interface{}) *Evaluat
 		sigValid:        c.sigValid,
 		signerPublicKey: c.signerPublicKey,
 		logger:          c.logger,
+		Metrics:         c.Metrics,
 	}
 }
 

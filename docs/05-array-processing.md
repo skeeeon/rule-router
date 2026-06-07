@@ -375,7 +375,7 @@ KV-sourced forEach also works with NATS and HTTP triggers. This is useful when t
 forEach:
   maxIterations: 100  # Maximum array elements to process per forEach action.
                       # Set to 0 for unlimited (use with caution).
-                      # Hard ceiling enforced at config load: 100000.
+                      # Hard ceiling enforced at config load: 10000.
 ```
 
 When an array exceeds the limit, processing stops at the limit and the remaining elements are silently dropped. The `foreach_iterations_total` metric reflects what was actually processed; pair it with the input size in your application logs if you need to detect truncation.
