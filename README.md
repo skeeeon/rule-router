@@ -24,6 +24,8 @@ The platform is designed for performance, security, and flexibility in event-dri
 *   **Bidirectional HTTP Gateway**:
     *   **Inbound**: "Fire-and-forget" webhook ingestion returns `200 OK` immediately for maximum compatibility.
     *   **Outbound**: "ACK-on-Success" API calls with configurable retries and exponential backoff ensure reliable delivery.
+    *   **Synchronous responses**: An HTTP rule can return an evaluated/enriched payload as the response (`respond` action), or bridge the request through NATS request/reply (`request: true`) and return the reply.
+*   **NATS Request/Reply**: Answer requests on a subject via `msg.Respond` (`reply: true` trigger + `respond` action), with optional queue-group load balancing — exposing rule-driven services over core NATS.
 *   **NATS JetStream Native**: Built on JetStream pull consumers for durable, scalable, and resilient message processing.
 *   **Powerful Rule Engine**:
     *   **Dynamic Conditions**: Evaluate message payloads, headers, NATS subjects, and HTTP paths.
@@ -50,7 +52,7 @@ The platform uses a simple `Trigger -> Conditions -> Action` model defined in YA
 Detailed documentation on the rule engine's features can be found in the `docs/` directory:
 
 *   **[01 - Core Concepts](./docs/01-core-concepts.md)**: Triggers, Conditions, Actions, and Environment Variables.
-*   **[02 - Gateway](./docs/02-gateway.md)**: Inbound (HTTP→NATS) and outbound (NATS→HTTP) flows, fire-and-forget vs ACK-on-success semantics, and `publishResponse`.
+*   **[02 - Gateway](./docs/02-gateway.md)**: Inbound (HTTP→NATS) and outbound (NATS→HTTP) flows, fire-and-forget vs ACK-on-success semantics, `publishResponse`, synchronous responses, and the HTTP↔NATS request/reply bridge.
 *   **[03 - Scheduler](./docs/03-scheduler.md)**: Cron triggers, scheduler-specific context, polling-to-eventing, and KV-driven fan-out.
 *   **[04 - System Variables & Functions](./docs/04-system-variables.md)**: Full reference for all `@` variables and functions.
 *   **[05 - Array Processing](./docs/05-array-processing.md)**: Guide to using `forEach` and array operators (`any`, `all`, `none`).

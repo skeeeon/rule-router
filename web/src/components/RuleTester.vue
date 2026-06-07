@@ -294,6 +294,10 @@ async function runTest() {
                 <span class="tester-field-label">URL</span>
                 <code>{{ action.method }} {{ action.url }}</code>
               </div>
+              <div v-if="action.type === 'respond'" class="tester-action-field">
+                <span class="tester-field-label">Status Code</span>
+                <code>{{ action.statusCode }}</code>
+              </div>
               <div class="tester-action-field">
                 <span class="tester-field-label">Payload</span>
                 <pre class="tester-payload">{{ action.passthrough ? '(passthrough)' : formatPayload(action.payload) }}</pre>

@@ -380,6 +380,22 @@ func (p *Processor) HasHTTPPath(path string) bool {
 	return false
 }
 
+// HasSyncHTTPPath returns true if any rule matching the path+method produces a
+// synchronous HTTP response — i.e. it has a respond action or a NATS action with
+// request:true (the HTTP↔NATS bridge). The inbound gateway uses this to route a
+// request to the inline/synchronous handler instead of the fire-and-forget queue.
+func (p *Processor) HasSyncHTTPPath(path, method string) bool {
+	for _, r := range p.findHTTPRules(path, method) {
+		if r.Action.Respond != nil {
+			return true
+		}
+		if r.Action.NATS != nil && r.Action.NATS.Request {
+			return true
+		}
+	}
+	return false
+}
+
 // loadKVRuleSet returns the current KV-loaded rule set, or nil if no KV rules
 // have been loaded yet. Lock-free; safe to call from any goroutine.
 func (p *Processor) loadKVRuleSet() *KVRuleSet {
@@ -785,11 +801,47 @@ func (p *Processor) processAction(action *Action, context *EvaluationContext) ([
 			return nil, err
 		}
 		results = append(results, httpActions...)
+	} else if action.Respond != nil {
+		respondActions, err := p.processRespondAction(action.Respond, context)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, respondActions...)
 	} else {
-		return nil, fmt.Errorf("action has no NATS or HTTP configuration")
+		return nil, fmt.Errorf("action has no NATS, HTTP, or respond configuration")
 	}
 
 	return results, nil
+}
+
+// processRespondAction templates a respond action's payload and headers. The
+// evaluated result is sent back to the caller (HTTP response or NATS reply) by
+// the gateway/responder rather than published onward. Reuses resolvePayload and
+// templateHeaders so passthrough/merge/template semantics match NATS/HTTP actions.
+func (p *Processor) processRespondAction(action *RespondAction, context *EvaluationContext) ([]*Action, error) {
+	result := &RespondAction{
+		StatusCode:  action.StatusCode,
+		Passthrough: action.Passthrough,
+		Merge:       action.Merge,
+	}
+
+	pl, err := p.resolvePayload(action.Passthrough, action.Merge, action.Payload, context)
+	if err != nil {
+		return nil, err
+	}
+	if pl.Passthrough {
+		result.RawPayload = pl.Raw
+		result.Passthrough = true
+	} else {
+		result.Payload = pl.Text
+	}
+
+	result.Headers, err = p.templateHeaders(action.Headers, context)
+	if err != nil {
+		return nil, fmt.Errorf("failed to template headers: %w", err)
+	}
+
+	return []*Action{{Respond: result}}, nil
 }
 
 // resolvePayload resolves an action's payload config into concrete bytes or text.
@@ -824,6 +876,8 @@ func (p *Processor) processNATSAction(action *NATSAction, context *EvaluationCon
 	result := &NATSAction{
 		Passthrough: action.Passthrough,
 		Merge:       action.Merge,
+		Request:     action.Request,
+		Timeout:     action.Timeout,
 	}
 
 	subject, err := p.templater.Execute(action.Subject, context)
@@ -886,6 +940,7 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 			Subject: subject, Passthrough: pl.Passthrough,
 			Merge: action.Merge, Payload: pl.Text,
 			RawPayload: pl.Raw, Headers: headers,
+			Request: action.Request, Timeout: action.Timeout,
 		}}, nil
 	})
 }

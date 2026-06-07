@@ -40,3 +40,7 @@ web/public/wasm_exec.js
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Local agent state / scratch
+.claude/
+newBenchmark

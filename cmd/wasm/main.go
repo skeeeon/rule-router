@@ -41,6 +41,7 @@ type actionResult struct {
 	Subject     string            `json:"subject,omitempty"`
 	URL         string            `json:"url,omitempty"`
 	Method      string            `json:"method,omitempty"`
+	StatusCode  int               `json:"statusCode,omitempty"`
 	Payload     string            `json:"payload"`
 	Headers     map[string]string `json:"headers,omitempty"`
 	Passthrough bool              `json:"passthrough"`
@@ -167,6 +168,22 @@ func evaluateRule(_ js.Value, args []js.Value) interface{} {
 				Payload:     payload,
 				Headers:     a.HTTP.Headers,
 				Passthrough: a.HTTP.Passthrough,
+			})
+		} else if a.Respond != nil {
+			payload := a.Respond.Payload
+			if a.Respond.Passthrough && len(a.Respond.RawPayload) > 0 {
+				payload = string(a.Respond.RawPayload)
+			}
+			status := a.Respond.StatusCode
+			if status == 0 {
+				status = 200
+			}
+			result.Actions = append(result.Actions, actionResult{
+				Type:        "respond",
+				StatusCode:  status,
+				Payload:     payload,
+				Headers:     a.Respond.Headers,
+				Passthrough: a.Respond.Passthrough,
 			})
 		}
 	}

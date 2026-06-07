@@ -704,6 +704,11 @@ func (sr *StreamResolver) ValidateRulesHaveStreams(rules []rule.Rule) []error {
 
 	for _, r := range rules {
 		if r.Trigger.NATS != nil {
+			// reply:true subjects are served by the core-NATS responder, not
+			// JetStream, so they intentionally have no stream.
+			if r.Trigger.NATS.Reply {
+				continue
+			}
 			if _, err := sr.FindStreamForSubject(r.Trigger.NATS.Subject); err != nil {
 				errs = append(errs, fmt.Errorf(
 					"no stream found for trigger subject %q — create a stream with a matching subject filter before pushing this rule",

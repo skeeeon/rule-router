@@ -31,7 +31,7 @@ type MockSignatureConfig struct {
 }
 
 // ExpectedOutput defines the structure for output validation files.
-// It contains fields for both NATS and HTTP actions.
+// It contains fields for NATS, HTTP, and respond actions.
 type ExpectedOutput struct {
 	// For NATS actions
 	Subject string `json:"subject,omitempty"`
@@ -40,7 +40,10 @@ type ExpectedOutput struct {
 	URL    string `json:"url,omitempty"`
 	Method string `json:"method,omitempty"`
 
-	// Common fields for both action types
+	// For respond actions (HTTP status code; 0 means unchecked)
+	StatusCode int `json:"statusCode,omitempty"`
+
+	// Common fields across action types
 	Payload json.RawMessage   `json:"payload"`
 	Headers map[string]string `json:"headers,omitempty"`
 }

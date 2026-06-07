@@ -27,6 +27,12 @@ function pushTrigger(lines, trigger, indent) {
   if (trigger.type === 'nats') {
     lines.push(`${pad}nats:`)
     lines.push(`${pad}  subject: ${yamlString(trigger.nats.subject)}`)
+    if (trigger.nats.reply) {
+      lines.push(`${pad}  reply: true`)
+    }
+    if (trigger.nats.queue) {
+      lines.push(`${pad}  queue: ${yamlString(trigger.nats.queue)}`)
+    }
     if (trigger.nats.debounce) {
       pushDebounce(lines, trigger.nats.debounce, indent + 2)
     }
@@ -112,6 +118,12 @@ function pushAction(lines, action, indent) {
       pushConditions(lines, a.filter, indent + 4)
     }
     lines.push(`${pad}  subject: ${yamlString(a.subject)}`)
+    if (a.request) {
+      lines.push(`${pad}  request: true`)
+    }
+    if (a.timeout) {
+      lines.push(`${pad}  timeout: ${yamlString(a.timeout)}`)
+    }
     pushPayloadFields(lines, a, indent + 2)
     pushHeaders(lines, a.headers, indent + 2)
     if (a.debounce) {
@@ -148,6 +160,14 @@ function pushAction(lines, action, indent) {
     if (a.debounce) {
       pushDebounce(lines, a.debounce, indent + 2)
     }
+  } else if (action.type === 'respond') {
+    const a = action.respond
+    lines.push(`${pad}respond:`)
+    if (a.statusCode && a.statusCode !== 200) {
+      lines.push(`${pad}  statusCode: ${a.statusCode}`)
+    }
+    pushPayloadFields(lines, a, indent + 2)
+    pushHeaders(lines, a.headers, indent + 2)
   }
 }
 

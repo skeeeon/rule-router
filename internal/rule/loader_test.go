@@ -225,7 +225,7 @@ func TestLoadFromDirectory_ValidationErrors(t *testing.T) {
 		{
 			name:        "no action specified",
 			ruleContent: `- trigger: { nats: { subject: a } }`,
-			errMsg:      "rule must have either a NATS or HTTP action",
+			errMsg:      "rule must have a NATS, HTTP, or respond action",
 		},
 		{
 			name: "empty nats action subject",

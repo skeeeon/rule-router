@@ -98,7 +98,12 @@ func (rb *RuleBuilder) getTrigger() (*rule.Trigger, error) {
 	switch choice {
 	case 0: // NATS
 		subject, _ := rb.prompter.Ask("Enter NATS Trigger Subject (e.g., 'sensors.temp.>'):")
-		trigger.NATS = &rule.NATSTrigger{Subject: subject}
+		nt := &rule.NATSTrigger{Subject: subject}
+		if reply, _ := rb.prompter.Confirm("Make this a request/reply service (answer requests via a respond action)?"); reply {
+			nt.Reply = true
+			nt.Queue, _ = rb.prompter.AskWithDefault("Enter queue group for load-balanced responders (press Enter for none):", "")
+		}
+		trigger.NATS = nt
 	case 1: // HTTP
 		path, _ := rb.prompter.Ask("Enter HTTP Trigger Path (e.g., '/webhooks/github'):")
 		method, _ := rb.prompter.AskWithDefault("Enter HTTP Method (e.g., 'POST', press Enter for all):", "")
@@ -319,26 +324,50 @@ func (rb *RuleBuilder) getConditionValue(indent, field string) (string, string, 
 
 func (rb *RuleBuilder) getAction() (*rule.Action, error) {
 	fmt.Printf("\n%s3. Action (What should the rule do?)%s\n", ColorBlue, ColorReset)
-	choice, err := rb.prompter.Select("Select Action Type:", []string{"NATS (Publish Message)", "HTTP (Send Webhook)"})
+	choice, err := rb.prompter.Select("Select Action Type:", []string{"NATS (Publish Message)", "HTTP (Send Webhook)", "Respond (HTTP response / NATS reply)"})
 	if err != nil {
 		return nil, err
 	}
 
 	var action rule.Action
-	if choice == 0 { // NATS
+	switch choice {
+	case 0: // NATS
 		natsAction, err := rb.getNATSAction()
 		if err != nil {
 			return nil, err
 		}
 		action.NATS = natsAction
-	} else { // HTTP
+	case 1: // HTTP
 		httpAction, err := rb.getHTTPAction()
 		if err != nil {
 			return nil, err
 		}
 		action.HTTP = httpAction
+	case 2: // Respond
+		respondAction, err := rb.getRespondAction()
+		if err != nil {
+			return nil, err
+		}
+		action.Respond = respondAction
 	}
 	return &action, nil
+}
+
+// getRespondAction builds a respond action that returns the evaluated payload to
+// the caller. On an HTTP trigger it becomes the HTTP response; on a NATS trigger
+// with reply:true it is sent via msg.Respond.
+func (rb *RuleBuilder) getRespondAction() (*rule.RespondAction, error) {
+	statusStr, _ := rb.prompter.AskWithDefault("Enter HTTP status code (ignored for NATS replies):", "200")
+	status, err := strconv.Atoi(strings.TrimSpace(statusStr))
+	if err != nil {
+		return nil, fmt.Errorf("invalid status code: %s", statusStr)
+	}
+	payload := `{
+  "message": "Rule matched and processed.",
+  "id": "{@uuid7()}",
+  "processed_at": "{@timestamp()}"
+}`
+	return &rule.RespondAction{StatusCode: status, Payload: payload}, nil
 }
 
 func (rb *RuleBuilder) getNATSAction() (*rule.NATSAction, error) {
@@ -350,7 +379,12 @@ func (rb *RuleBuilder) getNATSAction() (*rule.NATSAction, error) {
   "device_id": "{device_id}",
   "processed_at": "{@timestamp()}"
 }`
-		return &rule.NATSAction{Subject: subject, Payload: payload}, nil
+		action := &rule.NATSAction{Subject: subject, Payload: payload}
+		if req, _ := rb.prompter.Confirm("Make this a request and return the reply as the HTTP response (HTTP trigger / bridge only)?"); req {
+			action.Request = true
+			action.Timeout, _ = rb.prompter.AskWithDefault("Enter request timeout (e.g., '3s', press Enter for default 5s):", "")
+		}
+		return action, nil
 	}
 
 	// ForEach

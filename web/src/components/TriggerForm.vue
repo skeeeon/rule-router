@@ -44,6 +44,24 @@ function toggleDebounce(target) {
         <span class="field-hint">Supports * and > wildcards</span>
       </div>
       <label class="checkbox">
+        <input type="checkbox" v-model="trigger.nats.reply">
+        Request/Reply service
+      </label>
+      <span class="field-hint">Subscribe via core NATS and answer requests with a respond action (msg.Respond)</span>
+      <div v-if="trigger.nats.reply" class="field">
+        <label>Queue <span class="optional">(optional)</span></label>
+        <input
+          v-model="trigger.nats.queue"
+          placeholder="geocoders"
+          :class="{ error: errorFor('trigger.nats.queue') }"
+          autocapitalize="off"
+          autocorrect="off"
+          autocomplete="off"
+          spellcheck="false"
+        >
+        <span class="field-hint">Load-balance requests across responder instances</span>
+      </div>
+      <label class="checkbox">
         <input type="checkbox" :checked="!!trigger.nats.debounce" @change="toggleDebounce(trigger.nats)">
         Debounce
       </label>

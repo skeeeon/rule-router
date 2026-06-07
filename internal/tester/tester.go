@@ -987,6 +987,21 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 				if len(action.HTTP.Headers) > 0 {
 					fmt.Printf("Headers: %v\n", action.HTTP.Headers)
 				}
+			} else if action.Respond != nil {
+				fmt.Printf("Type: Respond\n")
+				status := action.Respond.StatusCode
+				if status == 0 {
+					status = 200
+				}
+				fmt.Printf("Status Code: %d\n", status)
+				if action.Respond.Passthrough {
+					fmt.Printf("Payload: %s (passthrough)\n", string(action.Respond.RawPayload))
+				} else {
+					fmt.Printf("Payload: %s\n", action.Respond.Payload)
+				}
+				if len(action.Respond.Headers) > 0 {
+					fmt.Printf("Headers: %v\n", action.Respond.Headers)
+				}
 			}
 			fmt.Println("-----------------------")
 		}
@@ -1191,8 +1206,10 @@ func validateSingleOutput(action *rule.Action, expected *ExpectedOutput) error {
 		return validateNATSOutput(action.NATS, expected)
 	} else if action.HTTP != nil {
 		return validateHTTPOutput(action.HTTP, expected)
+	} else if action.Respond != nil {
+		return validateRespondOutput(action.Respond, expected)
 	}
-	return fmt.Errorf("action has no NATS or HTTP configuration")
+	return fmt.Errorf("action has no NATS, HTTP, or respond configuration")
 }
 
 func validateNATSOutput(action *rule.NATSAction, expected *ExpectedOutput) error {
@@ -1218,6 +1235,29 @@ func validateHTTPOutput(action *rule.HTTPAction, expected *ExpectedOutput) error
 	}
 	if expected.Method != "" && action.Method != expected.Method {
 		return fmt.Errorf("method mismatch: got '%s', want '%s'", action.Method, expected.Method)
+	}
+	if expected.Payload != nil {
+		if err := validatePayload(action.Payload, action.Passthrough, action.RawPayload, expected.Payload); err != nil {
+			return err
+		}
+	}
+	if len(expected.Headers) > 0 {
+		if err := validateHeaders(action.Headers, expected.Headers); err != nil {
+			return fmt.Errorf("headers mismatch: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateRespondOutput(action *rule.RespondAction, expected *ExpectedOutput) error {
+	if expected.StatusCode != 0 {
+		got := action.StatusCode
+		if got == 0 {
+			got = 200
+		}
+		if got != expected.StatusCode {
+			return fmt.Errorf("statusCode mismatch: got %d, want %d", got, expected.StatusCode)
+		}
 	}
 	if expected.Payload != nil {
 		if err := validatePayload(action.Payload, action.Passthrough, action.RawPayload, expected.Payload); err != nil {

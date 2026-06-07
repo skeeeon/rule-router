@@ -1,7 +1,7 @@
 // Parse YAML rule files back into form state objects.
 
 import YAML from 'yaml'
-import { createRule, createNATSAction, createHTTPAction, uid } from './state.js'
+import { createRule, createNATSAction, createHTTPAction, createRespondAction, uid } from './state.js'
 
 // Parse a YAML string into an array of form-state rule objects.
 // Each rule gets the given filename assigned.
@@ -18,6 +18,8 @@ function rawToRule(raw, file) {
   if (raw.trigger?.nats) {
     rule.trigger.type = 'nats'
     rule.trigger.nats.subject = raw.trigger.nats.subject || ''
+    rule.trigger.nats.reply = raw.trigger.nats.reply || false
+    rule.trigger.nats.queue = raw.trigger.nats.queue || ''
     if (raw.trigger.nats.debounce) {
       rule.trigger.nats.debounce = {
         window: raw.trigger.nats.debounce.window || '',
@@ -52,6 +54,9 @@ function rawToRule(raw, file) {
   } else if (raw.action?.http) {
     rule.action.type = 'http'
     rule.action.http = rawToHTTPAction(raw.action.http)
+  } else if (raw.action?.respond) {
+    rule.action.type = 'respond'
+    rule.action.respond = rawToRespondAction(raw.action.respond)
   }
 
   return rule
@@ -87,6 +92,8 @@ function rawToNATSAction(raw) {
   action.passthrough = raw.passthrough || false
   action.merge = raw.merge || false
   action.headers = raw.headers || {}
+  action.request = raw.request || false
+  action.timeout = raw.timeout || ''
   action.forEach = raw.forEach || ''
   if (raw.filter) {
     action.filter = rawToConditions(raw.filter)
@@ -94,6 +101,16 @@ function rawToNATSAction(raw) {
   if (raw.debounce) {
     action.debounce = { window: raw.debounce.window || '', key: raw.debounce.key || '' }
   }
+  return action
+}
+
+function rawToRespondAction(raw) {
+  const action = createRespondAction()
+  action.statusCode = raw.statusCode || 200
+  action.payload = raw.payload || ''
+  action.passthrough = raw.passthrough || false
+  action.merge = raw.merge || false
+  action.headers = raw.headers || {}
   return action
 }
 

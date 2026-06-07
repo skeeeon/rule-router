@@ -183,6 +183,8 @@ onUnmounted(() => { document.removeEventListener('keydown', onEscape) })
             <tr><td class="mono">sensors.temperature</td><td>Exact subject match</td></tr>
             <tr><td class="mono">sensors.*.room1</td><td>Single-level wildcard</td></tr>
             <tr><td class="mono">sensors.></td><td>Multi-level wildcard (must be last)</td></tr>
+            <tr><td class="mono">reply: true</td><td>Request/reply service — subscribe via core NATS and answer via a respond action</td></tr>
+            <tr><td class="mono">queue</td><td>Optional queue group to load-balance requests across responders</td></tr>
           </tbody></table>
 
           <h3>HTTP Trigger</h3>
@@ -203,6 +205,14 @@ onUnmounted(() => { document.removeEventListener('keydown', onEscape) })
             <tr><td class="mono">0 0 * * 0</td><td>Midnight every Sunday</td></tr>
           </tbody></table>
           <p class="help-text">Optional <code>timezone</code> field accepts IANA names (e.g., America/New_York).</p>
+
+          <h3>Request / Reply &amp; Responses</h3>
+          <p class="help-text">Beyond fire-and-forget routing, a rule can answer the caller:</p>
+          <table class="help-table"><tbody>
+            <tr><td class="mono">respond (HTTP trigger)</td><td>Write the evaluated payload back as the HTTP response (statusCode optional, defaults 200)</td></tr>
+            <tr><td class="mono">respond (NATS reply:true)</td><td>Send the evaluated payload back via msg.Respond</td></tr>
+            <tr><td class="mono">nats + request (HTTP trigger)</td><td>HTTP↔NATS bridge: send a NATS request and return the reply as the HTTP response (timeout defaults 5s; no responder → 503, timeout → 504)</td></tr>
+          </tbody></table>
 
           <h3>Testing Rules</h3>
           <p class="help-text">Download your rules and use the <code>rule-cli</code> for local testing:</p>

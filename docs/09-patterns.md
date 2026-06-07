@@ -375,6 +375,64 @@ The scheduler polls an API, the response is republished to NATS, a router rule r
 
 ---
 
+### 14. Request/reply service behind an HTTP endpoint
+
+A NATS responder answers requests from a KV cache; the gateway exposes it over HTTP. The responder can scale horizontally via a queue group while the HTTP endpoint stays a single stable URL. See [02 Gateway — Request/reply](./02-gateway.md#requestreply-synchronous-responses-and-the-httpnats-bridge).
+
+```yaml
+# Router (features.router): answer geocode requests over core NATS
+- trigger:
+    nats:
+      subject: "services.geocode"
+      reply: true
+      queue: "geocoders"        # load-balance across instances
+  conditions:
+    operator: and
+    items:
+      - field: "{country}"
+        operator: eq
+        value: "US"
+  action:
+    respond:
+      headers:
+        Content-Type: "application/json"
+      payload: |
+        {
+          "address": "{address}",
+          "lat": {@kv.geocache.{address}:lat},
+          "lng": {@kv.geocache.{address}:lng}
+        }
+
+# Gateway (features.gateway): bridge HTTP → the NATS service → HTTP response
+- trigger:
+    http:
+      path: "/api/geocode"
+      method: "POST"
+  action:
+    nats:
+      subject: "services.geocode"
+      request: true
+      timeout: "3s"
+```
+
+A request to `POST /api/geocode` is turned into a `nc.Request` on `services.geocode`, answered by whichever responder instance is free, and the reply is returned as the HTTP response. No responder → `503`; slow responder past `timeout` → `504`.
+
+**Simpler variant — skip the bridge:** if the logic is purely local (enrichment, lookup, computed acknowledgment), an HTTP-triggered rule with a `respond` action returns the evaluated payload directly, with no NATS round trip:
+
+```yaml
+- trigger:
+    http:
+      path: "/api/quote"
+      method: "POST"
+  action:
+    respond:
+      payload: '{"symbol": "{symbol}", "price": {@kv.prices.{symbol}:last}}'
+```
+
+**When to reach for it:** Expose internal NATS services as HTTP APIs without standing up a separate HTTP service per responder (the bridge), or turn a rule into a programmable HTTP endpoint (the `respond` variant).
+
+---
+
 ## Composing patterns
 
 Most real systems combine several of these. A typical event-driven setup might use:

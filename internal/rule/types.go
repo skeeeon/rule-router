@@ -36,6 +36,13 @@ type Trigger struct {
 type NATSTrigger struct {
 	Subject  string          `json:"subject" yaml:"subject"`
 	Debounce *DebounceConfig `json:"debounce,omitempty" yaml:"debounce,omitempty"`
+
+	// Reply turns this subject into a request/reply service: the router subscribes
+	// via core NATS (not JetStream) and answers each request via msg.Respond using
+	// the rule's `respond` action. Queue, when set, joins a queue group so multiple
+	// responder instances load-balance requests.
+	Reply bool   `json:"reply,omitempty" yaml:"reply,omitempty"`
+	Queue string `json:"queue,omitempty" yaml:"queue,omitempty"`
 }
 
 // ScheduleTrigger represents a cron-based schedule trigger
@@ -51,10 +58,25 @@ type HTTPTrigger struct {
 	Debounce *DebounceConfig `json:"debounce,omitempty" yaml:"debounce,omitempty"`
 }
 
-// Action defines what happens when rule matches (NATS or HTTP)
+// Action defines what happens when rule matches (NATS, HTTP, or Respond)
 type Action struct {
-	NATS *NATSAction `json:"nats,omitempty" yaml:"nats,omitempty"`
-	HTTP *HTTPAction `json:"http,omitempty" yaml:"http,omitempty"`
+	NATS    *NATSAction    `json:"nats,omitempty" yaml:"nats,omitempty"`
+	HTTP    *HTTPAction    `json:"http,omitempty" yaml:"http,omitempty"`
+	Respond *RespondAction `json:"respond,omitempty" yaml:"respond,omitempty"`
+}
+
+// RespondAction sends the evaluated payload back to the caller instead of
+// publishing onward. On an HTTP-triggered rule it is written as the HTTP
+// response; on a NATS trigger with `reply: true` it is sent via msg.Respond.
+// It mirrors NATSAction's payload shape so the same templating helpers apply.
+// A respond is a single terminal response, so it has no forEach/debounce.
+type RespondAction struct {
+	StatusCode  int               `json:"statusCode,omitempty" yaml:"statusCode,omitempty"` // HTTP only; defaults to 200; ignored for NATS replies
+	Payload     string            `json:"payload,omitempty" yaml:"payload,omitempty"`
+	Passthrough bool              `json:"passthrough,omitempty" yaml:"passthrough,omitempty"`
+	Merge       bool              `json:"merge,omitempty" yaml:"merge,omitempty"`
+	Headers     map[string]string `json:"headers,omitempty" yaml:"headers,omitempty"`
+	RawPayload  []byte            `json:"-" yaml:"-"` // Populated during processing
 }
 
 // NATSAction represents publishing to a NATS subject
@@ -65,6 +87,12 @@ type NATSAction struct {
 	Merge       bool              `json:"merge,omitempty" yaml:"merge,omitempty"`
 	Headers     map[string]string `json:"headers,omitempty" yaml:"headers,omitempty"`
 	RawPayload  []byte            `json:"-" yaml:"-"` // Populated during processing
+
+	// Request turns the publish into a NATS request/reply call (nc.Request).
+	// Only honored on HTTP-triggered rules (the HTTP↔NATS bridge): the reply is
+	// returned as the HTTP response. Timeout overrides the gateway default.
+	Request bool   `json:"request,omitempty" yaml:"request,omitempty"`
+	Timeout string `json:"timeout,omitempty" yaml:"timeout,omitempty"` // Duration string: "3s", "500ms"; defaults to 5s
 
 	// Array iteration fields for forEach functionality
 	// ForEach must use template syntax: "{arrayField}" or "{nested.array}" or "{@items}"

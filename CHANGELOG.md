@@ -2,10 +2,15 @@
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-06-07
+
 ### Features
-- Added `publishResponse` to HTTP actions: on a 2xx response, the body (capped at 1 MB) is republished to a NATS subject. Works in the scheduler (cron-poll → NATS) and the gateway/router outbound path (NATS event → HTTP call → NATS result). Subject templates resolve against the trigger context only; publish failures log but do not fail the action.
-- Added `schedule-poll` template to `rule-cli` (`rule-cli new --template=schedule-poll`) demonstrating the HTTP-poll-to-NATS pattern.
-- Web rule builder: "Publish Response" toggle and subject input added to the HTTP action form.
+- **NATS request/reply & HTTP responses** — rules can now answer the caller, not just route onward. Built on a new `respond` action plus a `request` flag on NATS actions; the rule evaluation path is unchanged, only where the result goes:
+  - **`respond` action**: returns the evaluated/enriched payload to the caller — written as the HTTP response on an HTTP-triggered rule, or sent via `msg.Respond` on a NATS trigger. Supports an HTTP `statusCode` (default 200), headers, and templated/passthrough/merge payloads.
+  - **NATS responder**: a NATS trigger with `reply: true` (optional `queue` for load-balanced responders) subscribes via **core NATS** (not JetStream) and answers each request with a `respond` action. Runs under the `router` feature — no new feature flag.
+  - **HTTP↔NATS bridge**: an HTTP-triggered rule with `nats.request: true` (optional `timeout`, default 5s) issues `nc.Request` and returns the reply as the HTTP response (no responder → `503`, timeout → `504`).
+  - The gateway serves these synchronously and inline, bypassing the fire-and-forget worker queue; ordinary webhook routes are unaffected.
+  - `rule-cli` gains respond support in `new`/`check` and three templates (`http-respond`, `nats-reply`, `http-bridge`); the web rule builder gains the respond action, `reply`/`queue` trigger fields, and `request`/`timeout` NATS-action fields; the WASM tester renders respond output.
 - Inbound gateway HTTP paths now support NATS-style wildcards: `*` matches one segment, `>` matches one or more trailing segments (e.g. `/webhooks/*/events`, `/api/>`). Works for both file-loaded and KV-loaded rules. When an exact rule and a wildcard rule both match a request, both fire — same semantics as NATS subjects.
 
 ### Improvements
@@ -20,6 +25,14 @@
 - HTTP path / NATS subject wildcards no longer match empty segments: `*` requires a non-empty token, so `/webhooks//events` no longer matches `/webhooks/*/events` (and `a..c` no longer matches `a.*.c`).
 - Dropped the templated outbound URL from the `http_outbound_requests_total` and `http_outbound_duration_seconds` metric labels (keeping `status_code`) to prevent unbounded Prometheus cardinality from per-request URLs.
 - Removed dead message terminal-error classification that matched standard-library JSON error types the rule engine (which uses `goccy/go-json`) never produces. Unparseable payloads continue to be handled leniently by the engine.
+- KV rule watcher no longer spins at 100% CPU when its update channel closes unexpectedly; it now self-heals by re-establishing the watcher with capped exponential backoff and performing a full re-sync.
+
+## [0.12.0] - 2026-05-09
+
+### Features
+- Added `publishResponse` to HTTP actions: on a 2xx response, the body (capped at 1 MB) is republished to a NATS subject. Works in the scheduler (cron-poll → NATS) and the gateway/router outbound path (NATS event → HTTP call → NATS result). Subject templates resolve against the trigger context only; publish failures log but do not fail the action.
+- Added `schedule-poll` template to `rule-cli` (`rule-cli new --template=schedule-poll`) demonstrating the HTTP-poll-to-NATS pattern.
+- Web rule builder: "Publish Response" toggle and subject input added to the HTTP action form.
 
 ## [0.11.0] - 2026-04-15
 

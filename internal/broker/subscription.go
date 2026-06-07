@@ -484,8 +484,16 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 					"url", action.HTTP.URL,
 					"hint", "Enable features.gateway to handle HTTP actions")
 			}
+		} else if action.Respond != nil {
+			// Respond actions only have a transport on the core-NATS responder
+			// (reply:true subjects). A reply rule's subject can also be covered by
+			// a JetStream consumer (a non-reply rule on the same subject, or an
+			// overlapping wildcard), in which case its respond action arrives here
+			// with nothing to reply to. Skip it quietly rather than erroring.
+			sm.logger.Debug("respond action on JetStream-delivered message has no reply target; skipping",
+				"subject", msg.Subject())
 		} else {
-			sm.logger.Error("action has neither NATS nor HTTP configuration - this should never happen",
+			sm.logger.Error("action has no NATS, HTTP, or respond configuration - this should never happen",
 				"subject", msg.Subject())
 		}
 	}

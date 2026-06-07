@@ -1,0 +1,26 @@
+# templates/http-bridge.yaml
+#
+# The HTTP<->NATS bridge: the gateway turns an HTTP request into a NATS request
+# (nc.Request), waits for a responder, and returns the reply as the HTTP
+# response. `request: true` is only honored on HTTP-triggered rules. No
+# responder -> 503; timeout -> 504.
+#
+# Example Use Case: Expose any NATS request/reply service as an HTTP endpoint.
+#
+- trigger:
+    http:
+      path: "/api/geocode"
+      method: "POST"
+  conditions:
+    operator: and
+    items:
+      # Simple API-key gate on a header.
+      - field: "{@header.X-Api-Key}"
+        operator: eq
+        value: "expected-key"
+  action:
+    nats:
+      subject: "services.geocode"
+      request: true
+      # Optional; defaults to 5s.
+      timeout: "3s"

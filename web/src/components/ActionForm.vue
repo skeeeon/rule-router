@@ -81,6 +81,7 @@ function toggleOption(target, key, factory) {
     <div class="radio-group">
       <label><input type="radio" v-model="action.type" value="nats"> NATS</label>
       <label><input type="radio" v-model="action.type" value="http"> HTTP</label>
+      <label><input type="radio" v-model="action.type" value="respond"> Respond</label>
     </div>
 
     <!-- NATS action -->
@@ -178,6 +179,27 @@ function toggleOption(target, key, factory) {
 
       <HeadersEditor v-if="Object.keys(action.nats.headers).length > 0" v-model="action.nats.headers" />
       <DebounceEditor v-if="action.nats.debounce" :debounce="action.nats.debounce" :error-for="errorFor" prefix="action.nats.debounce" />
+
+      <label class="checkbox">
+        <input type="checkbox" v-model="action.nats.request">
+        Request/Reply (HTTP↔NATS bridge)
+      </label>
+      <span class="field-hint">On an HTTP trigger, send a NATS request and return the reply as the HTTP response. Honored on HTTP triggers only.</span>
+      <div v-if="action.nats.request" class="field">
+        <label>Timeout <span class="optional">(optional)</span></label>
+        <input
+          v-model="action.nats.timeout"
+          placeholder="5s"
+          :class="{ error: errorFor('action.nats.timeout') }"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+        >
+        <span class="field-error" v-if="errorFor('action.nats.timeout')">
+          {{ errorFor('action.nats.timeout').message }}
+        </span>
+        <span class="field-hint">Duration string (e.g. 3s, 500ms). Defaults to 5s.</span>
+      </div>
     </div>
 
     <!-- HTTP action -->
@@ -323,6 +345,60 @@ function toggleOption(target, key, factory) {
       </div>
 
       <DebounceEditor v-if="action.http.debounce" :debounce="action.http.debounce" :error-for="errorFor" prefix="action.http.debounce" />
+    </div>
+
+    <!-- Respond action -->
+    <div v-if="action.type === 'respond'" class="fields">
+      <span class="field-hint">
+        Sends the evaluated payload back to the caller: the HTTP response (HTTP trigger)
+        or a NATS reply (NATS trigger with Request/Reply enabled).
+      </span>
+
+      <div class="field">
+        <label>Status Code <span class="optional">(HTTP only)</span></label>
+        <input
+          type="number"
+          v-model.number="action.respond.statusCode"
+          min="100"
+          max="599"
+          :class="{ error: errorFor('action.respond.statusCode') }"
+        >
+        <span class="field-error" v-if="errorFor('action.respond.statusCode')">
+          {{ errorFor('action.respond.statusCode').message }}
+        </span>
+        <span class="field-hint">Ignored for NATS replies. Defaults to 200.</span>
+      </div>
+
+      <div class="field">
+        <label class="checkbox inline">
+          <input type="checkbox" v-model="action.respond.passthrough"> Passthrough
+        </label>
+        <label class="checkbox inline">
+          <input type="checkbox" v-model="action.respond.merge"> Merge
+        </label>
+      </div>
+
+      <div v-if="!action.respond.passthrough" class="field">
+        <label>Payload</label>
+        <JsonTextarea
+          v-model="action.respond.payload"
+          :rows="6"
+          placeholder='{"status": "ok", "id": "{@uuid7()}"}'
+          :error="!!errorFor('action.respond.payload')"
+        />
+        <span class="field-error" v-if="errorFor('action.respond.payload')">
+          {{ errorFor('action.respond.payload').message }}
+        </span>
+      </div>
+
+      <div class="option-toggles">
+        <label class="checkbox">
+          <input type="checkbox" :checked="Object.keys(action.respond.headers).length > 0" @change="action.respond.headers = Object.keys(action.respond.headers).length > 0 ? {} : { '': '' }">
+          Headers
+        </label>
+      </div>
+
+      <HeadersEditor v-if="Object.keys(action.respond.headers).length > 0" v-model="action.respond.headers" />
     </div>
   </div>
 </template>

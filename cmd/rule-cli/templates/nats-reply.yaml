@@ -1,0 +1,32 @@
+# templates/nats-reply.yaml
+#
+# A NATS request/reply service. With `reply: true`, the router subscribes via
+# core NATS (not JetStream) and answers each request via msg.Respond using the
+# `respond` action's payload. `queue` (optional) load-balances requests across
+# multiple responder instances.
+#
+# Example Use Case: A geocoding service answered from a KV cache.
+# Test with:  nats req services.geocode '{"address":"...","country":"US"}'
+#
+- trigger:
+    nats:
+      subject: "services.geocode"
+      reply: true
+      queue: "geocoders"
+  conditions:
+    operator: and
+    items:
+      - field: "{country}"
+        operator: eq
+        value: "US"
+  action:
+    respond:
+      headers:
+        Content-Type: "application/json"
+      payload: |
+        {
+          "address": "{address}",
+          "lat": {@kv.geocache.{address}:lat},
+          "lng": {@kv.geocache.{address}:lng},
+          "resolvedAt": "{@timestamp()}"
+        }

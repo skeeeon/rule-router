@@ -95,6 +95,55 @@
         X-Tenant-ID: "{@path.1}"
 
 # ============================================================================
+# SYNCHRONOUS HTTP RESPONSES (respond action)
+# ============================================================================
+
+# Example 4a: Synchronous response — evaluate, enrich from KV, reply in one call.
+# The `respond` action's payload is written back as the HTTP response body
+# instead of fire-and-forget publishing to NATS.
+- trigger:
+    http:
+      path: "/api/quote"
+      method: "POST"
+  conditions:
+    operator: and
+    items:
+      - field: "{@header.Content-Type}"
+        operator: eq
+        value: "application/json"
+  action:
+    respond:
+      statusCode: 200
+      headers:
+        Content-Type: "application/json"
+      payload: |
+        {
+          "symbol": "{symbol}",
+          "price": {@kv.prices.{symbol}:last},
+          "asOf": "{@timestamp()}",
+          "quoteId": "{@uuid7()}"
+        }
+
+# Example 4b: HTTP↔NATS bridge — turn the request into a NATS request, wait for a
+# responder, and return the reply as the HTTP response. No responder → 503,
+# timeout → 504. `request: true` is only honored on HTTP triggers.
+- trigger:
+    http:
+      path: "/api/geocode"
+      method: "POST"
+  conditions:
+    operator: and
+    items:
+      - field: "{@header.X-Api-Key}"
+        operator: eq
+        value: "expected-key"
+  action:
+    nats:
+      subject: "services.geocode"
+      request: true
+      timeout: "3s"
+
+# ============================================================================
 # OUTBOUND WEBHOOKS (NATS → HTTP)
 # ============================================================================
 

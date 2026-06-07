@@ -50,6 +50,16 @@ trigger:
     subject: "sensors.temperature.>" # Supports wildcards
 ```
 
+Add `reply: true` to turn the subject into a **request/reply service**: the router subscribes via core NATS (not JetStream) and answers each request via a `respond` action. An optional `queue` joins a queue group so multiple instances load-balance requests.
+```yaml
+trigger:
+  nats:
+    subject: "services.geocode"
+    reply: true
+    queue: "geocoders"   # optional; load-balance across responders
+```
+See [Request/Reply & responses](#requestreply--responses) below.
+
 **HTTP Trigger** (gateway feature): Evaluates an incoming HTTP request.
 ```yaml
 trigger:
@@ -249,6 +259,21 @@ action:
       maxDelay: "30s"
 ```
 
+**Respond Action**: Returns the evaluated payload to the *caller* instead of publishing onward. On an HTTP-triggered rule it is written as the HTTP response body; on a NATS trigger with `reply: true` it is sent back via `msg.Respond`. A respond is a single terminal response, so it supports `payload`/`passthrough`/`merge`/`headers` (same as other actions) plus an HTTP-only `statusCode` (defaults to 200) — but no `forEach` or `debounce`.
+```yaml
+action:
+  respond:
+    statusCode: 200            # HTTP only; ignored for NATS replies
+    headers:
+      Content-Type: "application/json"
+    payload: |
+      {
+        "symbol": "{symbol}",
+        "price": {@kv.prices.{symbol}:last},
+        "quoteId": "{@uuid7()}"
+      }
+```
+
 **HTTP Retry Configuration:**
 
 | Field | Type | Default | Description |
@@ -280,6 +305,47 @@ action:
 - **Trigger-context templating**: the subject is templated against the trigger context only (cron + KV + system functions for scheduler, message + subject + KV for router). Response fields are **not** available in the subject — keeping templating consistent across the rule.
 - **Best-effort publish**: a publish failure logs an error but does not fail the action (the HTTP call already succeeded; retrying it is wasteful).
 - **Common pattern**: pair a scheduler poll with `publishResponse` and a router rule that subscribes to that subject — this turns "poll an API for state" into a normal event-driven flow.
+
+### Request/Reply & responses
+
+By default every flow is fire-and-forget: a rule receives an event and publishes/calls onward, never answering the caller. Three opt-in shapes add a **correlated response path**, built from the `respond` action and a `request` flag on the NATS action. The rule evaluation is identical — only where the result goes changes.
+
+| Shape | Trigger | Action | Result |
+|-------|---------|--------|--------|
+| **HTTP synchronous response** | `http` | `respond` | Evaluated payload is returned as the HTTP response (status/headers/body) |
+| **NATS responder** | `nats` + `reply: true` | `respond` | Evaluated payload is sent back via `msg.Respond` |
+| **HTTP↔NATS bridge** | `http` | `nats` + `request: true` | Gateway issues `nc.Request` and returns the reply as the HTTP response |
+
+```yaml
+# NATS responder: answer requests on a service subject
+- trigger:
+    nats:
+      subject: "services.geocode"
+      reply: true
+      queue: "geocoders"
+  action:
+    respond:
+      payload: '{"lat": {@kv.geocache.{address}:lat}}'
+
+# HTTP↔NATS bridge: expose a NATS service as an HTTP endpoint
+- trigger:
+    http:
+      path: "/api/geocode"
+      method: "POST"
+  action:
+    nats:
+      subject: "services.geocode"
+      request: true
+      timeout: "3s"          # optional; defaults to 5s
+```
+
+**Rules and constraints (enforced at load time):**
+- A `respond` action requires an HTTP trigger **or** a NATS trigger with `reply: true`.
+- A NATS trigger with `reply: true` requires a `respond` action (a reply subject with nothing to reply with is rejected).
+- `request: true` on a NATS action is honored **only on HTTP triggers** (the bridge). Using it for mid-pipeline NATS enrichment is not supported.
+- When multiple rules match one request, the **first** matching rule (load order) with a respond/request action produces the single response; other rules' plain publish/HTTP actions still fire as side-effects.
+
+The HTTP specifics (synchronous handling, status codes, `503`/`504` mapping) live in [02 Gateway — Request/reply](./02-gateway.md#requestreply-synchronous-responses-and-the-httpnats-bridge). The NATS responder is a `router`-feature capability — no separate feature flag.
 
 ### Action Payload Modes
 

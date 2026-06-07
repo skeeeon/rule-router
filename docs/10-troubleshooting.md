@@ -83,6 +83,18 @@ Common causes:
 
 The `http_action_attempts_total` metric counts attempts by outcome.
 
+## Synchronous route returns 404 / 503 / 504
+
+Synchronous gateway routes (an HTTP rule with a `respond` action, or a `nats` action with `request: true`) return real status codes instead of fire-and-forget's `200`:
+
+- **`404 Not Found`** — either no rule matches the path/method at all, **or** the path has a synchronous rule but its conditions did not match this request (so no `respond`/`request` action fired). Use `rule-cli check` to confirm the conditions pass for your sample request. Remember: a path is only handled synchronously when the matched rule actually has a `respond` or `request: true` action — otherwise it stays fire-and-forget and returns `200`.
+- **`503 Service Unavailable`** (bridge only) — `nc.Request` found **no responder** on the subject. Confirm a responder is subscribed: for a rule-router responder, the rule needs `reply: true` and runs under `features.router`; check it loaded (`nats req <subject> ''` should answer). Note: `503` is also returned for a full inbound work queue on *non*-synchronous routes — distinguish by whether the route is synchronous.
+- **`504 Gateway Timeout`** (bridge only) — a responder exists but didn't reply within `timeout` (default `5s`). Raise the rule's `timeout`, or speed up the responder.
+
+Two related gotchas:
+- **Reply cut off / connection reset on the bridge:** the HTTP server's `writeTimeout` must exceed the bridge `timeout`. If `writeTimeout` is shorter, the connection is closed before the reply is written. Size `http.server.writeTimeout` above the largest bridge `timeout`.
+- **Reply never arrives on a NATS responder:** a `reply: true` rule must have a `respond` action (enforced at load) and is served over **core NATS**, not JetStream — so it needs no stream, but the requester must use request/reply (`nats req`, `nc.Request`), not a plain publish.
+
 ## forEach drops elements
 
 A `forEach` over an array longer than `forEach.maxIterations` (default 100) processes the first N and silently drops the rest.

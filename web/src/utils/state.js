@@ -10,7 +10,7 @@ export function createRule(file = '') {
     file,  // Filename grouping — rules with same file go into one YAML output
     trigger: {
       type: 'nats',
-      nats: { subject: '', debounce: null },
+      nats: { subject: '', reply: false, queue: '', debounce: null },
       http: { path: '', method: '', debounce: null },
       schedule: { cron: '', timezone: '' },
     },
@@ -19,6 +19,7 @@ export function createRule(file = '') {
       type: 'nats',
       nats: createNATSAction(),
       http: createHTTPAction(),
+      respond: createRespondAction(),
     },
   }
 }
@@ -30,9 +31,21 @@ export function createNATSAction() {
     passthrough: false,
     merge: false,
     headers: {},
+    request: false,
+    timeout: '',
     forEach: '',
     filter: null,
     debounce: null,
+  }
+}
+
+export function createRespondAction() {
+  return {
+    statusCode: 200,
+    payload: '',
+    passthrough: false,
+    merge: false,
+    headers: {},
   }
 }
 

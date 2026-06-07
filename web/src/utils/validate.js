@@ -21,7 +21,23 @@ export function validateRule(rule) {
     validateConditions(rule.conditions, 'conditions', errors)
   }
   validateAction(rule.action, errors)
+  validateTriggerActionCompat(rule.trigger, rule.action, errors)
   return errors
+}
+
+// Mirrors loader.validateTriggerActionCompatibility: the request/reply pairing rules.
+function validateTriggerActionCompat(trigger, action, errors) {
+  const natsReply = trigger.type === 'nats' && trigger.nats.reply
+
+  if (action.type === 'respond' && trigger.type !== 'http' && !natsReply) {
+    errors.push({ path: 'action.respond', message: 'Respond action requires an HTTP trigger or a NATS trigger with Request/Reply enabled' })
+  }
+  if (natsReply && action.type !== 'respond') {
+    errors.push({ path: 'trigger.nats.reply', message: 'A Request/Reply NATS trigger requires a respond action' })
+  }
+  if (action.type === 'nats' && action.nats.request && trigger.type !== 'http') {
+    errors.push({ path: 'action.nats.request', message: 'Request/Reply on a NATS action is only supported on HTTP triggers (the bridge)' })
+  }
 }
 
 function validateTrigger(trigger, errors) {
@@ -76,6 +92,13 @@ function validateAction(action, errors) {
     if (a.debounce) {
       validateDebounce(a.debounce, 'action.nats.debounce', errors)
     }
+    if (a.timeout) {
+      if (!a.request) {
+        errors.push({ path: 'action.nats.timeout', message: 'Timeout is only valid with Request/Reply enabled' })
+      } else if (!isValidDuration(a.timeout)) {
+        errors.push({ path: 'action.nats.timeout', message: 'Invalid duration (e.g., "3s", "500ms")' })
+      }
+    }
   } else if (action.type === 'http') {
     const a = action.http
     if (!a.url) {
@@ -113,6 +136,17 @@ function validateAction(action, errors) {
     }
     if (a.debounce) {
       validateDebounce(a.debounce, 'action.http.debounce', errors)
+    }
+  } else if (action.type === 'respond') {
+    const a = action.respond
+    if (a.passthrough && a.payload) {
+      errors.push({ path: 'action.respond.payload', message: 'Passthrough is enabled — remove payload or disable passthrough' })
+    }
+    if (a.statusCode !== '' && a.statusCode !== null && a.statusCode !== undefined && a.statusCode !== 0) {
+      const code = Number(a.statusCode)
+      if (!Number.isInteger(code) || code < 100 || code > 599) {
+        errors.push({ path: 'action.respond.statusCode', message: 'Status code must be between 100 and 599' })
+      }
     }
   }
 }

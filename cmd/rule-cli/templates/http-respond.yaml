@@ -1,0 +1,34 @@
+# templates/http-respond.yaml
+#
+# A rule for the gateway to answer an HTTP request synchronously with an
+# evaluated/enriched payload, instead of fire-and-forget publishing to NATS.
+# The `respond` action's payload is written back as the HTTP response body.
+#
+# Example Use Case: A quote/lookup endpoint that enriches the request from KV.
+#
+- trigger:
+    http:
+      path: "/api/quote"
+      method: "POST"
+  conditions:
+    operator: and
+    items:
+      # Only respond to JSON requests.
+      - field: "{@header.Content-Type}"
+        operator: eq
+        value: "application/json"
+  action:
+    respond:
+      # HTTP status code for the response. Optional; defaults to 200.
+      statusCode: 200
+      headers:
+        Content-Type: "application/json"
+      # The evaluated payload becomes the HTTP response body. Supports the
+      # same templating as NATS/HTTP actions: fields, KV lookups, functions.
+      payload: |
+        {
+          "symbol": "{symbol}",
+          "price": {@kv.prices.{symbol}:last},
+          "asOf": "{@timestamp()}",
+          "quoteId": "{@uuid7()}"
+        }

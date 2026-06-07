@@ -352,10 +352,39 @@ func (l *RulesLoader) validateRule(rule *Rule, filePath string, ruleIndex int) e
 		return err
 	}
 
+	if err := l.validateTriggerActionCompatibility(&rule.Trigger, &rule.Action); err != nil {
+		return err
+	}
+
 	if rule.Conditions != nil {
 		if err := l.validateConditions(rule.Conditions); err != nil {
 			return fmt.Errorf("invalid conditions: %w", err)
 		}
+	}
+
+	return nil
+}
+
+// validateTriggerActionCompatibility enforces the request/reply pairing rules:
+//   - a respond action requires an HTTP trigger or a NATS trigger with reply:true
+//   - a NATS trigger with reply:true requires a respond action (no reply otherwise)
+//   - a NATS request action is only honored on HTTP triggers (the HTTP↔NATS bridge);
+//     mid-pipeline NATS enrichment is not supported yet
+func (l *RulesLoader) validateTriggerActionCompatibility(trigger *Trigger, action *Action) error {
+	natsReply := trigger.NATS != nil && trigger.NATS.Reply
+
+	if action.Respond != nil {
+		if trigger.HTTP == nil && !natsReply {
+			return fmt.Errorf("respond action requires an HTTP trigger or a NATS trigger with 'reply: true'")
+		}
+	}
+
+	if natsReply && action.Respond == nil {
+		return fmt.Errorf("NATS trigger with 'reply: true' requires a respond action")
+	}
+
+	if action.NATS != nil && action.NATS.Request && trigger.HTTP == nil {
+		return fmt.Errorf("'request: true' on a NATS action is only supported on HTTP triggers (the HTTP↔NATS bridge)")
 	}
 
 	return nil
@@ -443,6 +472,7 @@ func (l *RulesLoader) validateScheduleTrigger(schedule *ScheduleTrigger) error {
 func (l *RulesLoader) validateAction(action *Action, filePath string, ruleIndex int) error {
 	natsCount := 0
 	httpCount := 0
+	respondCount := 0
 
 	if action.NATS != nil {
 		natsCount++
@@ -458,12 +488,50 @@ func (l *RulesLoader) validateAction(action *Action, filePath string, ruleIndex 
 		}
 	}
 
-	if natsCount+httpCount == 0 {
-		return fmt.Errorf("rule must have either a NATS or HTTP action")
+	if action.Respond != nil {
+		respondCount++
+		if err := l.validateRespondAction(action.Respond); err != nil {
+			return fmt.Errorf("invalid respond action: %w", err)
+		}
 	}
 
-	if natsCount+httpCount > 1 {
-		return fmt.Errorf("rule must have exactly one action type (found NATS=%d, HTTP=%d)", natsCount, httpCount)
+	total := natsCount + httpCount + respondCount
+	if total == 0 {
+		return fmt.Errorf("rule must have a NATS, HTTP, or respond action")
+	}
+
+	if total > 1 {
+		return fmt.Errorf("rule must have exactly one action type (found NATS=%d, HTTP=%d, respond=%d)", natsCount, httpCount, respondCount)
+	}
+
+	return nil
+}
+
+// validateRespondAction validates a respond action configuration. A respond
+// writes the evaluated payload back to the caller (HTTP response or NATS reply),
+// so it has no subject/URL/forEach — only payload, headers, and an HTTP status.
+func (l *RulesLoader) validateRespondAction(action *RespondAction) error {
+	if action.Passthrough && action.Payload != "" {
+		return fmt.Errorf("cannot specify both 'payload' and 'passthrough: true' - choose one")
+	}
+
+	if action.StatusCode != 0 && (action.StatusCode < 100 || action.StatusCode > 599) {
+		return fmt.Errorf("respond statusCode must be between 100 and 599, got %d", action.StatusCode)
+	}
+
+	if err := l.validateKVFieldsInTemplate(action.Payload); err != nil {
+		return fmt.Errorf("invalid KV field in payload: %w", err)
+	}
+
+	if action.Headers != nil {
+		for key, value := range action.Headers {
+			if key == "" {
+				return fmt.Errorf("header name cannot be empty")
+			}
+			if err := l.validateKVFieldsInTemplate(value); err != nil {
+				return fmt.Errorf("invalid template in header '%s': %w", key, err)
+			}
+		}
 	}
 
 	return nil
@@ -512,6 +580,15 @@ func (l *RulesLoader) validateNATSAction(action *NATSAction) error {
 
 	if err := l.validateDebounceConfig(action.Debounce, "action.nats.debounce"); err != nil {
 		return err
+	}
+
+	if action.Timeout != "" {
+		if !action.Request {
+			return fmt.Errorf("'timeout' is only valid with 'request: true'")
+		}
+		if _, err := time.ParseDuration(action.Timeout); err != nil {
+			return fmt.Errorf("invalid request timeout '%s': %w", action.Timeout, err)
+		}
 	}
 
 	return nil

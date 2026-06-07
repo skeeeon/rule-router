@@ -1,0 +1,55 @@
+# NATS Request/Reply Example Rules
+# Demonstrates the router answering NATS requests via msg.Respond.
+#
+# With `reply: true`, the router subscribes via CORE NATS (not JetStream) and
+# answers each request synchronously — the correct transport for request/reply.
+# The matched rule's `respond` action payload becomes the reply.
+
+# ============================================================================
+# NATS RESPONDER (request/reply service)
+# ============================================================================
+
+# Example 1: Geocoding service answered from a KV cache, load-balanced via a
+# queue group so multiple router instances share the request load.
+#
+# Test with:
+#   nats req services.geocode '{"address":"1600 Amphitheatre Pkwy","country":"US"}'
+- trigger:
+    nats:
+      subject: "services.geocode"
+      reply: true
+      queue: "geocoders"
+  conditions:
+    operator: and
+    items:
+      - field: "{country}"
+        operator: eq
+        value: "US"
+  action:
+    respond:
+      headers:
+        Content-Type: "application/json"
+      payload: |
+        {
+          "address": "{address}",
+          "lat": {@kv.geocache.{address}:lat},
+          "lng": {@kv.geocache.{address}:lng},
+          "resolvedAt": "{@timestamp()}"
+        }
+
+# Example 2: Health/echo responder (no queue group — every instance answers).
+#
+# Test with:
+#   nats req services.echo '{"ping":"hello"}'
+- trigger:
+    nats:
+      subject: "services.echo"
+      reply: true
+  action:
+    respond:
+      payload: |
+        {
+          "echo": "{ping}",
+          "respondedAt": "{@timestamp()}",
+          "id": "{@uuid7()}"
+        }
