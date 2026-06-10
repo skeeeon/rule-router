@@ -46,7 +46,7 @@ This runs the real rule engine and shows whether each condition passed or failed
 
 If a rule has a `debounce` block, the first message fires immediately but subsequent ones within the window are silently skipped. Check the debounce key — without a `key`, all messages share one window per rule.
 
-The `messages_debounced_total` Prometheus metric counts suppressions.
+The `throttle_suppressed_total` Prometheus metric counts suppressions (labeled by `phase` = `trigger` | `action`).
 
 ## KV lookup returns empty
 

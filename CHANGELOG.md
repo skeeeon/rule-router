@@ -163,6 +163,9 @@
 - Signature verification
 - Rule-cli utility
 
+[0.14.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.14.0
+[0.13.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.13.0
+[0.12.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.12.0
 [0.11.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.11.0
 [0.10.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.10.0
 [0.9.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.9.0
