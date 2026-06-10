@@ -3,12 +3,13 @@
 package rule
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
 	"time"
+
+	json "github.com/goccy/go-json"
 
 	"rule-router/internal/logger"
 	"rule-router/internal/metrics"

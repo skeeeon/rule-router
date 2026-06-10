@@ -76,10 +76,12 @@
           "timestamp": "{@timestamp()}"
         }
 
-# Example 4: Multi-tenant webhook with path tokens
+# Example 4: Multi-tenant webhook with a wildcard path
+# `*` matches exactly one path segment (same semantics as NATS subject
+# wildcards), so one rule serves every tenant; {@path.1} recovers the segment.
 - trigger:
     http:
-      path: "/webhooks/tenant-a/events"
+      path: "/webhooks/*/events"
       method: "POST"
   action:
     nats:
@@ -93,6 +95,21 @@
         }
       headers:
         X-Tenant-ID: "{@path.1}"
+
+# Example 4.5: Multi-level wildcard — `>` matches everything after the prefix.
+# Catch-all audit trail for an API subtree.
+- trigger:
+    http:
+      path: "/internal-api/>"
+  action:
+    nats:
+      subject: "audit.http.{@method}"
+      payload: |
+        {
+          "path": "{@path}",
+          "method": "{@method}",
+          "received_at": "{@timestamp()}"
+        }
 
 # ============================================================================
 # SYNCHRONOUS HTTP RESPONSES (respond action)

@@ -62,6 +62,9 @@ function validateTrigger(trigger, errors) {
     if (trigger.http.debounce) {
       validateDebounce(trigger.http.debounce, 'trigger.http.debounce', errors)
     }
+    if (trigger.http.hmac) {
+      validateHMAC(trigger.http.hmac, 'trigger.http.hmac', errors)
+    }
   } else if (trigger.type === 'schedule') {
     if (!trigger.schedule.cron) {
       errors.push({ path: 'trigger.schedule.cron', message: 'Cron expression is required' })
@@ -199,6 +202,21 @@ function validateConditionItem(item, prefix, errors) {
     if (item.value === '' || item.value === null || item.value === undefined) {
       errors.push({ path: `${prefix}.value`, message: 'Value is required' })
     }
+  }
+}
+
+// Mirrors loader.validateHMACConfig: syntax only. The secret is deliberately
+// NOT required — an unset ${ENV} fails closed at the gateway gate (401)
+// rather than refusing to load the rule.
+function validateHMAC(hmac, prefix, errors) {
+  if (!hmac.header) {
+    errors.push({ path: `${prefix}.header`, message: 'Signature header is required' })
+  }
+  if (hmac.algorithm && !['sha256', 'sha1'].includes(hmac.algorithm)) {
+    errors.push({ path: `${prefix}.algorithm`, message: 'Algorithm must be sha256 or sha1' })
+  }
+  if (hmac.encoding && !['hex', 'base64'].includes(hmac.encoding)) {
+    errors.push({ path: `${prefix}.encoding`, message: 'Encoding must be hex or base64' })
   }
 }
 

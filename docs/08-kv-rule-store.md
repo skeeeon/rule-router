@@ -138,7 +138,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.26'
 
       - name: Build rule-cli
         run: go build -o rule-cli ./cmd/rule-cli

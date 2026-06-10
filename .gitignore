@@ -35,6 +35,7 @@ dist/
 # WASM build artifacts
 web/public/tester.wasm
 web/public/wasm_exec.js
+/wasm
 
 .goreleaser.yaml
 # Editor/IDE

@@ -51,7 +51,7 @@ conditions, templates, and forEach logic.`,
 		}
 
 		if summary.Failed > 0 {
-			return fmt.Errorf("tests failed")
+			return fmt.Errorf("%d of %d tests failed", summary.Failed, summary.Total)
 		}
 		return nil
 	},

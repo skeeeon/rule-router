@@ -172,7 +172,7 @@ http:
     maxHeaderBytes: 1048576
     shutdownGracePeriod: 30s
     inboundWorkerCount: 10
-    inboundQueueSize: 100
+    inboundQueueSize: 1000
 ```
 
 | Field | Type | Default | Bounds | Description |

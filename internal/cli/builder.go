@@ -36,7 +36,10 @@ func (rb *RuleBuilder) BuildRules() ([]byte, error) {
 		}
 		rules = append(rules, *r)
 
-		addMore, _ := rb.prompter.Confirm("Add another rule to this file?")
+		addMore, err := rb.prompter.Confirm("Add another rule to this file?")
+		if err != nil {
+			return nil, err
+		}
 		if !addMore {
 			break
 		}
@@ -97,16 +100,31 @@ func (rb *RuleBuilder) getTrigger() (*rule.Trigger, error) {
 	var trigger rule.Trigger
 	switch choice {
 	case 0: // NATS
-		subject, _ := rb.prompter.Ask("Enter NATS Trigger Subject (e.g., 'sensors.temp.>'):")
+		subject, err := rb.prompter.Ask("Enter NATS Trigger Subject (e.g., 'sensors.temp.>'):")
+		if err != nil {
+			return nil, err
+		}
 		nt := &rule.NATSTrigger{Subject: subject}
-		if reply, _ := rb.prompter.Confirm("Make this a request/reply service (answer requests via a respond action)?"); reply {
+		reply, err := rb.prompter.Confirm("Make this a request/reply service (answer requests via a respond action)?")
+		if err != nil {
+			return nil, err
+		}
+		if reply {
 			nt.Reply = true
-			nt.Queue, _ = rb.prompter.AskWithDefault("Enter queue group for load-balanced responders (press Enter for none):", "")
+			if nt.Queue, err = rb.prompter.AskWithDefault("Enter queue group for load-balanced responders (press Enter for none):", ""); err != nil {
+				return nil, err
+			}
 		}
 		trigger.NATS = nt
 	case 1: // HTTP
-		path, _ := rb.prompter.Ask("Enter HTTP Trigger Path (e.g., '/webhooks/github'):")
-		method, _ := rb.prompter.AskWithDefault("Enter HTTP Method (e.g., 'POST', press Enter for all):", "")
+		path, err := rb.prompter.Ask("Enter HTTP Trigger Path (e.g., '/webhooks/github'):")
+		if err != nil {
+			return nil, err
+		}
+		method, err := rb.prompter.AskWithDefault("Enter HTTP Method (e.g., 'POST', press Enter for all):", "")
+		if err != nil {
+			return nil, err
+		}
 		ht := &rule.HTTPTrigger{Path: path, Method: strings.ToUpper(method)}
 		if hmac, err := rb.getHMAC(); err != nil {
 			return nil, err
@@ -119,8 +137,14 @@ func (rb *RuleBuilder) getTrigger() (*rule.Trigger, error) {
 		fmt.Println("    */5 * * * *    → Every 5 minutes")
 		fmt.Println("    0 8 * * 1-5    → Weekdays at 8:00 AM")
 		fmt.Println("    0 0 1 * *      → First day of each month at midnight")
-		cron, _ := rb.prompter.Ask("Enter cron expression (5 fields: min hour dom month dow):")
-		tz, _ := rb.prompter.AskWithDefault("Enter timezone (e.g., 'America/New_York', press Enter for system default):", "")
+		cron, err := rb.prompter.Ask("Enter cron expression (5 fields: min hour dom month dow):")
+		if err != nil {
+			return nil, err
+		}
+		tz, err := rb.prompter.AskWithDefault("Enter timezone (e.g., 'America/New_York', press Enter for system default):", "")
+		if err != nil {
+			return nil, err
+		}
 		trigger.Schedule = &rule.ScheduleTrigger{Cron: cron, Timezone: tz}
 	}
 	return &trigger, nil
@@ -136,19 +160,36 @@ func (rb *RuleBuilder) getHMAC() (*rule.HMACConfig, error) {
 		return nil, err
 	}
 
-	header, _ := rb.prompter.AskWithDefault("  Signature header:", "X-Hub-Signature-256")
+	header, err := rb.prompter.AskWithDefault("  Signature header:", "X-Hub-Signature-256")
+	if err != nil {
+		return nil, err
+	}
 	fmt.Println("  Secret accepts a literal, an env ref ${VAR}, or a KV ref {@kv.bucket.key}.")
-	secret, _ := rb.prompter.AskWithDefault("  Shared secret:", "${WEBHOOK_SECRET}")
+	secret, err := rb.prompter.AskWithDefault("  Shared secret:", "${WEBHOOK_SECRET}")
+	if err != nil {
+		return nil, err
+	}
 
 	algorithm := "" // empty = sha256 default (omitted from YAML)
-	if idx, _ := rb.prompter.Select("  Hash algorithm:", []string{"sha256 (default)", "sha1"}); idx == 1 {
+	algoIdx, err := rb.prompter.Select("  Hash algorithm:", []string{"sha256 (default)", "sha1"})
+	if err != nil {
+		return nil, err
+	}
+	if algoIdx == 1 {
 		algorithm = "sha1"
 	}
 	encoding := "" // empty = hex default (omitted from YAML)
-	if idx, _ := rb.prompter.Select("  Signature encoding:", []string{"hex (default)", "base64"}); idx == 1 {
+	encIdx, err := rb.prompter.Select("  Signature encoding:", []string{"hex (default)", "base64"})
+	if err != nil {
+		return nil, err
+	}
+	if encIdx == 1 {
 		encoding = "base64"
 	}
-	prefix, _ := rb.prompter.AskWithDefault("  Prefix to strip from the header value (e.g. 'sha256=', press Enter for none):", "")
+	prefix, err := rb.prompter.AskWithDefault("  Prefix to strip from the header value (e.g. 'sha256=', press Enter for none):", "")
+	if err != nil {
+		return nil, err
+	}
 
 	return &rule.HMACConfig{
 		Header:    strings.TrimSpace(header),
@@ -171,7 +212,10 @@ func (rb *RuleBuilder) getConditions() (*rule.Conditions, error) {
 }
 
 func (rb *RuleBuilder) getConditionsRecursive(indent string) (*rule.Conditions, error) {
-	op, _ := rb.prompter.AskWithDefault(indent+"Logical operator for this group:", "and")
+	op, err := rb.prompter.AskWithDefault(indent+"Logical operator for this group:", "and")
+	if err != nil {
+		return nil, err
+	}
 	conds := &rule.Conditions{Operator: op}
 
 	fmt.Println(indent + "Enter conditions for this group (press Enter on 'Field' to finish):")
@@ -187,7 +231,10 @@ func (rb *RuleBuilder) getConditionsRecursive(indent string) (*rule.Conditions, 
 
 		var operator string
 		for {
-			operator, _ = rb.prompter.Ask(indent + "  - Operator:")
+			operator, err = rb.prompter.Ask(indent + "  - Operator:")
+			if err != nil {
+				return nil, err
+			}
 			if IsValidOperator(operator) {
 				break
 			}
@@ -243,7 +290,10 @@ func (rb *RuleBuilder) getConditionsRecursive(indent string) (*rule.Conditions, 
 		conds.Items = append(conds.Items, item)
 	}
 
-	addGroup, _ := rb.prompter.Confirm(indent + "Add a nested condition group?")
+	addGroup, err := rb.prompter.Confirm(indent + "Add a nested condition group?")
+	if err != nil {
+		return nil, err
+	}
 	if addGroup {
 		nestedGroup, err := rb.getConditionsRecursive(indent + "  ")
 		if err != nil {
@@ -396,7 +446,10 @@ func (rb *RuleBuilder) getAction() (*rule.Action, error) {
 // the caller. On an HTTP trigger it becomes the HTTP response; on a NATS trigger
 // with reply:true it is sent via msg.Respond.
 func (rb *RuleBuilder) getRespondAction() (*rule.RespondAction, error) {
-	statusStr, _ := rb.prompter.AskWithDefault("Enter HTTP status code (ignored for NATS replies):", "200")
+	statusStr, err := rb.prompter.AskWithDefault("Enter HTTP status code (ignored for NATS replies):", "200")
+	if err != nil {
+		return nil, err
+	}
 	status, err := strconv.Atoi(strings.TrimSpace(statusStr))
 	if err != nil {
 		return nil, fmt.Errorf("invalid status code: %s", statusStr)
@@ -410,18 +463,30 @@ func (rb *RuleBuilder) getRespondAction() (*rule.RespondAction, error) {
 }
 
 func (rb *RuleBuilder) getNATSAction() (*rule.NATSAction, error) {
-	cardinality, _ := rb.prompter.Select("Select Action Cardinality:", []string{"Single Action", "ForEach (Batch) Action"})
+	cardinality, err := rb.prompter.Select("Select Action Cardinality:", []string{"Single Action", "ForEach (Batch) Action"})
+	if err != nil {
+		return nil, err
+	}
 	if cardinality == 0 { // Single
-		subject, _ := rb.prompter.Ask("Enter NATS Action Subject (e.g., 'alerts.high_temp.{device_id}'):")
+		subject, err := rb.prompter.Ask("Enter NATS Action Subject (e.g., 'alerts.high_temp.{device_id}'):")
+		if err != nil {
+			return nil, err
+		}
 		payload := `{
   "message": "Rule matched and processed.",
   "device_id": "{device_id}",
   "processed_at": "{@timestamp()}"
 }`
 		action := &rule.NATSAction{Subject: subject, Payload: payload}
-		if req, _ := rb.prompter.Confirm("Make this a request and return the reply as the HTTP response (HTTP trigger / bridge only)?"); req {
+		req, err := rb.prompter.Confirm("Make this a request and return the reply as the HTTP response (HTTP trigger / bridge only)?")
+		if err != nil {
+			return nil, err
+		}
+		if req {
 			action.Request = true
-			action.Timeout, _ = rb.prompter.AskWithDefault("Enter request timeout (e.g., '3s', press Enter for default 5s):", "")
+			if action.Timeout, err = rb.prompter.AskWithDefault("Enter request timeout (e.g., '3s', press Enter for default 5s):", ""); err != nil {
+				return nil, err
+			}
 		}
 		return action, nil
 	}
@@ -432,7 +497,10 @@ func (rb *RuleBuilder) getNATSAction() (*rule.NATSAction, error) {
 		return nil, err
 	}
 
-	subject, _ := rb.prompter.Ask("Enter NATS Action Subject (can use element fields, e.g., 'alerts.{id}'):")
+	subject, err := rb.prompter.Ask("Enter NATS Action Subject (can use element fields, e.g., 'alerts.{id}'):")
+	if err != nil {
+		return nil, err
+	}
 	payload := `{
   "element_id": "{id}",
   "batch_id": "{@msg.batch_id}",
@@ -440,7 +508,10 @@ func (rb *RuleBuilder) getNATSAction() (*rule.NATSAction, error) {
 }`
 	action := &rule.NATSAction{ForEach: forEachField, Subject: subject, Payload: payload}
 
-	addFilter, _ := rb.prompter.Confirm("Add a filter to process only some elements?")
+	addFilter, err := rb.prompter.Confirm("Add a filter to process only some elements?")
+	if err != nil {
+		return nil, err
+	}
 	if addFilter {
 		fmt.Println("\n" + ColorBlue + "Filter Conditions" + ColorReset)
 		fmt.Println("These conditions evaluate against each array element.")
@@ -457,8 +528,14 @@ func (rb *RuleBuilder) getNATSAction() (*rule.NATSAction, error) {
 }
 
 func (rb *RuleBuilder) getHTTPAction() (*rule.HTTPAction, error) {
-	cardinality, _ := rb.prompter.Select("Select Action Cardinality:", []string{"Single Action", "ForEach (Batch) Action"})
-	method, _ := rb.prompter.AskWithDefault("Enter HTTP Method:", "POST")
+	cardinality, err := rb.prompter.Select("Select Action Cardinality:", []string{"Single Action", "ForEach (Batch) Action"})
+	if err != nil {
+		return nil, err
+	}
+	method, err := rb.prompter.AskWithDefault("Enter HTTP Method:", "POST")
+	if err != nil {
+		return nil, err
+	}
 	payload := `{
   "message": "Rule matched and processed.",
   "timestamp": "{@timestamp()}"
@@ -466,7 +543,10 @@ func (rb *RuleBuilder) getHTTPAction() (*rule.HTTPAction, error) {
 	retry := &rule.RetryConfig{MaxAttempts: 3, InitialDelay: "1s"}
 
 	if cardinality == 0 { // Single
-		url, _ := rb.prompter.Ask("Enter HTTP Action URL (e.g., 'https://api.example.com/alerts/{device_id}'):")
+		url, err := rb.prompter.Ask("Enter HTTP Action URL (e.g., 'https://api.example.com/alerts/{device_id}'):")
+		if err != nil {
+			return nil, err
+		}
 		action := &rule.HTTPAction{URL: url, Method: method, Payload: payload, Retry: retry}
 		if pr, err := rb.getPublishResponse(); err != nil {
 			return nil, err
@@ -482,7 +562,10 @@ func (rb *RuleBuilder) getHTTPAction() (*rule.HTTPAction, error) {
 		return nil, err
 	}
 
-	url, _ := rb.prompter.Ask("Enter HTTP Action URL (can use element fields, e.g., 'https://api.example.com/items/{id}'):")
+	url, err := rb.prompter.Ask("Enter HTTP Action URL (can use element fields, e.g., 'https://api.example.com/items/{id}'):")
+	if err != nil {
+		return nil, err
+	}
 	action := &rule.HTTPAction{ForEach: forEachField, URL: url, Method: method, Payload: payload, Retry: retry}
 	if pr, err := rb.getPublishResponse(); err != nil {
 		return nil, err
@@ -490,7 +573,10 @@ func (rb *RuleBuilder) getHTTPAction() (*rule.HTTPAction, error) {
 		action.PublishResponse = pr
 	}
 
-	addFilter, _ := rb.prompter.Confirm("Add a filter to process only some elements?")
+	addFilter, err := rb.prompter.Confirm("Add a filter to process only some elements?")
+	if err != nil {
+		return nil, err
+	}
 	if addFilter {
 		fmt.Println("\n" + ColorBlue + "Filter Conditions" + ColorReset)
 		fmt.Println("These conditions evaluate against each array element.")
@@ -509,7 +595,10 @@ func (rb *RuleBuilder) getHTTPAction() (*rule.HTTPAction, error) {
 // getPublishResponse asks whether to capture the HTTP response body and republish
 // it to a NATS subject. Returns nil if the user declines.
 func (rb *RuleBuilder) getPublishResponse() (*rule.PublishResponseSpec, error) {
-	want, _ := rb.prompter.Confirm("Publish the HTTP response body to a NATS subject on success?")
+	want, err := rb.prompter.Confirm("Publish the HTTP response body to a NATS subject on success?")
+	if err != nil {
+		return nil, err
+	}
 	if !want {
 		return nil, nil
 	}

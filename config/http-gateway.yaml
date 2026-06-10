@@ -18,7 +18,7 @@ http:
     maxHeaderBytes: 1048576 # 1MB
     shutdownGracePeriod: 30s
     inboundWorkerCount: 10
-    inboundQueueSize: 100
+    inboundQueueSize: 1000
 
   client:
     timeout: 30s
