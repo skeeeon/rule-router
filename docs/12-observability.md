@@ -52,7 +52,7 @@ Types: **C** = Counter, **G** = Gauge, **H** = Histogram. "Feature" indicates wh
 | `messages_total` | C | `status` = `received` \| `processed` \| `error` | router, gateway | Messages handled, by outcome. |
 | `rule_matches_total` | C | — | router, gateway | Times any rule's conditions matched. |
 | `rules_active` | G | — | all | Number of rules currently loaded (updates on reload). |
-| `actions_total` | C | `status` = `success` \| `error` | all | Actions executed, by outcome. |
+| `actions_total` | C | `status` = `success` \| `error` \| `skipped` | all | Actions executed, by outcome. `skipped` = an HTTP action matched on the router but `features.gateway` is disabled, so nothing executed it. |
 | `actions_by_type_total` | C | `type` = `templated` \| `passthrough` \| `merge` | router, gateway | Actions by payload mode. |
 | `action_publish_failures_total` | C | — | all | NATS publish failures for actions. |
 | `template_operations_total` | C | `status` = `success` \| `error` | router, gateway | Template-evaluation outcomes. |

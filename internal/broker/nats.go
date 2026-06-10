@@ -803,29 +803,32 @@ func (b *NATSBroker) GetConsumerName(subject string) string {
 	return b.generateConsumerName(subject)
 }
 
-// Publish publishes a NATS action using the configured publish mode (jetstream or core).
-// This is used by the scheduler to publish without a SubscriptionManager.
-func (b *NATSBroker) Publish(ctx context.Context, action *rule.NATSAction) error {
-	var payloadBytes []byte
-	if action.Passthrough {
-		payloadBytes = action.RawPayload
-	} else {
-		payloadBytes = []byte(action.Payload)
-	}
-
+// newActionMsg builds the NATS message for a rule action: the raw inbound
+// payload on passthrough, the evaluated payload otherwise, plus any headers.
+func newActionMsg(action *rule.NATSAction) *nats.Msg {
 	msg := nats.NewMsg(action.Subject)
-	msg.Data = payloadBytes
-
+	if action.Passthrough {
+		msg.Data = action.RawPayload
+	} else {
+		msg.Data = []byte(action.Payload)
+	}
 	if len(action.Headers) > 0 {
 		msg.Header = make(nats.Header)
 		for key, value := range action.Headers {
 			msg.Header.Set(key, value)
 		}
 	}
+	return msg
+}
+
+// Publish publishes a NATS action using the configured publish mode (jetstream or core).
+// This is used by the scheduler to publish without a SubscriptionManager.
+func (b *NATSBroker) Publish(ctx context.Context, action *rule.NATSAction) error {
+	msg := newActionMsg(action)
 
 	if b.config.NATS.Publish.Mode == "core" {
-		if len(action.Headers) == 0 {
-			return b.natsConn.Publish(action.Subject, payloadBytes)
+		if len(msg.Header) == 0 {
+			return b.natsConn.Publish(msg.Subject, msg.Data)
 		}
 		return b.natsConn.PublishMsg(msg)
 	}

@@ -483,6 +483,9 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 				sm.logger.Warn("HTTP action skipped - gateway feature not enabled",
 					"url", action.HTTP.URL,
 					"hint", "Enable features.gateway to handle HTTP actions")
+				if sm.metrics != nil {
+					sm.metrics.IncActionsTotal("skipped")
+				}
 			}
 		} else if action.Respond != nil {
 			// Respond actions only have a transport on the core-NATS responder
@@ -553,25 +556,7 @@ func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, actio
 
 // publishJetStream publishes to JetStream using the async model for high throughput.
 func (sm *SubscriptionManager) publishJetStream(ctx context.Context, action *rule.NATSAction) error {
-	// Prepare payload
-	var payloadBytes []byte
-	if action.Passthrough {
-		payloadBytes = action.RawPayload
-	} else {
-		payloadBytes = []byte(action.Payload)
-	}
-
-	// Create NATS message
-	msg := nats.NewMsg(action.Subject)
-	msg.Data = payloadBytes
-
-	// Add headers if present
-	if len(action.Headers) > 0 {
-		msg.Header = make(nats.Header)
-		for key, value := range action.Headers {
-			msg.Header.Set(key, value)
-		}
-	}
+	msg := newActionMsg(action)
 
 	// Publish async
 	ackF, err := sm.jetStream.PublishMsgAsync(msg)
@@ -601,28 +586,14 @@ func (sm *SubscriptionManager) publishJetStream(ctx context.Context, action *rul
 
 // publishCore publishes to core NATS (fire-and-forget, no ack).
 func (sm *SubscriptionManager) publishCore(ctx context.Context, action *rule.NATSAction) error {
-	// Prepare payload
-	var payloadBytes []byte
-	if action.Passthrough {
-		payloadBytes = action.RawPayload
-	} else {
-		payloadBytes = []byte(action.Payload)
-	}
+	msg := newActionMsg(action)
 
 	// Fast path: if there are no headers, use the simple Publish method.
-	if len(action.Headers) == 0 {
-		if err := sm.natsConn.Publish(action.Subject, payloadBytes); err != nil {
+	if len(msg.Header) == 0 {
+		if err := sm.natsConn.Publish(msg.Subject, msg.Data); err != nil {
 			return fmt.Errorf("core nats publish failed: %w", err)
 		}
 		return nil
-	}
-
-	// With headers, we must construct a full nats.Msg object.
-	msg := nats.NewMsg(action.Subject)
-	msg.Data = payloadBytes
-	msg.Header = make(nats.Header)
-	for key, value := range action.Headers {
-		msg.Header.Set(key, value)
 	}
 
 	if err := sm.natsConn.PublishMsg(msg); err != nil {

@@ -357,6 +357,7 @@ func (s *InboundServer) webhookHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Not Found", http.StatusNotFound)
 		if s.metrics != nil {
 			s.metrics.IncHTTPInboundRequestsTotal("_unknown_", r.Method, "404")
+			s.metrics.ObserveHTTPRequestDuration("_unknown_", r.Method, time.Since(start).Seconds())
 		}
 		return
 	}
@@ -369,6 +370,7 @@ func (s *InboundServer) webhookHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		if s.metrics != nil {
 			s.metrics.IncHTTPInboundRequestsTotal(path, r.Method, "400")
+			s.metrics.ObserveHTTPRequestDuration(path, r.Method, time.Since(start).Seconds())
 		}
 		return
 	}
@@ -423,8 +425,8 @@ func (s *InboundServer) webhookHandler(w http.ResponseWriter, r *http.Request) {
 			"path", path,
 			"queueCapacity", s.serverCfg.InboundQueueSize,
 			"hint", "increase http.server.inboundQueueSize in config or add more workers")
-		http.Error(w, fmt.Sprintf("Service Unavailable: webhook queue full (%d/%d). Increase http.server.inboundQueueSize in config.",
-			s.serverCfg.InboundQueueSize, s.serverCfg.InboundQueueSize), http.StatusServiceUnavailable)
+		http.Error(w, fmt.Sprintf("Service Unavailable: webhook queue full (capacity %d). Increase http.server.inboundQueueSize in config.",
+			s.serverCfg.InboundQueueSize), http.StatusServiceUnavailable)
 		if s.metrics != nil {
 			s.metrics.IncHTTPInboundRequestsTotal(path, r.Method, "503")
 		}

@@ -103,8 +103,7 @@ func (app *RouterApp) Run(ctx context.Context) error {
 
 	// Update metrics
 	if app.metrics != nil {
-		subjects := app.processor.GetAllRules()
-		app.metrics.SetRulesActive(float64(len(subjects)))
+		app.metrics.SetRulesActive(float64(len(allRules)))
 	}
 
 	// Wait for shutdown signal

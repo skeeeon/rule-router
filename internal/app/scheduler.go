@@ -184,11 +184,15 @@ func (app *SchedulerApp) executeScheduleRule(r *rule.Rule) {
 					"subject", action.NATS.Subject,
 					"error", err)
 				if app.metrics != nil {
+					app.metrics.IncActionsTotal("error")
 					app.metrics.IncActionPublishFailures()
 				}
 			} else {
 				app.logger.Info("published scheduled NATS action",
 					"subject", action.NATS.Subject)
+				if app.metrics != nil {
+					app.metrics.IncActionsTotal("success")
+				}
 			}
 			cancel()
 		}
@@ -201,12 +205,16 @@ func (app *SchedulerApp) executeScheduleRule(r *rule.Rule) {
 					"method", action.HTTP.Method,
 					"error", err)
 				if app.metrics != nil {
+					app.metrics.IncActionsTotal("error")
 					app.metrics.IncActionPublishFailures()
 				}
 			} else {
 				app.logger.Info("executed scheduled HTTP action",
 					"url", action.HTTP.URL,
 					"method", action.HTTP.Method)
+				if app.metrics != nil {
+					app.metrics.IncActionsTotal("success")
+				}
 			}
 			cancel()
 		}
