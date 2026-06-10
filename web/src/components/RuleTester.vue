@@ -5,6 +5,9 @@ import { callEvaluateRule, getWasmState, loadWasm } from '../utils/wasm.js'
 const props = defineProps({
   rule: Object,
   yaml: String,
+  // Index of the active rule within the file's YAML — the engine evaluates
+  // exactly one rule, defaulting to 0, so multi-rule files need this.
+  ruleIndex: { type: Number, default: 0 },
 })
 
 const inspectedFields = inject('inspectedFields', ref([]))
@@ -23,6 +26,8 @@ const showHeaders = ref(false)
 const headersInput = ref('')
 const showKvMock = ref(false)
 const kvMockInput = ref('')
+const showMockTime = ref(false)
+const mockTimeInput = ref('')
 
 const loading = ref(false)
 const wasmLoading = ref(false)
@@ -64,7 +69,10 @@ function kickoffWasm() {
   wasmLoading.value = true
   loadWasm()
     .then(() => { wasmLoading.value = false })
-    .catch(() => { wasmLoading.value = false })
+    .catch(() => {
+      wasmLoading.value = false
+      error.value = `Failed to load test engine: ${getWasmState().error || 'unknown error'}`
+    })
 }
 
 // Load WASM on mount (default-expanded) and when re-expanded after collapse.
@@ -138,6 +146,15 @@ async function runTest() {
     }
   }
 
+  // Validate mock time if provided — the engine silently ignores values it
+  // can't parse, so catch the mistake here instead.
+  const mockTime = mockTimeInput.value.trim()
+  if (mockTime && (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(mockTime) || isNaN(Date.parse(mockTime)))) {
+    error.value = 'Invalid mock time — use RFC3339, e.g. 2026-06-10T14:30:00Z'
+    result.value = null
+    return
+  }
+
   error.value = null
   loading.value = true
 
@@ -149,6 +166,8 @@ async function runTest() {
       method: methodInput.value,
       headers,
       kvMock,
+      mockTime,
+      ruleIndex: props.ruleIndex,
     }
 
     result.value = await callEvaluateRule(props.yaml, sampleMessage.value, options)
@@ -236,6 +255,9 @@ async function runTest() {
         <label class="checkbox">
           <input type="checkbox" v-model="showKvMock"> Mock KV Data
         </label>
+        <label class="checkbox">
+          <input type="checkbox" v-model="showMockTime"> Mock Time
+        </label>
       </div>
 
       <div v-if="showHeaders" class="field">
@@ -258,6 +280,18 @@ async function runTest() {
           placeholder='{"config": {"thresholds": {"max_temp": 100}}}'
           spellcheck="false"
         ></textarea>
+      </div>
+
+      <div v-if="showMockTime" class="field">
+        <label>Mock Time <span class="optional">(RFC3339 — for {@time...} / {@day...} conditions)</span></label>
+        <input
+          v-model="mockTimeInput"
+          placeholder="2026-06-10T14:30:00Z"
+          autocapitalize="off"
+          autocorrect="off"
+          autocomplete="off"
+          spellcheck="false"
+        >
       </div>
 
       <!-- Run button -->

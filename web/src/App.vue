@@ -170,9 +170,19 @@ const files = computed(() => {
 // YAML for the active rule's file group (used by the tester)
 const activeFileYaml = computed(() => {
   if (!activeRule.value) return ''
-  const file = activeRule.value.file || 'untitled'
+  const file = activeRule.value.file || DEFAULT_FILENAME
   const group = files.value.find(f => f.file === file)
   return group?.yaml || ''
+})
+
+// Index of the active rule within its file group — the tester engine
+// evaluates one rule out of the file's YAML, defaulting to index 0.
+const activeFileRuleIndex = computed(() => {
+  if (!activeRule.value) return 0
+  const file = activeRule.value.file || DEFAULT_FILENAME
+  const siblings = state.rules.filter(r => (r.file || DEFAULT_FILENAME) === file)
+  const idx = siblings.indexOf(activeRule.value)
+  return idx >= 0 ? idx : 0
 })
 
 function openKvPush(target) {
@@ -435,7 +445,7 @@ function loadFromKV(entries) {
             <ActionForm :action="activeRule.action" :trigger="activeRule.trigger" :error-for="errorFor" />
           </SectionPanel>
 
-          <RuleTester :rule="activeRule" :yaml="activeFileYaml" />
+          <RuleTester :rule="activeRule" :yaml="activeFileYaml" :rule-index="activeFileRuleIndex" />
         </div>
 
         <div v-else class="editor-empty">

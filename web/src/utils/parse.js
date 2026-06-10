@@ -116,7 +116,7 @@ function rawToNATSAction(raw) {
 
 function rawToRespondAction(raw) {
   const action = createRespondAction()
-  action.statusCode = raw.statusCode || 200
+  action.statusCode = raw.statusCode ?? 200
   action.payload = raw.payload || ''
   action.passthrough = raw.passthrough || false
   action.merge = raw.merge || false
