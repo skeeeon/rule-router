@@ -30,12 +30,13 @@
   action:
     nats:
       subject: "door.control.unlock"
+      # The payload can enrich with data about the signer from the KV store.
+      # It is published verbatim, so no comments inside it.
       payload: |
         {
           "action": "authorized_unlock",
           "door_id": "{door_id}",
           "authorized_by_key": "{@signature.pubkey}",
-          # You can enrich with data about the signer from the KV store.
           "authorized_by_name": "{@kv.access_control.{@signature.pubkey}:name}",
           "executed_at": "{@timestamp()}"
         }

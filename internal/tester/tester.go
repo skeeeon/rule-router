@@ -24,6 +24,10 @@ type Tester struct {
 	Logger          *logger.Logger
 	Verbose         bool
 	ParallelWorkers int
+	// Quiet suppresses per-test progress output on stdout. Set it when the
+	// caller emits machine-readable output (e.g. `test --output json`) that
+	// progress lines would corrupt.
+	Quiet bool
 }
 
 // New creates a new Tester instance.
@@ -150,7 +154,7 @@ func (t *Tester) scaffoldSingleRule(testDir string, r *rule.Rule) error {
 	}
 
 	configBytes, _ := json.MarshalIndent(testConfig, "", "  ")
-	os.WriteFile(filepath.Join(testDir, "_test_config.json"), configBytes, 0644)
+	writeOrWarn(filepath.Join(testDir, "_test_config.json"), configBytes)
 
 	// Analyze rule features to generate appropriate examples
 	features := analyzeRuleFeatures(r)
@@ -381,7 +385,7 @@ func (t *Tester) generateBasicExamples(testDir string, r *rule.Rule, features Ru
 	}
 
 	matchBytes, _ := json.MarshalIndent(matchExample, "", "  ")
-	os.WriteFile(filepath.Join(testDir, "match_1.json"), matchBytes, 0644)
+	writeOrWarn(filepath.Join(testDir, "match_1.json"), matchBytes)
 
 	// Create basic non-match example
 	notMatchExample := map[string]interface{}{
@@ -391,7 +395,7 @@ func (t *Tester) generateBasicExamples(testDir string, r *rule.Rule, features Ru
 	}
 
 	notMatchBytes, _ := json.MarshalIndent(notMatchExample, "", "  ")
-	os.WriteFile(filepath.Join(testDir, "not_match_1.json"), notMatchBytes, 0644)
+	writeOrWarn(filepath.Join(testDir, "not_match_1.json"), notMatchBytes)
 
 	// Generate README
 	readme := `# Test Suite
@@ -417,7 +421,7 @@ This rule uses the new {braces} syntax:
 - Variable comparisons are now supported: field: "{a}" value: "{b}"
 `
 
-	os.WriteFile(filepath.Join(testDir, "README.md"), []byte(readme), 0644)
+	writeOrWarn(filepath.Join(testDir, "README.md"), []byte(readme))
 }
 
 // generateForEachExamples creates example test files for forEach rules
@@ -471,7 +475,7 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 	}
 
 	matchBytes, _ := json.MarshalIndent(matchExample, "", "  ")
-	os.WriteFile(filepath.Join(testDir, "match_1.json"), matchBytes, 0644)
+	writeOrWarn(filepath.Join(testDir, "match_1.json"), matchBytes)
 
 	// Create example output file (array of expected actions)
 	var outputExample []ExpectedOutput
@@ -505,7 +509,7 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 	}
 
 	outputBytes, _ := json.MarshalIndent(outputExample, "", "  ")
-	os.WriteFile(filepath.Join(testDir, "match_1_output.json"), outputBytes, 0644)
+	writeOrWarn(filepath.Join(testDir, "match_1_output.json"), outputBytes)
 
 	// Create example non-match case (elements that don't pass filter)
 	notMatchExample := map[string]interface{}{
@@ -536,7 +540,7 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 	}
 
 	notMatchBytes, _ := json.MarshalIndent(notMatchExample, "", "  ")
-	os.WriteFile(filepath.Join(testDir, "not_match_1.json"), notMatchBytes, 0644)
+	writeOrWarn(filepath.Join(testDir, "not_match_1.json"), notMatchBytes)
 
 	// Create additional example with empty array
 	emptyArrayExample := map[string]interface{}{
@@ -558,7 +562,7 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 	}
 
 	emptyBytes, _ := json.MarshalIndent(emptyArrayExample, "", "  ")
-	os.WriteFile(filepath.Join(testDir, "not_match_2_empty_array.json"), emptyBytes, 0644)
+	writeOrWarn(filepath.Join(testDir, "not_match_2_empty_array.json"), emptyBytes)
 
 	// Generate comprehensive README
 	readme := fmt.Sprintf(`# Test Suite for Rule with forEach
@@ -618,7 +622,7 @@ filter:
 `+"```"+`
 `, forEachField)
 
-	os.WriteFile(filepath.Join(testDir, "README.md"), []byte(readme), 0644)
+	writeOrWarn(filepath.Join(testDir, "README.md"), []byte(readme))
 }
 
 // generateVariableComparisonExamples creates examples for rules with variable-to-variable comparisons
@@ -632,7 +636,7 @@ func (t *Tester) generateVariableComparisonExamples(testDir string, r *rule.Rule
 	}
 
 	matchBytes, _ := json.MarshalIndent(matchExample, "", "  ")
-	os.WriteFile(filepath.Join(testDir, "match_1_above_threshold.json"), matchBytes, 0644)
+	writeOrWarn(filepath.Join(testDir, "match_1_above_threshold.json"), matchBytes)
 
 	// Create example where comparison fails (below threshold)
 	notMatchExample := map[string]interface{}{
@@ -643,7 +647,7 @@ func (t *Tester) generateVariableComparisonExamples(testDir string, r *rule.Rule
 	}
 
 	notMatchBytes, _ := json.MarshalIndent(notMatchExample, "", "  ")
-	os.WriteFile(filepath.Join(testDir, "not_match_1_below_threshold.json"), notMatchBytes, 0644)
+	writeOrWarn(filepath.Join(testDir, "not_match_1_below_threshold.json"), notMatchBytes)
 
 	// Create example with missing comparison field
 	missingExample := map[string]interface{}{
@@ -654,7 +658,7 @@ func (t *Tester) generateVariableComparisonExamples(testDir string, r *rule.Rule
 	}
 
 	missingBytes, _ := json.MarshalIndent(missingExample, "", "  ")
-	os.WriteFile(filepath.Join(testDir, "not_match_2_missing_field.json"), missingBytes, 0644)
+	writeOrWarn(filepath.Join(testDir, "not_match_2_missing_field.json"), missingBytes)
 
 	// Create example with type mismatch
 	typeMismatchExample := map[string]interface{}{
@@ -665,7 +669,7 @@ func (t *Tester) generateVariableComparisonExamples(testDir string, r *rule.Rule
 	}
 
 	typeMismatchBytes, _ := json.MarshalIndent(typeMismatchExample, "", "  ")
-	os.WriteFile(filepath.Join(testDir, "match_2_type_coercion.json"), typeMismatchBytes, 0644)
+	writeOrWarn(filepath.Join(testDir, "match_2_type_coercion.json"), typeMismatchBytes)
 
 	// Generate comprehensive README
 	readme := `# Test Suite for Rule with Variable Comparisons
@@ -820,7 +824,7 @@ value: "{@kv.config.{sensor_id}:max_temp}"
 **Solution**: Check **mock_kv_data.json** has the bucket and key defined.
 `
 
-	os.WriteFile(filepath.Join(testDir, "README.md"), []byte(readme), 0644)
+	writeOrWarn(filepath.Join(testDir, "README.md"), []byte(readme))
 }
 
 // generateMockKVData creates a mock KV data file for testing
@@ -851,7 +855,7 @@ func (t *Tester) generateMockKVData(testDir string, buckets []string) {
 	kvStr := string(kvBytes)
 	kvStr = "{" + comment[1:] + kvStr[1:]
 
-	os.WriteFile(filepath.Join(testDir, "mock_kv_data.json"), []byte(kvStr), 0644)
+	writeOrWarn(filepath.Join(testDir, "mock_kv_data.json"), []byte(kvStr))
 }
 
 // printScaffoldTips prints helpful tips based on detected features
@@ -1032,10 +1036,12 @@ func (t *Tester) RunBatchTest(rulesDir string) (TestSummary, error) {
 func (t *Tester) runTestsSequential(groups []TestGroup) TestSummary {
 	summary := TestSummary{}
 	for _, group := range groups {
-		if group.RuleIndex >= 0 {
-			fmt.Printf("=== RULE: %s [rule %d] ===\n", group.RulePath, group.RuleIndex)
-		} else {
-			fmt.Printf("=== RULE: %s ===\n", group.RulePath)
+		if !t.Quiet {
+			if group.RuleIndex >= 0 {
+				fmt.Printf("=== RULE: %s [rule %d] ===\n", group.RulePath, group.RuleIndex)
+			} else {
+				fmt.Printf("=== RULE: %s ===\n", group.RulePath)
+			}
 		}
 		processor := setupTestProcessor(group.RulePath, group.KVData, group.TestConfig, false)
 		for _, testFile := range group.TestFiles {
@@ -1045,19 +1051,26 @@ func (t *Tester) runTestsSequential(groups []TestGroup) TestSummary {
 			summary.Results = append(summary.Results, result)
 			if result.Passed {
 				summary.Passed++
-				fmt.Printf("  ✓ %s (%dms)\n", baseName, result.DurationMs)
 			} else {
 				summary.Failed++
-				fmt.Printf("  ✖ %s (%dms)\n", baseName, result.DurationMs)
-				if t.Verbose && result.Error != "" {
-					fmt.Printf("    Error: %s\n", result.Error)
-					if result.Details != "" {
-						fmt.Printf("    Details: %s\n", result.Details)
+			}
+			if !t.Quiet {
+				if result.Passed {
+					fmt.Printf("  ✓ %s (%dms)\n", baseName, result.DurationMs)
+				} else {
+					fmt.Printf("  ✖ %s (%dms)\n", baseName, result.DurationMs)
+					if t.Verbose && result.Error != "" {
+						fmt.Printf("    Error: %s\n", result.Error)
+						if result.Details != "" {
+							fmt.Printf("    Details: %s\n", result.Details)
+						}
 					}
 				}
 			}
 		}
-		fmt.Println()
+		if !t.Quiet {
+			fmt.Println()
+		}
 	}
 	return summary
 }
@@ -1101,6 +1114,14 @@ func (t *Tester) runTestsParallel(groups []TestGroup) TestSummary {
 			summary.Passed++
 		} else {
 			summary.Failed++
+		}
+		if !t.Quiet {
+			// No per-rule grouping here: results arrive in completion order.
+			if result.Passed {
+				fmt.Printf("  ✓ %s (%dms)\n", result.File, result.DurationMs)
+			} else {
+				fmt.Printf("  ✖ %s (%dms)\n", result.File, result.DurationMs)
+			}
 		}
 	}
 	return summary
@@ -1404,13 +1425,23 @@ func setupTestProcessor(rulePath string, kvData map[string]map[string]interface{
 	return processor
 }
 
+// writeOrWarn writes a scaffold file, warning on stderr instead of failing —
+// a partial scaffold is still useful, but a silent one isn't.
+func writeOrWarn(path string, data []byte) {
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  failed to write %s: %v\n", path, err)
+	}
+}
+
 func loadTestConfig(path string) *TestConfig {
 	config := &TestConfig{Headers: make(map[string]string)}
 	bytes, err := os.ReadFile(path)
 	if err != nil {
 		return config
 	}
-	json.Unmarshal(bytes, &config)
+	if err := json.Unmarshal(bytes, &config); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  ignoring malformed test config %s: %v\n", path, err)
+	}
 	if config.Headers == nil {
 		config.Headers = make(map[string]string)
 	} else {
@@ -1442,7 +1473,9 @@ func loadMockKV(path string) map[string]map[string]interface{} {
 		return nil
 	}
 	var data map[string]map[string]interface{}
-	json.Unmarshal(bytes, &data)
+	if err := json.Unmarshal(bytes, &data); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  ignoring malformed mock KV data %s: %v\n", path, err)
+	}
 	return data
 }
 

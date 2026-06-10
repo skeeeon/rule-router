@@ -23,17 +23,18 @@
             value: "critical"
       # The subject for each new message. Can use variables from the array element.
       subject: "alerts.critical.{event_id}"
+      # In the payload: fields from the current array element are accessed
+      # directly with {field}; fields from the original root message MUST use
+      # the {@msg...} prefix; system functions like {@timestamp()} are always
+      # available. The payload is published verbatim — no comments inside it.
       payload: |
         {
-          # Fields from the current array element are accessed directly with {}.
           "event_id": "{event_id}",
           "status": "{status}",
           "details": "{details}",
 
-          # Fields from the original root message MUST use the '{@msg...}' prefix.
           "batch_id": "{@msg.batch_id}",
           "source_device": "{@msg.device_id}",
 
-          # System functions are always available.
           "processed_at": "{@timestamp()}"
         }

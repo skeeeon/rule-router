@@ -47,8 +47,7 @@ type NATSConfig struct {
 
 // StorageConfig defines where to store tokens
 type StorageConfig struct {
-	Bucket    string `mapstructure:"bucket"`    // KV bucket name
-	KeyPrefix string `mapstructure:"keyPrefix"` // Optional prefix for keys
+	Bucket string `mapstructure:"bucket"` // KV bucket name
 }
 
 // MetricsConfig for optional Prometheus metrics

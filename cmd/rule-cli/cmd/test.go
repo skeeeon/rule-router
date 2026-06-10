@@ -34,6 +34,8 @@ conditions, templates, and forEach logic.`,
 
 		log := logger.NewNopLogger()
 		testRunner := tester.New(log, verbose, parallel)
+		// Progress lines would corrupt the JSON document on stdout.
+		testRunner.Quiet = outputFormat == "json"
 		summary, err := testRunner.RunBatchTest(rulesDir)
 
 		if outputFormat == "json" {

@@ -141,7 +141,7 @@ body: |
   }
 ```
 
-**Important**: If an environment variable is not set, it will be replaced with an empty string. The application will log a warning but continue running.
+**Important**: If a referenced environment variable is not set, the application refuses to start and lists the missing variables. Set them, or remove the `${}` references from the config.
 
 ## Configuration Reference
 
@@ -172,7 +172,6 @@ nats:
 ```yaml
 storage:
   bucket: "tokens"      # KV bucket name (required)
-  keyPrefix: ""         # Optional key prefix
 ```
 
 ### Logging Section

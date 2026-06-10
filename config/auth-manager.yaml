@@ -26,7 +26,6 @@ nats:
 
 storage:
   bucket: "tokens"
-  keyPrefix: ""  # Optional: prefix all keys (e.g., "auth/")
 
 logging:
   level: info     # debug, info, warn, error

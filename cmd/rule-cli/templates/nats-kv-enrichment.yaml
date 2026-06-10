@@ -20,15 +20,16 @@
   action:
     nats:
       subject: "orders.enriched"
+      # The payload can look up KV values — including nested fields — with
+      # {@kv.bucket.{key}:path} references. It is published verbatim, so no
+      # comments inside it.
       payload: |
         {
           "order_id": "{order_id}",
           "customer_id": "{customer_id}",
           "order_value": {order_value},
           "enriched_data": {
-            # Look up the customer's name from the KV store.
             "customer_name": "{@kv.customers.{customer_id}:profile.name}",
-            # Look up a nested field from the KV store.
             "customer_tier": "{@kv.customers.{customer_id}:tier}"
           },
           "processed_at": "{@timestamp()}"

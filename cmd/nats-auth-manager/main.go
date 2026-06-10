@@ -62,6 +62,7 @@ func run() error {
 
 	// Initialize metrics
 	var metrics *authmgr.Metrics
+	var metricsServer *http.Server
 	if cfg.Metrics.Enabled {
 		reg := prometheus.NewRegistry()
 		metrics, err = authmgr.NewMetrics(reg)
@@ -72,7 +73,7 @@ func run() error {
 		// Start metrics server
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
-		metricsServer := &http.Server{Addr: cfg.Metrics.Address, Handler: mux}
+		metricsServer = &http.Server{Addr: cfg.Metrics.Address, Handler: mux}
 
 		go func() {
 			appLogger.Info("starting metrics server", "address", cfg.Metrics.Address)
@@ -124,6 +125,12 @@ func run() error {
 		appLogger.Error("error during shutdown", "error", err)
 	}
 
+	if metricsServer != nil {
+		if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+			appLogger.Error("error shutting down metrics server", "error", err)
+		}
+	}
+
 	select {
 	case <-shutdownCtx.Done():
 		appLogger.Warn("shutdown timeout exceeded")
@@ -143,7 +150,12 @@ func createProviders(configs []authmgr.ProviderConfig, log *logger.Logger) ([]pr
 
 		switch cfg.Type {
 		case "oauth2":
-			refreshBefore, _ := time.ParseDuration(cfg.RefreshBefore)
+			// Already validated by config.Load; kept fatal so a refactor can't
+			// silently turn a bad duration into zero.
+			refreshBefore, err := time.ParseDuration(cfg.RefreshBefore)
+			if err != nil {
+				return nil, fmt.Errorf("provider '%s': invalid refreshBefore: %w", cfg.ID, err)
+			}
 			p = providers.NewOAuth2Provider(
 				cfg.KVKey,
 				cfg.TokenURL,
@@ -154,7 +166,10 @@ func createProviders(configs []authmgr.ProviderConfig, log *logger.Logger) ([]pr
 			)
 
 		case "custom-http":
-			refreshEvery, _ := time.ParseDuration(cfg.RefreshEvery)
+			refreshEvery, err := time.ParseDuration(cfg.RefreshEvery)
+			if err != nil {
+				return nil, fmt.Errorf("provider '%s': invalid refreshEvery: %w", cfg.ID, err)
+			}
 			p = providers.NewCustomHTTPProvider(
 				cfg.KVKey,
 				cfg.AuthURL,
