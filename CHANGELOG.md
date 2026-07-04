@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.15.0] - 2026-07-04
 
 ### Features
 - **Selectable JetStream/core delivery mode on NATS triggers and actions** — the JetStream-vs-core choice, previously global-only for publishes (`nats.publish.mode`) and implicit for subscriptions, is now expressible per rule:
@@ -170,6 +170,7 @@
 - Signature verification
 - Rule-cli utility
 
+[0.15.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.15.0
 [0.14.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.14.0
 [0.13.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.13.0
 [0.12.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.12.0
