@@ -47,6 +47,15 @@ function validateTrigger(trigger, errors) {
     } else {
       validateNATSSubject(trigger.nats.subject, 'trigger.nats.subject', errors)
     }
+    if (trigger.nats.mode && !['jetstream', 'core'].includes(trigger.nats.mode)) {
+      errors.push({ path: 'trigger.nats.mode', message: "Mode must be 'jetstream' or 'core'" })
+    }
+    if (trigger.nats.reply && trigger.nats.mode === 'jetstream') {
+      errors.push({ path: 'trigger.nats.mode', message: 'A Request/Reply trigger uses core transport and cannot set JetStream mode' })
+    }
+    if (trigger.nats.queue && !trigger.nats.reply && trigger.nats.mode !== 'core') {
+      errors.push({ path: 'trigger.nats.queue', message: 'Queue requires a core subscription (Request/Reply or Core NATS mode)' })
+    }
     if (trigger.nats.debounce) {
       validateDebounce(trigger.nats.debounce, 'trigger.nats.debounce', errors)
     }
@@ -82,6 +91,9 @@ function validateAction(action, errors) {
     const a = action.nats
     if (!a.subject) {
       errors.push({ path: 'action.nats.subject', message: 'Subject is required' })
+    }
+    if (a.mode && !['jetstream', 'core'].includes(a.mode)) {
+      errors.push({ path: 'action.nats.mode', message: "Mode must be 'jetstream' or 'core'" })
     }
     if (a.passthrough && a.payload) {
       errors.push({ path: 'action.nats.payload', message: 'Passthrough is enabled — remove payload or disable passthrough' })

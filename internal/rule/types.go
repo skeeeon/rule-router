@@ -32,18 +32,47 @@ type Trigger struct {
 	Schedule *ScheduleTrigger `json:"schedule,omitempty" yaml:"schedule,omitempty"`
 }
 
+// Delivery mode values for NATSTrigger.Mode and NATSAction.Mode.
+const (
+	ModeJetStream = "jetstream"
+	ModeCore      = "core"
+)
+
 // NATSTrigger represents a NATS subject-based trigger
 type NATSTrigger struct {
 	Subject  string          `json:"subject" yaml:"subject"`
 	Debounce *DebounceConfig `json:"debounce,omitempty" yaml:"debounce,omitempty"`
 
+	// Mode selects the subscription transport: "jetstream" (default — durable
+	// pull consumer, at-least-once) or "core" (plain NATS subscription,
+	// at-most-once, no stream required). reply:true implies core.
+	Mode string `json:"mode,omitempty" yaml:"mode,omitempty"`
+
 	// Reply turns this subject into a request/reply service: the router subscribes
 	// via core NATS (not JetStream) and answers each request via msg.Respond using
 	// the rule's `respond` action. Queue, when set, joins a queue group so multiple
-	// responder instances load-balance requests.
+	// subscriber instances load-balance messages (core mode only).
 	Reply bool   `json:"reply,omitempty" yaml:"reply,omitempty"`
 	Queue string `json:"queue,omitempty" yaml:"queue,omitempty"`
 }
+
+// IsCore reports whether this trigger is served by a core NATS subscription
+// rather than a JetStream consumer — either explicitly (mode: core) or
+// implicitly (reply: true, which requires core request/reply transport).
+func (t *NATSTrigger) IsCore() bool {
+	return t.Reply || t.Mode == ModeCore
+}
+
+// NATSTriggerFilter selects which NATS-triggered rules a subscription transport
+// evaluates. Each transport (JetStream consumer, core subscription) processes
+// only its own rules so a subject covered by both never double-fires.
+type NATSTriggerFilter func(t *NATSTrigger) bool
+
+// JetStreamRuleFilter matches rules served by JetStream consumers.
+func JetStreamRuleFilter(t *NATSTrigger) bool { return !t.IsCore() }
+
+// CoreRuleFilter matches rules served by core NATS subscriptions.
+func CoreRuleFilter(t *NATSTrigger) bool { return t.IsCore() }
 
 // ScheduleTrigger represents a cron-based schedule trigger
 type ScheduleTrigger struct {
@@ -105,7 +134,14 @@ type RespondAction struct {
 
 // NATSAction represents publishing to a NATS subject
 type NATSAction struct {
-	Subject     string            `json:"subject" yaml:"subject"`
+	Subject string `json:"subject" yaml:"subject"`
+
+	// Mode selects the publish transport: "jetstream" (async publish, awaited
+	// ack, requires a stream covering the subject) or "core" (fire-and-forget,
+	// no ack). Empty inherits the global nats.publish.mode config.
+	Mode string `json:"mode,omitempty" yaml:"mode,omitempty"`
+
+
 	Payload     string            `json:"payload,omitempty" yaml:"payload,omitempty"`
 	Passthrough bool              `json:"passthrough,omitempty" yaml:"passthrough,omitempty"`
 	Merge       bool              `json:"merge,omitempty" yaml:"merge,omitempty"`

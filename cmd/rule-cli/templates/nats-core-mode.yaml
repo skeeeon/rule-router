@@ -1,0 +1,35 @@
+# templates/nats-core-mode.yaml
+#
+# Core NATS delivery mode. With `mode: core` on the trigger, the router
+# subscribes via a plain core NATS subscription instead of a JetStream pull
+# consumer: at-most-once, lowest latency, and no stream is required for the
+# subject. `queue` (optional) load-balances messages across instances.
+#
+# On the action, `mode: core` publishes fire-and-forget (no ack, no stream
+# needed) regardless of the global nats.publish.mode; omit it to inherit the
+# global config.
+#
+# Example Use Case: fan ephemeral heartbeats out to a UI notification subject —
+# losing one during a restart is fine, so durability isn't worth a stream.
+#
+- trigger:
+    nats:
+      subject: "metrics.heartbeat.*"
+      mode: core
+      queue: "monitors"
+  conditions:
+    operator: and
+    items:
+      - field: "{status}"
+        operator: eq
+        value: "degraded"
+  action:
+    nats:
+      subject: "notifications.ui.{@subject.2}"
+      mode: core
+      payload: |
+        {
+          "node": "{@subject.2}",
+          "status": "{status}",
+          "seenAt": "{@timestamp()}"
+        }

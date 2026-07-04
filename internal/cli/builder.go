@@ -114,6 +114,17 @@ func (rb *RuleBuilder) getTrigger() (*rule.Trigger, error) {
 			if nt.Queue, err = rb.prompter.AskWithDefault("Enter queue group for load-balanced responders (press Enter for none):", ""); err != nil {
 				return nil, err
 			}
+		} else {
+			core, err := rb.prompter.Confirm("Subscribe via core NATS instead of JetStream (at-most-once, no stream required)?")
+			if err != nil {
+				return nil, err
+			}
+			if core {
+				nt.Mode = rule.ModeCore
+				if nt.Queue, err = rb.prompter.AskWithDefault("Enter queue group for load-balanced subscribers (press Enter for none):", ""); err != nil {
+					return nil, err
+				}
+			}
 		}
 		trigger.NATS = nt
 	case 1: // HTTP
@@ -487,6 +498,9 @@ func (rb *RuleBuilder) getNATSAction() (*rule.NATSAction, error) {
 			if action.Timeout, err = rb.prompter.AskWithDefault("Enter request timeout (e.g., '3s', press Enter for default 5s):", ""); err != nil {
 				return nil, err
 			}
+		}
+		if action.Mode, err = rb.prompter.AskWithDefault("Enter publish mode override ('jetstream' or 'core', press Enter to inherit global config):", ""); err != nil {
+			return nil, err
 		}
 		return action, nil
 	}

@@ -408,6 +408,31 @@ func (p *Processor) GetAllRules() []*Rule {
 	return p.allRules
 }
 
+// filterNATSRules returns the rules whose NATS trigger passes the filter.
+// A nil filter passes everything; the all-pass case returns the input slice
+// unchanged to avoid allocating on the hot path.
+func filterNATSRules(rules []*Rule, filter NATSTriggerFilter) []*Rule {
+	if filter == nil {
+		return rules
+	}
+	pass := 0
+	for _, r := range rules {
+		if r.Trigger.NATS != nil && filter(r.Trigger.NATS) {
+			pass++
+		}
+	}
+	if pass == len(rules) {
+		return rules
+	}
+	filtered := make([]*Rule, 0, pass)
+	for _, r := range rules {
+		if r.Trigger.NATS != nil && filter(r.Trigger.NATS) {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
+}
+
 // GetScheduleRules returns all schedule-triggered rules.
 // Returns KV-loaded schedule rules when set (even if empty); falls back to file-loaded rules.
 func (p *Processor) GetScheduleRules() []*Rule {
@@ -472,16 +497,29 @@ func (p *Processor) ReplaceKVRuleSet(set *KVRuleSet) {
 // ProcessForSubscription processes a message using O(1) lookup by trigger subject.
 // triggerSubject is the trigger pattern (e.g., "sensors.tank.>") used for rule lookup.
 // messageSubject is the actual message subject (e.g., "sensors.tank.001") used for template variables.
-// Falls back to ProcessNATS (pattern matching) if no KV rules are loaded.
-func (p *Processor) ProcessForSubscription(triggerSubject, messageSubject string, payload []byte, headers map[string]string) ([]*Action, error) {
+// Falls back to index pattern matching if no KV rules are loaded.
+//
+// filter selects which rules this transport evaluates (JetStreamRuleFilter for
+// JetStream consumers, CoreRuleFilter for core subscriptions); nil means all.
+// A subject can be served by both transports — via overlapping wildcards or
+// mixed-mode rules on one subject — and each delivery must only fire its own
+// rules or every such message double-fires.
+func (p *Processor) ProcessForSubscription(triggerSubject, messageSubject string, payload []byte, headers map[string]string, filter NATSTriggerFilter) ([]*Action, error) {
 	set := p.loadKVRuleSet()
 	if set == nil {
-		return p.ProcessNATS(messageSubject, payload, headers)
+		return p.processNATSFiltered(messageSubject, payload, headers, filter)
 	}
 
 	rules := set.NATS[triggerSubject]
 	if len(rules) == 0 {
-		return p.ProcessNATS(messageSubject, payload, headers)
+		return p.processNATSFiltered(messageSubject, payload, headers, filter)
+	}
+
+	// Rules exist for this subject but none belong to this transport: done.
+	// (No fallback — pattern matching would re-match the other transport's rules.)
+	rules = filterNATSRules(rules, filter)
+	if len(rules) == 0 {
+		return nil, nil
 	}
 
 	p.logger.Debug("processing via KV rules",
@@ -540,12 +578,18 @@ func (p *Processor) ProcessSchedule(rule *Rule) ([]*Action, error) {
 
 // ProcessNATS processes a NATS message through the rule engine
 func (p *Processor) ProcessNATS(subject string, payload []byte, headers map[string]string) ([]*Action, error) {
+	return p.processNATSFiltered(subject, payload, headers, nil)
+}
+
+// processNATSFiltered is ProcessNATS with an optional transport filter applied
+// to the pattern-matched rules (see ProcessForSubscription).
+func (p *Processor) processNATSFiltered(subject string, payload []byte, headers map[string]string, filter NATSTriggerFilter) ([]*Action, error) {
 	p.logger.Debug("processing NATS message", "subject", subject, "payloadSize", len(payload))
 
 	// Create SubjectContext first so we can reuse its tokens for pattern matching
 	subjectCtx := NewSubjectContext(subject)
 
-	rules := p.index.FindAllMatchingTokenized(subject, subjectCtx.Tokens)
+	rules := filterNATSRules(p.index.FindAllMatchingTokenized(subject, subjectCtx.Tokens), filter)
 	if len(rules) == 0 {
 		return nil, nil
 	}

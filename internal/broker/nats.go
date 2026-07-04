@@ -64,6 +64,12 @@ type NATSBroker struct {
 	// Subscription manager for message processing
 	subscriptionMgr *SubscriptionManager
 
+	// HTTP action executor shared by the JetStream and core-NATS transports.
+	// Set by the gateway feature after broker startup, so reads go through
+	// GetHTTPExecutor which takes the mutex (traffic may already be flowing).
+	httpExecMu   sync.RWMutex
+	httpExecutor HTTPActionExecutor
+
 	// Consumer management - track created consumers
 	consumersMu sync.RWMutex
 	consumers   map[string]string // subject -> consumer name
@@ -315,6 +321,26 @@ func (b *NATSBroker) FindStreamForSubject(subject string) (string, error) {
 // GetSubscriptionManager returns the subscription manager
 func (b *NATSBroker) GetSubscriptionManager() *SubscriptionManager {
 	return b.subscriptionMgr
+}
+
+// SetHTTPExecutor registers the executor for HTTP actions on NATS-triggered
+// rules. It serves both the JetStream SubscriptionManager and the core-NATS
+// Responder. Called by the gateway feature when enabled.
+func (b *NATSBroker) SetHTTPExecutor(exec HTTPActionExecutor) {
+	b.httpExecMu.Lock()
+	b.httpExecutor = exec
+	b.httpExecMu.Unlock()
+	if b.subscriptionMgr != nil {
+		b.subscriptionMgr.SetHTTPExecutor(exec)
+	}
+}
+
+// GetHTTPExecutor returns the registered HTTP action executor, or nil when the
+// gateway feature is disabled.
+func (b *NATSBroker) GetHTTPExecutor() HTTPActionExecutor {
+	b.httpExecMu.RLock()
+	defer b.httpExecMu.RUnlock()
+	return b.httpExecutor
 }
 
 // InitializeKVCache populates the local cache and subscribes to changes using Watch API
@@ -821,12 +847,13 @@ func newActionMsg(action *rule.NATSAction) *nats.Msg {
 	return msg
 }
 
-// Publish publishes a NATS action using the configured publish mode (jetstream or core).
+// Publish publishes a NATS action using the action's publish mode when set,
+// falling back to the configured global mode (jetstream or core).
 // This is used by the scheduler to publish without a SubscriptionManager.
 func (b *NATSBroker) Publish(ctx context.Context, action *rule.NATSAction) error {
 	msg := newActionMsg(action)
 
-	if b.config.NATS.Publish.Mode == "core" {
+	if effectivePublishMode(action, b.config.NATS.Publish.Mode) == "core" {
 		if len(msg.Header) == 0 {
 			return b.natsConn.Publish(msg.Subject, msg.Data)
 		}

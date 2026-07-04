@@ -48,10 +48,11 @@ func NewGatewayApp(base *BaseApp, cfg *config.Config) (*GatewayApp, error) {
 		base:      base,
 	}
 
-	// Wire HTTP executor into the shared SubscriptionManager so it can handle
-	// NATS-trigger + HTTP-action rules alongside NATS-trigger + NATS-action rules.
+	// Wire HTTP executor into the broker so both transports (JetStream
+	// SubscriptionManager and core-NATS Responder) can handle NATS-trigger +
+	// HTTP-action rules alongside NATS-trigger + NATS-action rules.
 	httpExec := httpclient.NewHTTPExecutor(&cfg.HTTP.Client, base.Logger, base.Metrics, base.Broker)
-	base.Broker.GetSubscriptionManager().SetHTTPExecutor(httpExec)
+	base.Broker.SetHTTPExecutor(httpExec)
 
 	// Setup inbound server (HTTP → NATS)
 	if err := app.setupInboundServer(); err != nil {
@@ -168,6 +169,16 @@ func (app *GatewayApp) setupOutboundSubscriptions() error {
 
 	for _, r := range allRules {
 		if r.Trigger.NATS != nil && r.Action.HTTP != nil {
+			// Core-transport triggers (reply:true or mode:core) are served by the
+			// router feature's core-NATS responder, not a JetStream consumer.
+			if r.Trigger.NATS.IsCore() {
+				if !app.config.Features.Router {
+					app.logger.Warn("core-mode NATS trigger requires the router feature; rule will not fire",
+						"subject", r.Trigger.NATS.Subject,
+						"hint", "enable features.router to serve mode:core triggers")
+				}
+				continue
+			}
 			subject := r.Trigger.NATS.Subject
 			if outboundSubjects[subject] {
 				continue

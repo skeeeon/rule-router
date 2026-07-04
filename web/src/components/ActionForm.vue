@@ -149,6 +149,19 @@ function toggleOption(target, key, factory) {
         </span>
       </div>
 
+      <div class="field">
+        <label>Publish Mode <span class="optional">(optional)</span></label>
+        <select v-model="action.nats.mode" :class="{ error: errorFor('action.nats.mode') }">
+          <option value="">Inherit global config</option>
+          <option value="jetstream">JetStream</option>
+          <option value="core">Core NATS</option>
+        </select>
+        <span class="field-error" v-if="errorFor('action.nats.mode')">
+          {{ errorFor('action.nats.mode').message }}
+        </span>
+        <span class="field-hint">JetStream: acked, needs a stream on the subject. Core: fire-and-forget.</span>
+      </div>
+
       <div v-if="!isSchedule" class="field">
         <label class="checkbox inline">
           <input type="checkbox" v-model="action.nats.passthrough" :disabled="action.nats.merge"> Passthrough

@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/rand"
 	"net/textproto"
 	"runtime/debug"
 	"sync"
@@ -30,9 +29,6 @@ const (
 
 	// errorBackoffDelay is the delay after encountering errors to avoid tight retry loops
 	errorBackoffDelay = 100 * time.Millisecond
-
-	// maxRetryJitter is the maximum jitter added to retry delays to prevent thundering herd
-	maxRetryJitter = 25 * time.Millisecond
 )
 
 // HTTPActionExecutor handles HTTP action execution. Implemented by httpclient.HTTPExecutor.
@@ -58,7 +54,7 @@ type SubscriptionManager struct {
 	processor     *rule.Processor
 	httpExecutor  HTTPActionExecutor
 	consumerCfg   *config.ConsumerConfig
-	publishCfg    *config.PublishConfig
+	publisher     *actionPublisher
 	subscriptions map[string]*Subscription
 	wg            sync.WaitGroup
 	mu            sync.RWMutex
@@ -101,7 +97,7 @@ func NewSubscriptionManager(
 		metrics:       metrics,
 		processor:     processor,
 		consumerCfg:   consumerConfig,
-		publishCfg:    publishConfig,
+		publisher:     newActionPublisher(natsConn, js, publishConfig, logger, metrics),
 		subscriptions: make(map[string]*Subscription),
 	}
 }
@@ -429,7 +425,9 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 
 	// Process through rule engine using O(1) KV rule lookup by trigger subject,
 	// falling back to index-based pattern matching if no KV rules are loaded.
-	actions, err := sm.processor.ProcessForSubscription(triggerSubject, msg.Subject(), msg.Data(), headers)
+	// Only JetStream-mode rules are evaluated here; core-mode and reply rules
+	// are served by the Responder's core subscriptions.
+	actions, err := sm.processor.ProcessForSubscription(triggerSubject, msg.Subject(), msg.Data(), headers, rule.JetStreamRuleFilter)
 	if err != nil {
 		// This error will be caught by the caller (processMessageWithRecovery) and handled appropriately.
 		return fmt.Errorf("rule processing failed: %w", err)
@@ -449,7 +447,7 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 	for _, action := range actions {
 		// Check for NATS action
 		if action.NATS != nil {
-			if err := sm.publishActionWithRetry(actionCtx, action.NATS); err != nil {
+			if err := sm.publisher.PublishWithRetry(actionCtx, action.NATS); err != nil {
 				sm.logger.Error("failed to publish NATS action after retries",
 					"actionSubject", action.NATS.Subject,
 					"error", err)
@@ -488,11 +486,9 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 				}
 			}
 		} else if action.Respond != nil {
-			// Respond actions only have a transport on the core-NATS responder
-			// (reply:true subjects). A reply rule's subject can also be covered by
-			// a JetStream consumer (a non-reply rule on the same subject, or an
-			// overlapping wildcard), in which case its respond action arrives here
-			// with nothing to reply to. Skip it quietly rather than erroring.
+			// Defensive: reply rules are core-mode, so the JetStreamRuleFilter
+			// above should keep their respond actions from ever reaching this
+			// path. If one does, there is nothing to reply to — skip quietly.
 			sm.logger.Debug("respond action on JetStream-delivered message has no reply target; skipping",
 				"subject", msg.Subject())
 		} else {
@@ -503,103 +499,6 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 
 	duration := time.Since(start)
 	sm.logger.Debug("message processed", "subject", msg.Subject(), "duration", duration, "actionsPublished", len(actions))
-	return nil
-}
-
-// publishActionWithRetry publishes a NATS action with exponential backoff and jitter.
-func (sm *SubscriptionManager) publishActionWithRetry(ctx context.Context, action *rule.NATSAction) error {
-	maxRetries := sm.publishCfg.MaxRetries
-	baseDelay := sm.publishCfg.RetryBaseDelay
-	publishMode := sm.publishCfg.Mode
-
-	var lastErr error
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		if ctx.Err() != nil {
-			return fmt.Errorf("context cancelled: %w", ctx.Err())
-		}
-
-		var err error
-		if publishMode == "core" {
-			err = sm.publishCore(ctx, action)
-		} else {
-			err = sm.publishJetStream(ctx, action)
-		}
-
-		if err == nil {
-			return nil
-		}
-
-		lastErr = err
-		sm.logger.Warn("action publish failed, will retry",
-			"attempt", attempt+1, "maxRetries", maxRetries, "subject", action.Subject, "error", err)
-		if sm.metrics != nil {
-			sm.metrics.IncActionPublishFailures()
-		}
-
-		if attempt == maxRetries-1 {
-			break
-		}
-
-		// Exponential backoff with jitter
-		delay := baseDelay * time.Duration(1<<attempt)
-		jitter := time.Duration(rand.Intn(int(maxRetryJitter.Milliseconds()))) * time.Millisecond
-
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("context cancelled during retry backoff: %w", ctx.Err())
-		case <-time.After(delay + jitter):
-		}
-	}
-
-	return fmt.Errorf("failed to publish after %d attempts (mode: %s): %w", maxRetries, publishMode, lastErr)
-}
-
-// publishJetStream publishes to JetStream using the async model for high throughput.
-func (sm *SubscriptionManager) publishJetStream(ctx context.Context, action *rule.NATSAction) error {
-	msg := newActionMsg(action)
-
-	// Publish async
-	ackF, err := sm.jetStream.PublishMsgAsync(msg)
-	if err != nil {
-		// This error occurs if the async buffer is full (backpressure).
-		return fmt.Errorf("jetstream async publish failed on send: %w", err)
-	}
-
-	// Wait for acknowledgement with timeout
-	pubCtx, cancel := context.WithTimeout(ctx, sm.publishCfg.AckTimeout)
-	defer cancel()
-
-	select {
-	case <-ackF.Ok():
-		return nil // Publish was successful.
-	case err := <-ackF.Err():
-		// The server returned an error for this publish.
-		if errors.Is(err, nats.ErrNoResponders) {
-			return fmt.Errorf("jetstream publish failed: no stream is configured for action subject '%s'", action.Subject)
-		}
-		return fmt.Errorf("jetstream async publish failed on ack: %w", err)
-	case <-pubCtx.Done():
-		// We timed out waiting for the server's acknowledgement.
-		return fmt.Errorf("timeout waiting for publish acknowledgement: %w", pubCtx.Err())
-	}
-}
-
-// publishCore publishes to core NATS (fire-and-forget, no ack).
-func (sm *SubscriptionManager) publishCore(ctx context.Context, action *rule.NATSAction) error {
-	msg := newActionMsg(action)
-
-	// Fast path: if there are no headers, use the simple Publish method.
-	if len(msg.Header) == 0 {
-		if err := sm.natsConn.Publish(msg.Subject, msg.Data); err != nil {
-			return fmt.Errorf("core nats publish failed: %w", err)
-		}
-		return nil
-	}
-
-	if err := sm.natsConn.PublishMsg(msg); err != nil {
-		return fmt.Errorf("core nats publish with headers failed: %w", err)
-	}
-
 	return nil
 }
 

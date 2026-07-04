@@ -47,12 +47,23 @@ function toggleHMAC(target) {
         </span>
         <span class="field-hint">Supports * and > wildcards</span>
       </div>
+      <div v-if="!trigger.nats.reply" class="field">
+        <label>Mode <span class="optional">(optional)</span></label>
+        <select v-model="trigger.nats.mode" :class="{ error: errorFor('trigger.nats.mode') }">
+          <option value="">JetStream (default)</option>
+          <option value="core">Core NATS</option>
+        </select>
+        <span class="field-error" v-if="errorFor('trigger.nats.mode')">
+          {{ errorFor('trigger.nats.mode').message }}
+        </span>
+        <span class="field-hint">JetStream: durable consumer, at-least-once, needs a stream. Core: plain subscription, at-most-once, no stream required.</span>
+      </div>
       <label class="checkbox">
         <input type="checkbox" v-model="trigger.nats.reply">
         Request/Reply responder
       </label>
       <span class="field-hint">Subscribe via core NATS and answer each request with a respond action (msg.Respond). The action is forced to Respond.</span>
-      <div v-if="trigger.nats.reply" class="field">
+      <div v-if="trigger.nats.reply || trigger.nats.mode === 'core'" class="field">
         <label>Queue <span class="optional">(optional)</span></label>
         <input
           v-model="trigger.nats.queue"
@@ -63,7 +74,7 @@ function toggleHMAC(target) {
           autocomplete="off"
           spellcheck="false"
         >
-        <span class="field-hint">Load-balance requests across responder instances</span>
+        <span class="field-hint">Load-balance messages across subscriber instances</span>
       </div>
       <label class="checkbox">
         <input type="checkbox" :checked="!!trigger.nats.debounce" @change="toggleDebounce(trigger.nats)">

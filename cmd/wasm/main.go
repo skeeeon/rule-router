@@ -39,6 +39,7 @@ type evaluateResult struct {
 type actionResult struct {
 	Type        string            `json:"type"`
 	Subject     string            `json:"subject,omitempty"`
+	Mode        string            `json:"mode,omitempty"` // NATS publish mode override (jetstream/core)
 	URL         string            `json:"url,omitempty"`
 	Method      string            `json:"method,omitempty"`
 	StatusCode  int               `json:"statusCode,omitempty"`
@@ -152,6 +153,7 @@ func evaluateRule(_ js.Value, args []js.Value) interface{} {
 			result.Actions = append(result.Actions, actionResult{
 				Type:        "nats",
 				Subject:     a.NATS.Subject,
+				Mode:        a.NATS.Mode,
 				Payload:     payload,
 				Headers:     a.NATS.Headers,
 				Passthrough: a.NATS.Passthrough,

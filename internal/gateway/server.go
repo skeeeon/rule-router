@@ -313,8 +313,12 @@ func (s *InboundServer) publishToNATS(ctx context.Context, action *rule.NATSActi
 		}
 	}
 
-	// Publish based on mode
-	if s.publishCfg.Mode == "core" {
+	// Publish based on mode: per-action override, else the global config
+	mode := s.publishCfg.Mode
+	if action.Mode != "" {
+		mode = action.Mode
+	}
+	if mode == "core" {
 		return s.natsConn.PublishMsg(msg)
 	}
 

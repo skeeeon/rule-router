@@ -18,6 +18,7 @@ function rawToRule(raw, file) {
   if (raw.trigger?.nats) {
     rule.trigger.type = 'nats'
     rule.trigger.nats.subject = raw.trigger.nats.subject || ''
+    rule.trigger.nats.mode = raw.trigger.nats.mode || ''
     rule.trigger.nats.reply = raw.trigger.nats.reply || false
     rule.trigger.nats.queue = raw.trigger.nats.queue || ''
     if (raw.trigger.nats.debounce) {
@@ -98,6 +99,7 @@ function rawToConditionItem(raw) {
 function rawToNATSAction(raw) {
   const action = createNATSAction()
   action.subject = raw.subject || ''
+  action.mode = raw.mode || ''
   action.payload = raw.payload || ''
   action.passthrough = raw.passthrough || false
   action.merge = raw.merge || false

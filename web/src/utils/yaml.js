@@ -27,6 +27,9 @@ function pushTrigger(lines, trigger, indent) {
   if (trigger.type === 'nats') {
     lines.push(`${pad}nats:`)
     lines.push(`${pad}  subject: ${yamlString(trigger.nats.subject)}`)
+    if (trigger.nats.mode && !trigger.nats.reply) {
+      lines.push(`${pad}  mode: ${yamlString(trigger.nats.mode)}`)
+    }
     if (trigger.nats.reply) {
       lines.push(`${pad}  reply: true`)
     }
@@ -121,6 +124,9 @@ function pushAction(lines, action, indent) {
       pushConditions(lines, a.filter, indent + 4)
     }
     lines.push(`${pad}  subject: ${yamlString(a.subject)}`)
+    if (a.mode) {
+      lines.push(`${pad}  mode: ${yamlString(a.mode)}`)
+    }
     if (a.request) {
       lines.push(`${pad}  request: true`)
     }

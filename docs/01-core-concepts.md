@@ -50,7 +50,18 @@ trigger:
     subject: "sensors.temperature.>" # Supports wildcards
 ```
 
-Add `reply: true` to turn the subject into a **request/reply service**: the router subscribes via core NATS (not JetStream) and answers each request via a `respond` action. An optional `queue` joins a queue group so multiple instances load-balance requests.
+By default the router consumes via a **JetStream** pull consumer (durable, at-least-once, requires a stream covering the subject). Set `mode: core` to subscribe via **plain core NATS** instead: at-most-once, no stream or consumer needed, lowest latency — the right fit for ephemeral telemetry, monitoring taps, or subjects that have no stream. An optional `queue` joins a queue group so multiple instances load-balance messages (core mode only).
+```yaml
+trigger:
+  nats:
+    subject: "metrics.heartbeat.>"
+    mode: core        # optional; "jetstream" (default) or "core"
+    queue: "monitors" # optional; load-balance across core subscribers
+```
+
+Rules of thumb: pick `core` when losing a message during a restart or disconnect is acceptable; keep the JetStream default when every message must be processed. Core-mode subjects are excluded from stream validation, and a subject can safely be covered by both core-mode and JetStream rules (each rule fires exactly once, on its own transport). Core-transport triggers (`mode: core` and `reply: true`) are served by the **router** feature — enable `features.router` for them to fire.
+
+Add `reply: true` to turn the subject into a **request/reply service**: the router subscribes via core NATS (`reply` implies `mode: core`) and answers each request via a `respond` action. An optional `queue` joins a queue group so multiple instances load-balance requests.
 ```yaml
 trigger:
   nats:
@@ -242,6 +253,15 @@ action:
         "device": "{device_id}",
         "timestamp": "{@timestamp()}"
       }
+```
+
+An optional `mode` overrides the global `nats.publish.mode` config for this action: `jetstream` publishes with an awaited ack (requires a stream covering the action subject), `core` is a fire-and-forget core NATS publish (no ack, no stream needed). Omit it to inherit the global default.
+```yaml
+action:
+  nats:
+    subject: "notifications.ui.{device_id}"
+    mode: core   # optional; "jetstream" or "core"; omit to inherit nats.publish.mode
+    payload: '{"status": "ok"}'
 ```
 
 **HTTP Action**: Makes an outbound HTTP request to an external service.

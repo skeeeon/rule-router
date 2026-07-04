@@ -154,6 +154,8 @@ nats:
 | `maxRetries` | int | `3` | — | Publish retry attempts on failure (`jetstream` mode). |
 | `retryBaseDelay` | duration | `50ms` | — | Base delay for publish-retry backoff. |
 
+> **Per-rule override:** a NATS action may set its own `mode: jetstream | core` to override this global default for that action only (see [Core Concepts — NATS Action](./01-core-concepts.md#3-actions-the-then)). The other knobs (`ackTimeout`, `maxRetries`, `retryBaseDelay`) always come from this config. Similarly, a NATS *trigger* may set `mode: core` to consume via a plain core subscription instead of a JetStream consumer.
+
 ---
 
 ## `http` — gateway server & shared HTTP client

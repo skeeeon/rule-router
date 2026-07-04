@@ -159,6 +159,13 @@ onUnmounted(() => { document.removeEventListener('keydown', onEscape) })
           </tbody></table>
           <p class="help-text">Passthrough and payload are mutually exclusive. Merge requires a payload.</p>
 
+          <h3>NATS Publish Mode</h3>
+          <table class="help-table"><tbody>
+            <tr><td class="mono">mode: jetstream</td><td>Acked publish — requires a stream covering the action subject</td></tr>
+            <tr><td class="mono">mode: core</td><td>Fire-and-forget core NATS publish — no ack, no stream needed</td></tr>
+          </tbody></table>
+          <p class="help-text">Omit <code>mode</code> to inherit the global <code>nats.publish.mode</code> config.</p>
+
           <h3>forEach</h3>
           <p class="help-text">Iterate over an array field, generating one action per element:</p>
           <table class="help-table"><tbody>
@@ -183,8 +190,9 @@ onUnmounted(() => { document.removeEventListener('keydown', onEscape) })
             <tr><td class="mono">sensors.temperature</td><td>Exact subject match</td></tr>
             <tr><td class="mono">sensors.*.room1</td><td>Single-level wildcard</td></tr>
             <tr><td class="mono">sensors.></td><td>Multi-level wildcard (must be last)</td></tr>
+            <tr><td class="mono">mode: core</td><td>Subscribe via plain core NATS (at-most-once, no stream needed) instead of a JetStream consumer</td></tr>
             <tr><td class="mono">reply: true</td><td>Request/reply service — subscribe via core NATS and answer via a respond action</td></tr>
-            <tr><td class="mono">queue</td><td>Optional queue group to load-balance requests across responders</td></tr>
+            <tr><td class="mono">queue</td><td>Optional queue group to load-balance across core subscribers (reply or mode: core)</td></tr>
           </tbody></table>
 
           <h3>HTTP Trigger</h3>

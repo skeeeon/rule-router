@@ -99,12 +99,20 @@ Config files live in `config/` (YAML). Loaded via Viper with environment variabl
 
 Rules are YAML files in the `rules/` directory (organized by app: `rules/router/`, `rules/http/`, `rules/scheduler/`). Each rule has a trigger (nats subject, http path, or cron schedule), optional conditions, and an action: publish to a NATS subject (`action.nats`), call an HTTP endpoint (`action.http`), or reply to the caller (`action.respond`).
 
+### NATS Delivery Modes
+
+Both NATS triggers and NATS actions accept an optional `mode: jetstream | core`:
+
+- **`trigger.nats.mode`** (default `jetstream`) selects the subscription transport. `core` means a plain core NATS subscription (at-most-once, no stream/consumer required, excluded from stream validation) served by `broker.Responder` — the same component that serves `reply: true` rules (`reply` implies core; `reply` + `mode: jetstream` is a load-time error). `queue` is valid on any core-transport trigger. `NATSTrigger.IsCore()` is the single classification helper; RouterApp (`jetStreamSubjects`), RuleKVManager (`collectNATSTriggerSubjects`/`hasCoreRules`/`GetCoreRules`), StreamResolver, and GatewayApp (`setupOutboundSubscriptions`) all branch on it. The Responder lives under `features.router` — core-transport triggers do not fire in gateway-only deployments (a startup warning flags this).
+- **`action.nats.mode`** (default: inherit global `nats.publish.mode`) selects the publish transport per action. Resolved by `effectivePublishMode` in the shared `broker.actionPublisher` (used by SubscriptionManager and Responder), `NATSBroker.Publish` (scheduler/httpclient), and the gateway's `publishToNATS`. Retry/ack tuning stays global.
+- **Double-fire guard**: `Processor.ProcessForSubscription` takes a `NATSTriggerFilter` (`JetStreamRuleFilter` / `CoreRuleFilter`) so each transport only evaluates its own rules — required because a subject can be covered by both transports (mixed-mode rules or overlapping wildcards). When adding new subscription paths, always pass the right filter.
+
 ### Request/Reply & HTTP Responses
 
 Beyond fire-and-forget routing, a rule can return a correlated response to the caller. Three shapes, all built on `action.respond` (a single terminal response — payload/passthrough/merge/headers like a NATS action, plus an HTTP-only `statusCode`; no `forEach`/`debounce`) and a `request` flag on `action.nats`:
 
 - **HTTP synchronous respond (B1):** an HTTP-triggered rule with `action.respond` writes the evaluated payload back as the HTTP response (`statusCode` defaults to 200). The inbound gateway routes such paths to an inline synchronous handler (`Processor.HasSyncHTTPPath`) instead of the fire-and-forget worker queue.
-- **NATS responder (A1):** a NATS trigger with `reply: true` (optional `queue` for load-balancing) makes the router subscribe via **core NATS** (not JetStream — see `internal/broker/responder.go`, wired in `RouterApp` under `features.router`) and answer each request via `msg.Respond` using the `respond` action. Reply subjects are excluded from JetStream consumer creation and stream validation.
+- **NATS responder (A1):** a NATS trigger with `reply: true` (optional `queue` for load-balancing) makes the router subscribe via **core NATS** (not JetStream — see `internal/broker/responder.go`, wired in `RouterApp` under `features.router`) and answer each request via `msg.Respond` using the `respond` action. Reply subjects are excluded from JetStream consumer creation and stream validation. The Responder also serves `trigger.nats.mode: core` rules, executing their NATS/HTTP actions (see NATS Delivery Modes above).
 - **HTTP↔NATS bridge (B2):** an HTTP-triggered rule with `action.nats.request: true` (+ optional `timeout`, default 5s) makes the gateway issue `nc.Request` and return the reply as the HTTP response (`nats.ErrNoResponders` → 503, timeout → 504). `request: true` is only honored on HTTP triggers.
 
 Cross-checks live in `loader.go::validateTriggerActionCompatibility`. When adding/altering these fields, update every schema surface: `internal/cli` + `internal/tester` (rule-cli), `cmd/wasm/main.go` (`actionResult`), and the web rule-builder (`web/src/`).

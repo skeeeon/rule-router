@@ -410,6 +410,15 @@ func (l *RulesLoader) validateTrigger(trigger *Trigger, filePath string, ruleInd
 		if err := l.validateDebounceConfig(trigger.NATS.Debounce, "trigger.nats.debounce"); err != nil {
 			return err
 		}
+		if err := validateNATSMode(trigger.NATS.Mode, "trigger"); err != nil {
+			return err
+		}
+		if trigger.NATS.Reply && trigger.NATS.Mode == ModeJetStream {
+			return fmt.Errorf("NATS trigger with 'reply: true' uses core request/reply transport and cannot set 'mode: jetstream'")
+		}
+		if trigger.NATS.Queue != "" && !trigger.NATS.IsCore() {
+			return fmt.Errorf("NATS trigger 'queue' requires a core subscription — set 'reply: true' or 'mode: core'")
+		}
 	}
 
 	if trigger.HTTP != nil {
@@ -545,10 +554,22 @@ func (l *RulesLoader) validateRespondAction(action *RespondAction) error {
 	return nil
 }
 
+// validateNATSMode checks a trigger/action delivery mode value.
+func validateNATSMode(mode, where string) error {
+	if mode != "" && mode != ModeJetStream && mode != ModeCore {
+		return fmt.Errorf("NATS %s mode must be 'jetstream' or 'core', got: %q", where, mode)
+	}
+	return nil
+}
+
 // validateNATSAction validates a NATS action configuration
 func (l *RulesLoader) validateNATSAction(action *NATSAction) error {
 	if action.Subject == "" {
 		return fmt.Errorf("NATS action subject cannot be empty")
+	}
+
+	if err := validateNATSMode(action.Mode, "action"); err != nil {
+		return err
 	}
 
 	if action.Passthrough && action.Payload != "" {

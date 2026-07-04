@@ -1,0 +1,87 @@
+# Core NATS Delivery Mode Example Rules
+# Demonstrates selecting core NATS instead of JetStream per rule.
+#
+# Triggers: `mode: core` subscribes via a plain core NATS subscription instead
+# of a JetStream pull consumer — at-most-once, lowest latency, and the subject
+# needs NO stream (it is excluded from stream validation). The default (no
+# mode) remains JetStream. `queue` load-balances across router instances.
+#
+# Actions: `mode: core` publishes fire-and-forget (no ack, no stream needed);
+# `mode: jetstream` forces an acked JetStream publish. Omit to inherit the
+# global `nats.publish.mode` config.
+
+# ============================================================================
+# CORE TRIGGER + CORE ACTION (fully ephemeral path)
+# ============================================================================
+
+# Example 1: Heartbeat monitoring tap. Heartbeats are high-volume and
+# ephemeral — missing one during a restart is fine, so neither the inbound
+# subject nor the outbound notification needs a stream.
+#
+# Test with:
+#   nats pub metrics.heartbeat.node1 '{"status":"degraded"}'
+- trigger:
+    nats:
+      subject: "metrics.heartbeat.*"
+      mode: core
+      queue: "monitors"
+  conditions:
+    operator: and
+    items:
+      - field: "{status}"
+        operator: eq
+        value: "degraded"
+  action:
+    nats:
+      subject: "notifications.ui.{@subject.2}"
+      mode: core
+      payload: |
+        {
+          "node": "{@subject.2}",
+          "status": "{status}",
+          "seenAt": "{@timestamp()}"
+        }
+
+# ============================================================================
+# CORE TRIGGER + JETSTREAM ACTION (ephemeral in, durable out)
+# ============================================================================
+
+# Example 2: Promote interesting ephemeral events into a durable stream.
+# The tap itself is at-most-once, but anything that matches is published with
+# a JetStream ack so it lands reliably in the alerts stream.
+- trigger:
+    nats:
+      subject: "metrics.heartbeat.*"
+      mode: core
+  conditions:
+    operator: and
+    items:
+      - field: "{status}"
+        operator: eq
+        value: "failed"
+  action:
+    nats:
+      subject: "alerts.node_down"
+      mode: jetstream
+      payload: |
+        {
+          "node": "{@subject.2}",
+          "detectedAt": "{@timestamp()}",
+          "id": "{@uuid7()}"
+        }
+
+# ============================================================================
+# JETSTREAM TRIGGER + CORE ACTION (durable in, ephemeral side-channel out)
+# ============================================================================
+
+# Example 3: Durable order processing that also pings a live dashboard.
+# The trigger stays on JetStream (every order must be processed), but the
+# dashboard notification is fire-and-forget — no stream needed for it.
+- trigger:
+    nats:
+      subject: "orders.created"
+  action:
+    nats:
+      subject: "dashboard.orders.live"
+      mode: core
+      passthrough: true

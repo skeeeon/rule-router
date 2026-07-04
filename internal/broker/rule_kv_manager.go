@@ -42,7 +42,7 @@ type RuleKVManager struct {
 	logger              *logger.Logger
 	currentRules        map[string][]rule.Rule // KV key → parsed rules
 	scheduleRebuildFunc func([]*rule.Rule)     // optional: called when schedule rules change
-	replyRebuildFunc    func([]*rule.Rule)     // optional: called when reply:true rules change
+	coreRebuildFunc     func([]*rule.Rule)     // optional: called when core-transport (reply/mode:core) rules change
 	mu                  sync.Mutex
 	wg                  sync.WaitGroup
 	ready               chan struct{}
@@ -156,12 +156,13 @@ func (m *RuleKVManager) SetScheduleRebuildFunc(f func([]*rule.Rule)) {
 	m.mu.Unlock()
 }
 
-// SetReplyRebuildFunc registers a callback invoked whenever the set of reply:true
-// NATS-triggered rules changes. The RouterApp uses this to rebuild its core-NATS
-// responder subscriptions without restarting the process.
-func (m *RuleKVManager) SetReplyRebuildFunc(f func([]*rule.Rule)) {
+// SetCoreRebuildFunc registers a callback invoked whenever the set of
+// core-transport NATS-triggered rules (reply:true or mode:core) changes. The
+// RouterApp uses this to rebuild its core-NATS responder subscriptions without
+// restarting the process.
+func (m *RuleKVManager) SetCoreRebuildFunc(f func([]*rule.Rule)) {
 	m.mu.Lock()
-	m.replyRebuildFunc = f
+	m.coreRebuildFunc = f
 	m.mu.Unlock()
 }
 
@@ -309,13 +310,13 @@ func (m *RuleKVManager) handleRulePut(key string, value []byte, revision uint64)
 	m.mu.Lock()
 
 	previousSubjects := m.collectNATSTriggerSubjects(m.currentRules[key])
-	prevHadReply := m.hasReplyRules(m.currentRules[key])
+	prevHadCore := m.hasCoreRules(m.currentRules[key])
 	m.currentRules[key] = rules
-	scheduleRules, replyRules := m.pushRulesToProcessor()
+	scheduleRules, coreRules := m.pushRulesToProcessor()
 
 	newSubjects := m.collectNATSTriggerSubjects(rules)
 	rebuildFunc := m.scheduleRebuildFunc
-	replyRebuildFunc := m.replyRebuildFunc
+	coreRebuildFunc := m.coreRebuildFunc
 
 	m.mu.Unlock()
 
@@ -324,9 +325,9 @@ func (m *RuleKVManager) handleRulePut(key string, value []byte, revision uint64)
 		rebuildFunc(scheduleRules)
 	}
 
-	// Rebuild responder subscriptions if this key added or removed reply rules
-	if replyRebuildFunc != nil && (prevHadReply || m.hasReplyRules(rules)) {
-		replyRebuildFunc(replyRules)
+	// Rebuild core subscriptions if this key added or removed core-transport rules
+	if coreRebuildFunc != nil && (prevHadCore || m.hasCoreRules(rules)) {
+		coreRebuildFunc(coreRules)
 	}
 
 	// Start subscriptions for newly added NATS trigger subjects (outside lock)
@@ -361,9 +362,9 @@ func (m *RuleKVManager) handleRuleDelete(key string) {
 
 	oldSubjects := m.collectNATSTriggerSubjects(oldRules)
 	oldHadScheduleRules := m.hasScheduleRules(oldRules)
-	oldHadReplyRules := m.hasReplyRules(oldRules)
+	oldHadCoreRules := m.hasCoreRules(oldRules)
 	delete(m.currentRules, key)
-	scheduleRules, replyRules := m.pushRulesToProcessor()
+	scheduleRules, coreRules := m.pushRulesToProcessor()
 
 	// Compute which subjects are still needed by other keys
 	stillNeeded := make(map[string]bool)
@@ -373,7 +374,7 @@ func (m *RuleKVManager) handleRuleDelete(key string) {
 		}
 	}
 	rebuildFunc := m.scheduleRebuildFunc
-	replyRebuildFunc := m.replyRebuildFunc
+	coreRebuildFunc := m.coreRebuildFunc
 
 	m.mu.Unlock()
 
@@ -382,9 +383,9 @@ func (m *RuleKVManager) handleRuleDelete(key string) {
 		rebuildFunc(scheduleRules)
 	}
 
-	// Rebuild responder subscriptions only if the deleted key had reply rules
-	if replyRebuildFunc != nil && oldHadReplyRules {
-		replyRebuildFunc(replyRules)
+	// Rebuild core subscriptions only if the deleted key had core-transport rules
+	if coreRebuildFunc != nil && oldHadCoreRules {
+		coreRebuildFunc(coreRules)
 	}
 
 	// Remove subscriptions for subjects no longer needed (outside lock)
@@ -399,9 +400,9 @@ func (m *RuleKVManager) handleRuleDelete(key string) {
 
 // pushRulesToProcessor aggregates all current rules and atomically swaps them
 // in the Processor. Must be called while holding m.mu.
-// Returns the collected schedule rules and reply:true rules so the caller can
-// invoke the corresponding rebuild callbacks.
-func (m *RuleKVManager) pushRulesToProcessor() (scheduleRules, replyRules []*rule.Rule) {
+// Returns the collected schedule rules and core-transport rules so the caller
+// can invoke the corresponding rebuild callbacks.
+func (m *RuleKVManager) pushRulesToProcessor() (scheduleRules, coreRules []*rule.Rule) {
 	natsRules := make(map[string][]*rule.Rule)
 	httpRules := &rule.HTTPKVRuleSet{
 		Exact:    make(map[string][]*rule.Rule),
@@ -413,8 +414,8 @@ func (m *RuleKVManager) pushRulesToProcessor() (scheduleRules, replyRules []*rul
 			r := &rules[i]
 			if r.Trigger.NATS != nil {
 				natsRules[r.Trigger.NATS.Subject] = append(natsRules[r.Trigger.NATS.Subject], r)
-				if r.Trigger.NATS.Reply {
-					replyRules = append(replyRules, r)
+				if r.Trigger.NATS.IsCore() {
+					coreRules = append(coreRules, r)
 				}
 			}
 			if r.Trigger.HTTP != nil {
@@ -446,7 +447,7 @@ func (m *RuleKVManager) pushRulesToProcessor() (scheduleRules, replyRules []*rul
 		HTTP:     httpRules,
 		Schedule: scheduleRules,
 	})
-	return scheduleRules, replyRules
+	return scheduleRules, coreRules
 }
 
 // hasScheduleRules returns true if any rule in the slice has a schedule trigger.
@@ -461,42 +462,45 @@ func (m *RuleKVManager) hasScheduleRules(rules []rule.Rule) bool {
 
 // collectNATSTriggerSubjects returns the set of trigger subjects for all rules with NATS triggers,
 // regardless of action type (NATS or HTTP). Used for JetStream subscription management.
-// reply:true subjects are excluded — they are served by the core-NATS responder, not JetStream.
+// Core-transport subjects (reply:true or mode:core) are excluded — they are
+// served by the core-NATS responder, not JetStream.
 func (m *RuleKVManager) collectNATSTriggerSubjects(rules []rule.Rule) map[string]bool {
 	subjects := make(map[string]bool)
 	for _, r := range rules {
-		if r.Trigger.NATS != nil && !r.Trigger.NATS.Reply {
+		if r.Trigger.NATS != nil && !r.Trigger.NATS.IsCore() {
 			subjects[r.Trigger.NATS.Subject] = true
 		}
 	}
 	return subjects
 }
 
-// hasReplyRules returns true if any rule in the slice has a reply:true NATS trigger.
-func (m *RuleKVManager) hasReplyRules(rules []rule.Rule) bool {
+// hasCoreRules returns true if any rule in the slice has a core-transport NATS
+// trigger (reply:true or mode:core).
+func (m *RuleKVManager) hasCoreRules(rules []rule.Rule) bool {
 	for _, r := range rules {
-		if r.Trigger.NATS != nil && r.Trigger.NATS.Reply {
+		if r.Trigger.NATS != nil && r.Trigger.NATS.IsCore() {
 			return true
 		}
 	}
 	return false
 }
 
-// GetReplyRules returns all currently-loaded rules with a reply:true NATS trigger.
-// Used by RouterApp to deterministically bootstrap responder subscriptions after
-// initial KV sync, independent of the per-put rebuild callback's timing.
-func (m *RuleKVManager) GetReplyRules() []*rule.Rule {
+// GetCoreRules returns all currently-loaded rules with a core-transport NATS
+// trigger (reply:true or mode:core). Used by RouterApp to deterministically
+// bootstrap responder subscriptions after initial KV sync, independent of the
+// per-put rebuild callback's timing.
+func (m *RuleKVManager) GetCoreRules() []*rule.Rule {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	var replyRules []*rule.Rule
+	var coreRules []*rule.Rule
 	for _, rules := range m.currentRules {
 		for i := range rules {
 			r := &rules[i]
-			if r.Trigger.NATS != nil && r.Trigger.NATS.Reply {
-				replyRules = append(replyRules, r)
+			if r.Trigger.NATS != nil && r.Trigger.NATS.IsCore() {
+				coreRules = append(coreRules, r)
 			}
 		}
 	}
-	return replyRules
+	return coreRules
 }

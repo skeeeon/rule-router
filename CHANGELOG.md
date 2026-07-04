@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Features
+- **Selectable JetStream/core delivery mode on NATS triggers and actions** — the JetStream-vs-core choice, previously global-only for publishes (`nats.publish.mode`) and implicit for subscriptions, is now expressible per rule:
+  - **`trigger.nats.mode: core`** subscribes via a plain core NATS subscription instead of a JetStream pull consumer: at-most-once, lowest latency, no stream or consumer required (the subject is excluded from stream validation). Optional `queue` load-balances across instances (now valid on any core-mode trigger, not just `reply: true`). Served by the generalized core responder, which now executes NATS/HTTP actions in addition to answering `reply: true` requests. Default remains JetStream.
+  - **`action.nats.mode: jetstream | core`** overrides the global `nats.publish.mode` for a single action (router, gateway, and scheduler publish paths). Operational tuning (`ackTimeout`, `maxRetries`, `retryBaseDelay`) stays global.
+  - The Processor now filters rules per transport (JetStream consumer vs core subscription), so a subject covered by both — directly or via overlapping wildcards — fires each rule exactly once on its own transport. This also stops the JetStream path from redundantly evaluating `reply: true` rules it can never answer.
+  - Validation: `mode` must be `jetstream` or `core`; `reply: true` implies core and rejects `mode: jetstream`; `queue` requires a core subscription. Surfaced across `rule-cli new`, the web rule builder (trigger mode select, action publish-mode select), and the WASM tester.
+
 ### Security
 - Bumped the transitive `postcss` dev/build dependency from 8.5.8 to 8.5.15 to clear CVE-2026-41305 (XSS via unescaped `</style>` in CSS stringify output). Build-time only — the web rule-builder does not run untrusted CSS through PostCSS at runtime, so real-world impact for this project was nil; bumped for hygiene and to clear the Dependabot alert.
 

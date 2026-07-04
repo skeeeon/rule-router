@@ -10,7 +10,7 @@ export function createRule(file = '') {
     file,  // Filename grouping — rules with same file go into one YAML output
     trigger: {
       type: 'nats',
-      nats: { subject: '', reply: false, queue: '', debounce: null },
+      nats: { subject: '', mode: '', reply: false, queue: '', debounce: null },
       http: { path: '', method: '', debounce: null, hmac: null },
       schedule: { cron: '', timezone: '' },
     },
@@ -27,6 +27,7 @@ export function createRule(file = '') {
 export function createNATSAction() {
   return {
     subject: '',
+    mode: '',
     payload: '',
     passthrough: false,
     merge: false,
@@ -111,6 +112,8 @@ export function ruleModes(rule) {
   const a = rule.action
   if (t.type === 'nats' && t.nats.reply) {
     modes.push('reply')
+  } else if (t.type === 'nats' && t.nats.mode === 'core') {
+    modes.push('core')
   } else if (a.type === 'respond') {
     modes.push('respond')
   } else if (a.type === 'nats' && a.nats.request) {

@@ -42,21 +42,22 @@ func NewRouterApp(base *BaseApp, cfg *config.Config) (*RouterApp, error) {
 		logger:    base.Logger.With("component", "router"),
 		metrics:   base.Metrics,
 		processor: base.Processor,
-		responder: broker.NewResponder(base.Broker.GetNATSConn(), base.Processor, base.Logger, base.Metrics),
+		responder: broker.NewResponder(base.Broker, base.Processor, base.Logger, base.Metrics),
 		base:      base,
 	}
 
 	if !cfg.KV.Rules.Enabled {
-		// File-based mode: setup JetStream subscriptions for all non-reply rule
-		// subjects, then bring up core-NATS responder subscriptions for reply rules.
+		// File-based mode: setup JetStream subscriptions for all JetStream-mode
+		// rule subjects, then bring up core-NATS subscriptions for core-transport
+		// rules (reply:true and mode:core).
 		if err := app.setupSubscriptions(); err != nil {
 			return nil, fmt.Errorf("failed to setup subscriptions: %w", err)
 		}
 		app.responder.Rebuild(app.processor.GetAllRules())
 	} else {
 		// KV mode: JetStream subscriptions are managed by base.RuleKVManager.
-		// Register a callback so responder subscriptions track reply rule changes.
-		base.RuleKVManager.SetReplyRebuildFunc(app.responder.Rebuild)
+		// Register a callback so core subscriptions track core-rule changes.
+		base.RuleKVManager.SetCoreRebuildFunc(app.responder.Rebuild)
 	}
 
 	return app, nil
@@ -66,16 +67,16 @@ func NewRouterApp(base *BaseApp, cfg *config.Config) (*RouterApp, error) {
 // Note: Signal handling is managed by lifecycle.RunWithReload() - do not add signal handling here
 // to avoid double registration which causes unpredictable behavior.
 func (app *RouterApp) Run(ctx context.Context) error {
-	// KV mode: deterministically establish responder subscriptions from the synced
+	// KV mode: deterministically establish core subscriptions from the synced
 	// rule set. The per-put rebuild callback races with KV watch startup (Watch()
-	// begins draining before NewRouterApp registers the callback), so a reply rule
+	// begins draining before NewRouterApp registers the callback), so a core rule
 	// present at startup could otherwise be missed until the next KV change. This
 	// bootstrap runs once initial sync is complete; the callback handles later changes.
 	if app.config.KV.Rules.Enabled && app.base.RuleKVManager != nil {
 		if err := app.base.RuleKVManager.WaitReady(ctx); err != nil {
 			return err
 		}
-		app.responder.Rebuild(app.base.RuleKVManager.GetReplyRules())
+		app.responder.Rebuild(app.base.RuleKVManager.GetCoreRules())
 	}
 
 	// Get subscription count
@@ -125,7 +126,8 @@ func (app *RouterApp) Close() error {
 }
 
 // setupSubscriptions configures JetStream consumers and subscriptions for all NATS-triggered
-// rules, excluding reply:true subjects (those are served by the core-NATS responder).
+// rules, excluding core-transport subjects (reply:true or mode:core — those are
+// served by the core-NATS responder).
 // This is router-specific logic, moved from the old router_setup.go.
 func (app *RouterApp) setupSubscriptions() error {
 	subjects := app.jetStreamSubjects()
@@ -163,20 +165,21 @@ func (app *RouterApp) setupSubscriptions() error {
 }
 
 // jetStreamSubjects returns the NATS trigger subjects that need JetStream
-// consumers — i.e. all rule subjects except those served ONLY by reply:true
-// rules (the core-NATS responder handles those). A subject is skipped only when
-// no non-reply rule needs it, matching the per-rule semantics the KV path uses
-// in collectNATSTriggerSubjects — otherwise a non-reply rule sharing a subject
-// with a reply rule would silently lose its consumer.
+// consumers — i.e. all rule subjects except those served ONLY by core-transport
+// rules (reply:true or mode:core; the core-NATS responder handles those). A
+// subject is skipped only when no JetStream-mode rule needs it, matching the
+// per-rule semantics the KV path uses in collectNATSTriggerSubjects — otherwise
+// a JetStream rule sharing a subject with a core rule would silently lose its
+// consumer.
 func (app *RouterApp) jetStreamSubjects() []string {
-	needsJetStream := make(map[string]bool) // subject has at least one non-reply rule
-	replyOnly := make(map[string]bool)      // subject has at least one reply rule
+	needsJetStream := make(map[string]bool) // subject has at least one JetStream-mode rule
+	coreOnly := make(map[string]bool)       // subject has at least one core-transport rule
 	for _, r := range app.processor.GetAllRules() {
 		if r.Trigger.NATS == nil {
 			continue
 		}
-		if r.Trigger.NATS.Reply {
-			replyOnly[r.Trigger.NATS.Subject] = true
+		if r.Trigger.NATS.IsCore() {
+			coreOnly[r.Trigger.NATS.Subject] = true
 		} else {
 			needsJetStream[r.Trigger.NATS.Subject] = true
 		}
@@ -184,8 +187,8 @@ func (app *RouterApp) jetStreamSubjects() []string {
 
 	var subjects []string
 	for _, s := range app.processor.GetSubjects() {
-		if replyOnly[s] && !needsJetStream[s] {
-			app.logger.Info("subject served by core-NATS responder (reply:true), skipping JetStream", "subject", s)
+		if coreOnly[s] && !needsJetStream[s] {
+			app.logger.Info("subject served by core-NATS responder (reply:true or mode:core), skipping JetStream", "subject", s)
 			continue
 		}
 		subjects = append(subjects, s)
