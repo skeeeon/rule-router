@@ -30,12 +30,13 @@ A label-cardinality note up front: Prometheus `CounterVec`/`HistogramVec` series
 
 | Endpoint | Where | Behavior |
 |----------|-------|----------|
-| `/health`, `/healthz` | Inbound HTTP server (**gateway feature only**, default `:8080`) | Always returns `200 {"status":"healthy"}`. This is a **liveness** signal (process is up and serving HTTP), not a readiness check — it does not reflect NATS connectivity. |
+| `/health` | Metrics server (**all features**, default `:2112`) | **Liveness.** Always returns `200 {"status":"healthy"}` once the process is up — does not reflect NATS connectivity. |
+| `/ready` | Metrics server (**all features**, default `:2112`) | **Readiness.** Returns `200 {"status":"ready"}` only once startup finished (broker connected, initial KV rule sync done) **and** the NATS connection is currently live; otherwise `503 {"status":"not ready"}`. Flips back to `503` on a NATS disconnect. |
+| `/health`, `/healthz` | Inbound HTTP server (**gateway feature only**, default `:8080`) | Kept for backward compatibility. Same always-`200` liveness signal as the metrics-port `/health`. |
 
-There is currently **no dedicated HTTP health endpoint for router-only or scheduler-only deployments** (no inbound HTTP server runs). For those, use:
+The metrics-port `/health` and `/ready` are the recommended probe targets for **all** feature combinations (router-only, scheduler-only, gateway, or any mix) — wire them to k8s `livenessProbe` and `readinessProbe` respectively.
 
-- **Process liveness** — scrape `:2112/metrics` returning `200`.
-- **NATS readiness** — alert on the `nats_connection_status` gauge (`1` = connected). This is the most reliable "is it actually working" signal across all feature combinations.
+> **Note:** `/health` and `/ready` live on the metrics server, so they require `metrics.enabled: true` (the default). With metrics disabled there is no HTTP probe target; fall back to alerting on the `nats_connection_status` gauge (`1` = connected).
 
 > **TLS:** health and metrics endpoints, like the inbound gateway, are plain HTTP. Terminate TLS at a proxy/load balancer — see [02 Gateway — TLS termination](./02-gateway.md#tls--https-termination).
 
@@ -50,7 +51,7 @@ Types: **C** = Counter, **G** = Gauge, **H** = Histogram. "Feature" indicates wh
 | Metric | Type | Labels | Feature | Description |
 |--------|------|--------|---------|-------------|
 | `messages_total` | C | `status` = `received` \| `processed` \| `error` | router, gateway | Messages handled, by outcome. |
-| `rule_matches_total` | C | — | router, gateway | Times any rule's conditions matched. |
+| `rule_matches_total` | C | `trigger` = NATS subject \| HTTP path \| `schedule:<cron>` | router, gateway | Rule matches by trigger, counted once at evaluation. Rules sharing a trigger aggregate together (there is no per-rule name). |
 | `rules_active` | G | — | all | Number of rules currently loaded (updates on reload). |
 | `actions_total` | C | `status` = `success` \| `error` \| `skipped` | all | Actions executed, by outcome. `skipped` = an HTTP action matched on the router but `features.gateway` is disabled, so nothing executed it. |
 | `actions_by_type_total` | C | `type` = `templated` \| `passthrough` \| `merge` | router, gateway | Actions by payload mode. |

@@ -1,26 +1,12 @@
 // file: internal/cli/validator.go
 package cli
 
+import "rule-router/internal/rule"
+
 // IsValidOperator checks if a string is a valid rule condition operator.
+// Delegates to rule.IsValidOperator so the operator set has a single source of truth.
 func IsValidOperator(op string) bool {
-	validOps := map[string]bool{
-		"eq":           true,
-		"neq":          true,
-		"gt":           true,
-		"lt":           true,
-		"gte":          true,
-		"lte":          true,
-		"contains":     true,
-		"not_contains": true,
-		"in":           true,
-		"not_in":       true,
-		"exists":       true,
-		"recent":       true,
-		"any":          true,
-		"all":          true,
-		"none":         true,
-	}
-	return validOps[op]
+	return rule.IsValidOperator(op)
 }
 
 // ContextHelp provides a formatted string with help about available variables and operators.

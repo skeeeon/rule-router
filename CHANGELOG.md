@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.16.0] - 2026-07-20
+
+### Features
+- **Liveness & readiness probes for every feature mode** — the metrics server now serves `/health` (liveness — always `200` once the process is up) and `/ready` (readiness — `200` only once startup has finished (broker connected, initial KV rule sync done) and the NATS connection is currently live; `503` before that and on any subsequent disconnect). Previously the only HTTP health endpoint lived on the gateway inbound server, so router-only and scheduler-only deployments had no probe target. The endpoints require `metrics.enabled` (the default); the gateway's existing `/health` is retained for backward compatibility. Wire them to Kubernetes `livenessProbe`/`readinessProbe`.
+
+### Improvements
+- **Fail-safe file-mode reload** — on `SIGHUP`, the rules directory is now loaded and validated *before* the running application is torn down. If validation fails, the reload is aborted and the current rules keep serving (with the error logged) instead of the process exiting — a bad rule edit can no longer take down a running router. This mirrors the keep-last-good behavior the KV rule watcher already provides. KV-mode reloads are unchanged (already fail-safe per key).
+- **Gateway drains accepted webhooks on shutdown** — inbound workers now drain the work queue until it is closed rather than exiting on context cancellation, so webhooks already acknowledged with `200 {"accepted"}` are published before shutdown completes (bounded by the shutdown grace period; publishing uses a background context so cancellation of the lifecycle context no longer aborts in-flight publishes). Previously queued-but-unstarted accepted jobs could be silently dropped.
+- **Bounded initial NATS-connect retry** — if NATS is unreachable at startup, the broker now retries the initial connection (10 attempts, 2s apart) before giving up, so a NATS server that is slow to come up (e.g. started alongside rule-router under docker-compose) no longer crash-loops the process on the first failure. Reconnect behavior after a successful connect is unchanged.
+- **Per-rule match metric** — `rule_matches_total` gained a `trigger` label (the NATS subject, HTTP path, or `schedule:<cron>`) so you can see which rule is matching or has stopped. **Breaking:** it is now a labelled `CounterVec` and is counted once, at rule evaluation; the previous double-count on NATS delivery paths is gone (see Fixes), so absolute values differ from 0.15.x. Update any dashboards or alerts that reference it.
+- **`rule-cli check`/`test` surface rule load errors** — a rule that fails to load now reports the load error and exits non-zero, instead of silently evaluating an empty rule set and reporting "no match". Brings the CLI in line with the WASM tester and the runtime loader, which already checked this.
+- **NKey signature-verification test coverage** — added table-driven unit tests for the signature path (valid, tampered payload, wrong signer, malformed signature, invalid/short key, missing headers, disabled, case-insensitive and custom header names, plus metric outcomes). The condition-operator set is now defined once in the rule package and shared by the loader and `rule-cli` validator instead of being duplicated.
+
+### Fixes
+- `rule_matches_total` was incremented at both rule evaluation and NATS action delivery, double-counting matches on NATS-triggered rules. It is now counted exactly once, at evaluation.
+- Fixed a panic in NKey signature verification when the supplied public key was shorter than 16 characters (the truncated-key log line sliced out of range).
+- Guarded the bootstrap logger against a nil-pointer dereference if `zap.NewProduction()` fails, falling back to a plain stderr JSON handler.
+- Corrected the troubleshooting docs, which referenced a non-existent `http_action_attempts_total` metric — the real metrics are `http_outbound_requests_total{status_code}` and `http_outbound_duration_seconds`.
+
 ## [0.15.0] - 2026-07-04
 
 ### Features

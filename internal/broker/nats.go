@@ -39,6 +39,16 @@ const (
 	// publishes to drain before forcibly closing on shutdown. Without this,
 	// Drain() can block indefinitely when the server is unreachable.
 	drainTimeout = 10 * time.Second
+
+	// initialConnectMaxAttempts / initialConnectRetryWait bound the retry loop
+	// around the *initial* NATS connect, so a server that is slow to come up
+	// (e.g. started alongside rule-router under docker-compose) doesn't crash the
+	// process on the first failure. Deliberately fixed rather than derived from
+	// Connection.MaxReconnects (default -1 = infinite, which would hang startup)
+	// or Connection.ReconnectWait (default 50ms, too short to bridge startup).
+	// ~18s of grace, then fail fast so a genuine misconfiguration still surfaces.
+	initialConnectMaxAttempts = 10
+	initialConnectRetryWait   = 2 * time.Second
 )
 
 // NATSBroker connects to external NATS JetStream servers with KV support and local caching
@@ -631,14 +641,29 @@ func (b *NATSBroker) initializeNATSConnection() error {
 		"urlCount", len(b.config.NATS.URLs),
 		"urlString", urlString)
 
-	b.natsConn, err = nats.Connect(urlString, natsOptions...)
-	if err != nil {
-		return fmt.Errorf("failed to connect to NATS: urls=%v, authMethod=%s, tlsEnabled=%v, reconnectWait=%v: %w",
-			b.config.NATS.URLs,
-			b.getAuthMethod(),
-			b.config.NATS.TLS.Enable,
-			b.config.NATS.Connection.ReconnectWait,
-			err)
+	// Retry the initial connect a bounded number of times before giving up, so a
+	// NATS server that is slow to start doesn't crash-loop the process. Downstream
+	// setup (JetStream, ConnectedUrl) still sees a fully established connection.
+	for attempt := 1; ; attempt++ {
+		b.natsConn, err = nats.Connect(urlString, natsOptions...)
+		if err == nil {
+			break
+		}
+		if attempt >= initialConnectMaxAttempts {
+			return fmt.Errorf("failed to connect to NATS after %d attempts: urls=%v, authMethod=%s, tlsEnabled=%v, reconnectWait=%v: %w",
+				attempt,
+				b.config.NATS.URLs,
+				b.getAuthMethod(),
+				b.config.NATS.TLS.Enable,
+				b.config.NATS.Connection.ReconnectWait,
+				err)
+		}
+		b.logger.Warn("initial NATS connect failed, retrying",
+			"attempt", attempt,
+			"maxAttempts", initialConnectMaxAttempts,
+			"retryWait", initialConnectRetryWait,
+			"error", err)
+		time.Sleep(initialConnectRetryWait)
 	}
 
 	connectedURL := b.natsConn.ConnectedUrl()

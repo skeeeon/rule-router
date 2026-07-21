@@ -941,7 +941,10 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 	}
 
 	kvData := loadMockKV(kvMockPath)
-	processor := setupTestProcessor(rulePath, kvData, testConfig, t.Verbose)
+	processor, err := setupTestProcessor(rulePath, kvData, testConfig, t.Verbose)
+	if err != nil {
+		return err
+	}
 
 	msgBytes, err := os.ReadFile(messagePath)
 	if err != nil {
@@ -1043,7 +1046,23 @@ func (t *Tester) runTestsSequential(groups []TestGroup) TestSummary {
 				fmt.Printf("=== RULE: %s ===\n", group.RulePath)
 			}
 		}
-		processor := setupTestProcessor(group.RulePath, group.KVData, group.TestConfig, false)
+		processor, err := setupTestProcessor(group.RulePath, group.KVData, group.TestConfig, false)
+		if err != nil {
+			// A rule that fails to load must surface as failures, not silent "no match".
+			if !t.Quiet {
+				fmt.Printf("  ✖ failed to load rule: %v\n\n", err)
+			}
+			for _, testFile := range group.TestFiles {
+				summary.Total++
+				summary.Failed++
+				summary.Results = append(summary.Results, TestResult{
+					File:   filepath.Base(testFile),
+					Passed: false,
+					Error:  err.Error(),
+				})
+			}
+			continue
+		}
 		for _, testFile := range group.TestFiles {
 			baseName := filepath.Base(testFile)
 			summary.Total++
@@ -1090,7 +1109,18 @@ func (t *Tester) runTestsParallel(groups []TestGroup) TestSummary {
 	}
 	go func() {
 		for _, group := range groups {
-			processor := setupTestProcessor(group.RulePath, group.KVData, group.TestConfig, false)
+			processor, err := setupTestProcessor(group.RulePath, group.KVData, group.TestConfig, false)
+			if err != nil {
+				// A rule that fails to load surfaces as a failed result per test file.
+				for _, testFile := range group.TestFiles {
+					results <- TestResult{
+						File:   filepath.Base(testFile),
+						Passed: false,
+						Error:  err.Error(),
+					}
+				}
+				continue
+			}
 			for _, testFile := range group.TestFiles {
 				jobs <- TestJob{
 					Processor: processor,
@@ -1387,7 +1417,7 @@ func (t *Tester) collectTestGroups(rulesDir string) ([]TestGroup, error) {
 	return testGroups, err
 }
 
-func setupTestProcessor(rulePath string, kvData map[string]map[string]interface{}, testConfig *TestConfig, verbose bool) *rule.Processor {
+func setupTestProcessor(rulePath string, kvData map[string]map[string]interface{}, testConfig *TestConfig, verbose bool) (*rule.Processor, error) {
 	log := logger.NewNopLogger()
 	var bucketNames []string
 	for bucket := range kvData {
@@ -1395,7 +1425,10 @@ func setupTestProcessor(rulePath string, kvData map[string]map[string]interface{
 	}
 	loader := rule.NewRulesLoader(log, bucketNames)
 	// Only load the specific rule file for this test group
-	rules, _ := loader.LoadFromFile(rulePath)
+	rules, err := loader.LoadFromFile(rulePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load rules from %s: %w", rulePath, err)
+	}
 
 	var kvContext *rule.KVContext
 	if kvData != nil {
@@ -1414,7 +1447,9 @@ func setupTestProcessor(rulePath string, kvData map[string]map[string]interface{
 	}
 
 	processor := rule.NewProcessor(log, nil, kvContext, sigVerification)
-	processor.LoadRules(rules)
+	if err := processor.LoadRules(rules); err != nil {
+		return nil, fmt.Errorf("failed to load rules into processor from %s: %w", rulePath, err)
+	}
 
 	if testConfig.MockTime != "" {
 		if t, err := time.Parse(time.RFC3339, testConfig.MockTime); err == nil {
@@ -1422,7 +1457,7 @@ func setupTestProcessor(rulePath string, kvData map[string]map[string]interface{
 		}
 	}
 
-	return processor
+	return processor, nil
 }
 
 // writeOrWarn writes a scaffold file, warning on stderr instead of failing —

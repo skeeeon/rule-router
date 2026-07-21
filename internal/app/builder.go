@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -31,6 +32,28 @@ type BaseApp struct {
 
 	// metricsServerWg tracks the metrics server goroutine for graceful shutdown
 	metricsServerWg sync.WaitGroup
+
+	// ready reports whether startup finished (NATS connected, initial KV rule
+	// sync complete). Set once by MarkReady; the /ready probe additionally
+	// live-checks the NATS connection so it flips back on a disconnect.
+	ready atomic.Bool
+}
+
+// MarkReady marks startup as complete. The app factory calls this once, after the
+// broker is connected and any initial KV rule sync has finished.
+func (base *BaseApp) MarkReady() {
+	base.ready.Store(true)
+}
+
+// IsReady backs the /ready probe: startup finished AND the NATS connection is
+// currently live. The atomic load provides the happens-before that makes the
+// Broker pointer safely visible to the metrics-server goroutine.
+func (base *BaseApp) IsReady() bool {
+	if !base.ready.Load() || base.Broker == nil {
+		return false
+	}
+	nc := base.Broker.GetNATSConn()
+	return nc != nil && nc.IsConnected()
 }
 
 // AppBuilder constructs the BaseApp components fluently.
@@ -95,6 +118,25 @@ func (b *AppBuilder) WithMetrics() *AppBuilder {
 		Registry:          reg,
 		EnableOpenMetrics: true,
 	}))
+
+	// Liveness + readiness probes on the always-on ops surface, so router-only and
+	// scheduler-only deployments (which run no gateway HTTP server) still expose a
+	// probe target. Available whenever metrics are enabled (the default).
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"healthy"}`))
+	})
+	mux.HandleFunc("/ready", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if b.base.IsReady() {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status":"ready"}`))
+		} else {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"status":"not ready"}`))
+		}
+	})
 
 	b.base.MetricsServer = &http.Server{
 		Addr:    b.cfg.Metrics.Address,

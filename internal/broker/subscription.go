@@ -459,7 +459,6 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 			}
 			if sm.metrics != nil {
 				sm.metrics.IncActionsTotal("success")
-				sm.metrics.IncRuleMatches()
 			}
 		} else if action.HTTP != nil {
 			if sm.httpExecutor != nil {
@@ -475,7 +474,6 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 				}
 				if sm.metrics != nil {
 					sm.metrics.IncActionsTotal("success")
-					sm.metrics.IncRuleMatches()
 				}
 			} else {
 				sm.logger.Warn("HTTP action skipped - gateway feature not enabled",

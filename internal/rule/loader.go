@@ -1064,22 +1064,5 @@ func (l *RulesLoader) isBucketConfigured(bucket string) bool {
 
 // isValidOperator checks if an operator is valid
 func (l *RulesLoader) isValidOperator(op string) bool {
-	validOps := map[string]bool{
-		"eq":           true,
-		"neq":          true,
-		"gt":           true,
-		"lt":           true,
-		"gte":          true,
-		"lte":          true,
-		"contains":     true,
-		"not_contains": true,
-		"in":           true,
-		"not_in":       true,
-		"exists":       true,
-		"recent":       true,
-		"any":          true,
-		"all":          true,
-		"none":         true,
-	}
-	return validOps[op]
+	return IsValidOperator(op)
 }

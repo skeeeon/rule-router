@@ -71,7 +71,7 @@ func (c *EvaluationContext) verifySignature() {
 	if err != nil {
 		if c.logger != nil {
 			c.logger.Debug("signature verification failed: invalid public key",
-				"pubkey", pubKeyStr[:16]+"...", "error", err)
+				"pubkey", truncateString(pubKeyStr, 16), "error", err)
 		}
 		return
 	}
@@ -87,12 +87,12 @@ func (c *EvaluationContext) verifySignature() {
 				contextType = "http"
 			}
 			c.logger.Info("signature verified successfully",
-				"pubkey", pubKeyStr[:16]+"...", "contextType", contextType)
+				"pubkey", truncateString(pubKeyStr, 16), "contextType", contextType)
 		}
 	} else {
 		if c.logger != nil {
 			c.logger.Warn("signature verification failed",
-				"pubkey", pubKeyStr[:16]+"...", "error", err.Error())
+				"pubkey", truncateString(pubKeyStr, 16), "error", err.Error())
 		}
 	}
 }

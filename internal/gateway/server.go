@@ -178,27 +178,24 @@ func (s *InboundServer) Start(ctx context.Context) error {
 	return nil
 }
 
-// startWorkers launches the fixed pool of goroutines.
-func (s *InboundServer) startWorkers(ctx context.Context) {
+// startWorkers launches the fixed pool of goroutines. Workers drain the queue
+// until it is closed by Stop() rather than exiting on context cancellation — an
+// already-accepted webhook (the server answered 200) must still be processed on
+// shutdown. Publishing therefore uses context.Background() (bounded per-publish by
+// AckTimeout in publishToNATS), not the lifecycle context, which is cancelled
+// before Stop() runs. The ctx parameter is intentionally ignored.
+func (s *InboundServer) startWorkers(_ context.Context) {
 	s.logger.Info("starting inbound workers", "count", s.serverCfg.InboundWorkerCount)
 	for i := 0; i < s.serverCfg.InboundWorkerCount; i++ {
 		s.wg.Add(1)
 		workerID := i + 1
 		go func() {
 			defer s.wg.Done()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case job, ok := <-s.workQueue:
-					if !ok {
-						return
-					}
-					if s.metrics != nil {
-						s.metrics.SetMessageProcessingBacklog(float64(len(s.workQueue)))
-					}
-					s.processWebhookWithRecovery(ctx, job.path, job.method, job.body, job.headers, workerID)
+			for job := range s.workQueue {
+				if s.metrics != nil {
+					s.metrics.SetMessageProcessingBacklog(float64(len(s.workQueue)))
 				}
+				s.processWebhookWithRecovery(context.Background(), job.path, job.method, job.body, job.headers, workerID)
 			}
 		}()
 	}
@@ -216,15 +213,28 @@ func (s *InboundServer) Stop(ctx context.Context) error {
 		}
 	}
 
-	// 2. Close the workQueue channel. This signals to the workers (ranging over the channel)
-	//    that no more jobs will be sent, and they should exit their loop once empty.
-	s.logger.Info("closing work queue, waiting for workers to finish in-flight jobs")
+	// 2. Close the workQueue channel. Workers range over it and exit once it is
+	//    drained. The HTTP server is already shut down (step 1), and the handler's
+	//    enqueue is a non-blocking select, so no goroutine can send after this.
+	s.logger.Info("closing work queue, waiting for workers to drain accepted webhooks")
 	close(s.workQueue)
 
-	// 3. Wait for all worker goroutines to finish their current jobs and exit.
-	s.wg.Wait()
+	// 3. Wait for workers to finish draining, bounded by the shutdown grace period
+	//    (ctx). Because the queue is closed, workers exit on their own once it is
+	//    empty; the bound only prevents a wedged upstream from blocking shutdown.
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
 
-	s.logger.Info("HTTP inbound server and all workers stopped successfully")
+	select {
+	case <-done:
+		s.logger.Info("HTTP inbound server and all workers stopped successfully")
+	case <-ctx.Done():
+		s.logger.Warn("shutdown grace period expired with accepted webhooks still draining",
+			"remaining", len(s.workQueue))
+	}
 	return nil
 }
 

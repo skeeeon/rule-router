@@ -13,6 +13,7 @@ import (
 	"rule-router/internal/app"
 	"rule-router/internal/lifecycle"
 	"rule-router/internal/logger"
+	"rule-router/internal/rule"
 )
 
 // version is set at build time via -ldflags "-X main.version=..."
@@ -104,11 +105,35 @@ func run() error {
 			}
 		}
 
+		// Startup is complete: broker connected and initial KV sync (if any) done.
+		// The /ready probe now reports ready (and tracks the live NATS connection).
+		baseApp.MarkReady()
+
 		return app.NewCompositeApp(apps, baseApp), nil
 	}
 
+	// validate is called before each SIGHUP reload tears down the running app.
+	// In file mode it loads and validates the rules directory into a throwaway
+	// processor; on failure the reload is aborted and the current app keeps
+	// serving (fail-safe reload). KV-mode reloads come from the KV watcher, which
+	// is already fail-safe per key, so there is nothing to pre-check here.
+	validate := func() error {
+		if cfg.KV.Rules.Enabled {
+			return nil
+		}
+		kvBuckets := []string{}
+		if cfg.KV.Enabled {
+			kvBuckets = cfg.KV.BucketNames()
+		}
+		rules, err := rule.NewRulesLoader(appLogger, kvBuckets).LoadFromDirectory(rulesPath)
+		if err != nil {
+			return err
+		}
+		return rule.NewProcessor(appLogger, nil, nil, nil).LoadRules(rules)
+	}
+
 	// Run with reload support (handles SIGHUP automatically)
-	return lifecycle.RunWithReload(createApp, appLogger)
+	return lifecycle.RunWithReload(createApp, validate, appLogger)
 }
 
 // parseFlags parses command line arguments and loads config via Viper

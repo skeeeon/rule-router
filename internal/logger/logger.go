@@ -119,7 +119,15 @@ func NewNopLogger() *Logger {
 // NewBootstrapLogger creates a minimal JSON logger writing to stderr.
 // Use this in main() before the full configuration is available.
 func NewBootstrapLogger() *Logger {
-	zapLogger, _ := zap.NewProduction()
+	zapLogger, err := zap.NewProduction()
+	if err != nil {
+		// zap failed to build (rare) — fall back to a plain stderr slog handler
+		// rather than dereferencing a nil zapLogger on the next line.
+		return &Logger{
+			Logger: slog.New(slog.NewJSONHandler(os.Stderr, nil)),
+			syncer: noopSyncer{},
+		}
+	}
 
 	handler := zapslog.NewHandler(zapLogger.Core(),
 		zapslog.WithCaller(true),

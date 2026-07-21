@@ -170,7 +170,6 @@ func (r *Responder) makeHandler(triggerSubject string) nats.MsgHandler {
 				}
 				if r.metrics != nil {
 					r.metrics.IncActionsTotal("success")
-					r.metrics.IncRuleMatches()
 				}
 
 			case a.HTTP != nil:
@@ -194,7 +193,6 @@ func (r *Responder) makeHandler(triggerSubject string) nats.MsgHandler {
 				}
 				if r.metrics != nil {
 					r.metrics.IncActionsTotal("success")
-					r.metrics.IncRuleMatches()
 				}
 			}
 		}

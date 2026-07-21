@@ -22,17 +22,24 @@ import (
 // - Error propagation
 //
 // The createApp function is called on initial startup and each reload to
-// create a fresh application instance. If createApp returns an error,
-// the process exits.
+// create a fresh application instance. If createApp returns an error on initial
+// startup, the process exits.
+//
+// The validate function, if non-nil, is called on each SIGHUP *before* the
+// running application is torn down. If it returns an error, the reload is
+// aborted and the current application keeps serving — a bad rule edit can no
+// longer take down a running process. This mirrors the fail-safe, keep-last-good
+// behavior the KV rule watcher already provides. Pass nil to disable pre-checks.
 //
 // Example usage:
 //
 //	createApp := func() (Application, error) {
 //	    return app.NewRouterApp(cfg, rulesPath)
 //	}
-//	err := lifecycle.RunWithReload(createApp, logger)
+//	err := lifecycle.RunWithReload(createApp, validate, logger)
 func RunWithReload(
 	createApp func() (Application, error),
+	validate func() error,
 	log *logger.Logger,
 ) error {
 	log = log.With("component", "lifecycle")
@@ -45,7 +52,9 @@ func RunWithReload(
 				"reloadCount", reloadCount)
 		}
 
-		// Create signal channels for shutdown and reload
+		// Create signal channels for shutdown and reload. Armed before createApp
+		// so a signal during a slow startup isn't handled by the default (fatal)
+		// disposition.
 		shutdownSig := make(chan os.Signal, 1)
 		reloadSig := make(chan os.Signal, 1)
 
@@ -85,27 +94,42 @@ func RunWithReload(
 			errCh <- application.Run(ctx)
 		}()
 
-		// Wait for signal or application error
+		// Wait for a signal or application error. The inner loop keeps the current
+		// application running across SIGHUPs whose new rules fail validation, so a
+		// rejected reload never tears anything down.
 		var shouldReload bool
 		var runErr error
 
-		select {
-		case sig := <-shutdownSig:
-			log.Info("shutdown signal received - initiating graceful shutdown",
-				"signal", sig)
-			shouldReload = false
+	waitLoop:
+		for {
+			select {
+			case sig := <-shutdownSig:
+				log.Info("shutdown signal received - initiating graceful shutdown",
+					"signal", sig)
+				shouldReload = false
+				break waitLoop
 
-		case <-reloadSig:
-			log.Info("SIGHUP received - initiating reload")
-			log.Info("draining in-flight messages and closing connections")
-			shouldReload = true
-			reloadCount++
+			case <-reloadSig:
+				log.Info("SIGHUP received - validating new rules before reload")
+				if validate != nil {
+					if err := validate(); err != nil {
+						log.Error("reload aborted: new rules failed validation; keeping current rules",
+							"error", err)
+						continue // stay on the current application
+					}
+				}
+				log.Info("new rules validated - draining in-flight messages and reloading")
+				shouldReload = true
+				reloadCount++
+				break waitLoop
 
-		case runErr = <-errCh:
-			log.Error("application stopped with error",
-				"error", runErr,
-				"reloadCount", reloadCount)
-			shouldReload = false
+			case runErr = <-errCh:
+				log.Error("application stopped with error",
+					"error", runErr,
+					"reloadCount", reloadCount)
+				shouldReload = false
+				break waitLoop
+			}
 		}
 
 		// Cancel context to stop application

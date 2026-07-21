@@ -10,7 +10,7 @@ type Metrics struct{}
 
 func (m *Metrics) IncMessagesTotal(status string)                                  {}
 func (m *Metrics) SetMessageProcessingBacklog(count float64)                       {}
-func (m *Metrics) IncRuleMatches()                                                 {}
+func (m *Metrics) IncRuleMatches(trigger string)                                   {}
 func (m *Metrics) SetRulesActive(count float64)                                    {}
 func (m *Metrics) IncActionsTotal(status string)                                   {}
 func (m *Metrics) IncActionsByType(actionType string)                              {}

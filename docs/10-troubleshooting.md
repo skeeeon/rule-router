@@ -81,7 +81,7 @@ Common causes:
 - Auth token expired — check whether `nats-auth-manager` is keeping the token current (logs from that binary).
 - Network egress blocked — the application logs distinguish transport errors from HTTP error responses.
 
-The `http_action_attempts_total` metric counts attempts by outcome.
+The `http_outbound_requests_total{status_code}` metric counts outbound requests by HTTP status code, and `http_outbound_duration_seconds` tracks their latency.
 
 ## Synchronous route returns 404 / 503 / 504
 

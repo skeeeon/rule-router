@@ -18,7 +18,7 @@ type Metrics struct {
 	// Message processing metrics (shared)
 	messagesTotal            *prometheus.CounterVec
 	messageProcessingBacklog prometheus.Gauge
-	ruleMatches              prometheus.Counter
+	ruleMatches              *prometheus.CounterVec
 	rulesActive              prometheus.Gauge
 	actionsTotal             *prometheus.CounterVec
 	actionsByType            *prometheus.CounterVec
@@ -92,11 +92,12 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 				Help: "Number of messages waiting to be processed",
 			},
 		),
-		ruleMatches: prometheus.NewCounter(
+		ruleMatches: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "rule_matches_total",
-				Help: "Total number of rule matches",
+				Help: "Total number of rule matches by trigger (NATS subject, HTTP path, or cron)",
 			},
+			[]string{"trigger"},
 		),
 		rulesActive: prometheus.NewGauge(
 			prometheus.GaugeOpts{
@@ -359,8 +360,8 @@ func (m *Metrics) SetMessageProcessingBacklog(count float64) {
 	m.messageProcessingBacklog.Set(count)
 }
 
-func (m *Metrics) IncRuleMatches() {
-	m.ruleMatches.Inc()
+func (m *Metrics) IncRuleMatches(trigger string) {
+	m.ruleMatches.WithLabelValues(trigger).Inc()
 }
 
 func (m *Metrics) SetRulesActive(count float64) {

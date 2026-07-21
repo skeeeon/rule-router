@@ -777,6 +777,23 @@ func secretToString(v interface{}) string {
 	}
 }
 
+// triggerLabel returns a stable, low-cardinality identifier for a rule's trigger,
+// used as the `trigger` label on rule_matches_total. There is no rule-name field,
+// so the trigger descriptor is the closest per-rule identity available. Cardinality
+// is bounded by the number of distinct triggers (operator-authored).
+func triggerLabel(r *Rule) string {
+	switch {
+	case r.Trigger.NATS != nil:
+		return r.Trigger.NATS.Subject
+	case r.Trigger.HTTP != nil:
+		return r.Trigger.HTTP.Path
+	case r.Trigger.Schedule != nil:
+		return "schedule:" + r.Trigger.Schedule.Cron
+	default:
+		return "unknown"
+	}
+}
+
 // evaluateRules evaluates a set of rules against a context
 func (p *Processor) evaluateRules(rules []*Rule, context *EvaluationContext, triggerType string) ([]*Action, error) {
 	// Propagate the metrics sink so lazy signature verification can record
@@ -827,7 +844,7 @@ func (p *Processor) evaluateRules(rules []*Rule, context *EvaluationContext, tri
 			for _, action := range actionResults {
 				if p.metrics != nil {
 					p.metrics.IncTemplateOpsTotal("success")
-					p.metrics.IncRuleMatches()
+					p.metrics.IncRuleMatches(triggerLabel(rule))
 
 					if action.NATS != nil {
 						if action.NATS.Merge {
