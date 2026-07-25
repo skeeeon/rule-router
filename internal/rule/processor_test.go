@@ -73,6 +73,14 @@ func newKVTemplateTestContext(data map[string]interface{}, kvData map[string]map
 }
 
 // Helper to create a processor for testing
+// actionsOf flattens a Process* call to every action it evaluated, immediate
+// and trailing-throttled alike. Most tests predate trailing mode and only care
+// what a rule produced, not when it runs. Tests that do care about the split
+// read Outcome.Immediate / Outcome.Deferred directly.
+func actionsOf(o Outcome, err error) ([]*Action, error) {
+	return o.All(), err
+}
+
 func newTestProcessor() *Processor {
 	return NewProcessor(logger.NewNopLogger(), nil, nil, nil)
 }
@@ -174,7 +182,7 @@ func TestProcessor_ComplexIntegration_DeepContext(t *testing.T) {
 	}
 
 	// Execute
-	actions, err := processor.ProcessNATS("iot.sensors.telemetry", msgBytes, headers)
+	actions, err := actionsOf(processor.ProcessNATS("iot.sensors.telemetry", msgBytes, headers))
 	if err != nil {
 		t.Fatalf("ProcessNATS failed: %v", err)
 	}
@@ -229,7 +237,7 @@ func TestProcessor_Orchestration(t *testing.T) {
 
 	// Case 1: Condition matches
 	payloadMatch := []byte(`{"status": "active", "device_id": "dev123"}`)
-	actions, err := processor.ProcessWithSubject("test.subject", payloadMatch, nil)
+	actions, err := actionsOf(processor.ProcessWithSubject("test.subject", payloadMatch, nil))
 	if err != nil {
 		t.Fatalf("ProcessWithSubject returned an error: %v", err)
 	}
@@ -245,7 +253,7 @@ func TestProcessor_Orchestration(t *testing.T) {
 
 	// Case 2: Condition does not match
 	payloadNoMatch := []byte(`{"status": "inactive", "device_id": "dev456"}`)
-	actions, err = processor.ProcessWithSubject("test.subject", payloadNoMatch, nil)
+	actions, err = actionsOf(processor.ProcessWithSubject("test.subject", payloadNoMatch, nil))
 	if err != nil {
 		t.Fatalf("ProcessWithSubject returned an error: %v", err)
 	}
@@ -304,7 +312,7 @@ func TestProcessor_ComplexKVOrchestration(t *testing.T) {
 
 	// Test Case 1: Should Match
 	payloadMatch := []byte(`{"id": "dev1", "type": "sensor-type-a", "value": 60}`)
-	actions, err := processor.ProcessWithSubject("sensors.reading", payloadMatch, nil)
+	actions, err := actionsOf(processor.ProcessWithSubject("sensors.reading", payloadMatch, nil))
 	if err != nil {
 		t.Fatalf("ProcessWithSubject error: %v", err)
 	}
@@ -320,7 +328,7 @@ func TestProcessor_ComplexKVOrchestration(t *testing.T) {
 
 	// Test Case 2: Should NOT Match
 	payloadNoMatch := []byte(`{"id": "dev2", "type": "sensor-type-b", "value": 60}`)
-	actions, err = processor.ProcessWithSubject("sensors.reading", payloadNoMatch, nil)
+	actions, err = actionsOf(processor.ProcessWithSubject("sensors.reading", payloadNoMatch, nil))
 	if err != nil {
 		t.Fatalf("ProcessWithSubject error: %v", err)
 	}
@@ -2100,14 +2108,14 @@ func TestProcessNATSActionWithForEach_Merge_InvalidOverlay(t *testing.T) {
 // DEBOUNCE / THROTTLE TESTS
 // ========================================
 
-func TestProcessor_TriggerDebounce_NATS(t *testing.T) {
+func TestProcessor_TriggerThrottle_NATS(t *testing.T) {
 	processor := newTestProcessor()
 	rules := []Rule{
 		{
 			Trigger: Trigger{
 				NATS: &NATSTrigger{
 					Subject:  "sensors.temp",
-					Debounce: &DebounceConfig{Window: "1s"},
+					Throttle: &ThrottleConfig{Window: "1s"},
 				},
 			},
 			Action: Action{
@@ -2123,7 +2131,7 @@ func TestProcessor_TriggerDebounce_NATS(t *testing.T) {
 	payload := []byte(`{"temperature": 30}`)
 
 	// First message should produce actions
-	actions1, err := processor.ProcessNATS("sensors.temp", payload, nil)
+	actions1, err := actionsOf(processor.ProcessNATS("sensors.temp", payload, nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2132,7 +2140,7 @@ func TestProcessor_TriggerDebounce_NATS(t *testing.T) {
 	}
 
 	// Second message within window should be suppressed
-	actions2, err := processor.ProcessNATS("sensors.temp", payload, nil)
+	actions2, err := actionsOf(processor.ProcessNATS("sensors.temp", payload, nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2141,7 +2149,7 @@ func TestProcessor_TriggerDebounce_NATS(t *testing.T) {
 	}
 }
 
-func TestProcessor_TriggerDebounce_HTTP(t *testing.T) {
+func TestProcessor_TriggerThrottle_HTTP(t *testing.T) {
 	processor := newTestProcessor()
 	rules := []Rule{
 		{
@@ -2149,7 +2157,7 @@ func TestProcessor_TriggerDebounce_HTTP(t *testing.T) {
 				HTTP: &HTTPTrigger{
 					Path:     "/webhooks/github",
 					Method:   "POST",
-					Debounce: &DebounceConfig{Window: "1s"},
+					Throttle: &ThrottleConfig{Window: "1s"},
 				},
 			},
 			Action: Action{
@@ -2164,7 +2172,7 @@ func TestProcessor_TriggerDebounce_HTTP(t *testing.T) {
 
 	payload := []byte(`{"action": "push"}`)
 
-	actions1, err := processor.ProcessHTTP("/webhooks/github", "POST", payload, nil)
+	actions1, err := actionsOf(processor.ProcessHTTP("/webhooks/github", "POST", payload, nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2172,7 +2180,7 @@ func TestProcessor_TriggerDebounce_HTTP(t *testing.T) {
 		t.Fatal("first message should produce actions")
 	}
 
-	actions2, err := processor.ProcessHTTP("/webhooks/github", "POST", payload, nil)
+	actions2, err := actionsOf(processor.ProcessHTTP("/webhooks/github", "POST", payload, nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2181,7 +2189,7 @@ func TestProcessor_TriggerDebounce_HTTP(t *testing.T) {
 	}
 }
 
-func TestProcessor_ActionDebounce(t *testing.T) {
+func TestProcessor_ActionThrottle(t *testing.T) {
 	processor := newTestProcessor()
 	rules := []Rule{
 		{
@@ -2198,7 +2206,7 @@ func TestProcessor_ActionDebounce(t *testing.T) {
 				NATS: &NATSAction{
 					Subject:  "alerts.temp",
 					Payload:  `{"alert": true}`,
-					Debounce: &DebounceConfig{Window: "1s"},
+					Throttle: &ThrottleConfig{Window: "1s"},
 				},
 			},
 		},
@@ -2207,8 +2215,8 @@ func TestProcessor_ActionDebounce(t *testing.T) {
 
 	payload := []byte(`{"temperature": 30}`)
 
-	// First message passes conditions and action debounce
-	actions1, err := processor.ProcessNATS("sensors.temp", payload, nil)
+	// First message passes conditions and action throttle
+	actions1, err := actionsOf(processor.ProcessNATS("sensors.temp", payload, nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2216,24 +2224,24 @@ func TestProcessor_ActionDebounce(t *testing.T) {
 		t.Fatal("first message should produce actions")
 	}
 
-	// Second message passes conditions but action debounce suppresses
-	actions2, err := processor.ProcessNATS("sensors.temp", payload, nil)
+	// Second message passes conditions but action throttle suppresses
+	actions2, err := actionsOf(processor.ProcessNATS("sensors.temp", payload, nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(actions2) != 0 {
-		t.Fatalf("action debounce should suppress second message, got %d actions", len(actions2))
+		t.Fatalf("action throttle should suppress second message, got %d actions", len(actions2))
 	}
 }
 
-func TestProcessor_Debounce_DefaultKey_PerSubject(t *testing.T) {
+func TestProcessor_Throttle_DefaultKey_PerSubject(t *testing.T) {
 	processor := newTestProcessor()
 	rules := []Rule{
 		{
 			Trigger: Trigger{
 				NATS: &NATSTrigger{
 					Subject:  "sensors.>",
-					Debounce: &DebounceConfig{Window: "1s"},
+					Throttle: &ThrottleConfig{Window: "1s"},
 				},
 			},
 			Action: Action{
@@ -2249,32 +2257,32 @@ func TestProcessor_Debounce_DefaultKey_PerSubject(t *testing.T) {
 	payload := []byte(`{}`)
 
 	// First message on subject A
-	actions1, _ := processor.ProcessNATS("sensors.room1", payload, nil)
+	actions1, _ := actionsOf(processor.ProcessNATS("sensors.room1", payload, nil))
 	if len(actions1) == 0 {
 		t.Fatal("first message on room1 should produce actions")
 	}
 
 	// First message on subject B (different default key)
-	actions2, _ := processor.ProcessNATS("sensors.room2", payload, nil)
+	actions2, _ := actionsOf(processor.ProcessNATS("sensors.room2", payload, nil))
 	if len(actions2) == 0 {
 		t.Fatal("first message on room2 should produce actions (different key)")
 	}
 
 	// Second message on subject A (suppressed)
-	actions3, _ := processor.ProcessNATS("sensors.room1", payload, nil)
+	actions3, _ := actionsOf(processor.ProcessNATS("sensors.room1", payload, nil))
 	if len(actions3) != 0 {
 		t.Fatal("second message on room1 should be suppressed")
 	}
 }
 
-func TestProcessor_Debounce_TemplateKey(t *testing.T) {
+func TestProcessor_Throttle_TemplateKey(t *testing.T) {
 	processor := newTestProcessor()
 	rules := []Rule{
 		{
 			Trigger: Trigger{
 				NATS: &NATSTrigger{
 					Subject:  "sensors.temp",
-					Debounce: &DebounceConfig{Window: "1s", Key: "{sensor_id}"},
+					Throttle: &ThrottleConfig{Window: "1s", Key: "{sensor_id}"},
 				},
 			},
 			Action: Action{
@@ -2288,32 +2296,32 @@ func TestProcessor_Debounce_TemplateKey(t *testing.T) {
 	processor.LoadRules(rules)
 
 	// Sensor A
-	actions1, _ := processor.ProcessNATS("sensors.temp", []byte(`{"sensor_id": "A"}`), nil)
+	actions1, _ := actionsOf(processor.ProcessNATS("sensors.temp", []byte(`{"sensor_id": "A"}`), nil))
 	if len(actions1) == 0 {
 		t.Fatal("first message from sensor A should produce actions")
 	}
 
 	// Sensor B on same subject (different template key)
-	actions2, _ := processor.ProcessNATS("sensors.temp", []byte(`{"sensor_id": "B"}`), nil)
+	actions2, _ := actionsOf(processor.ProcessNATS("sensors.temp", []byte(`{"sensor_id": "B"}`), nil))
 	if len(actions2) == 0 {
 		t.Fatal("first message from sensor B should produce actions")
 	}
 
 	// Sensor A again (suppressed)
-	actions3, _ := processor.ProcessNATS("sensors.temp", []byte(`{"sensor_id": "A"}`), nil)
+	actions3, _ := actionsOf(processor.ProcessNATS("sensors.temp", []byte(`{"sensor_id": "A"}`), nil))
 	if len(actions3) != 0 {
 		t.Fatal("second message from sensor A should be suppressed")
 	}
 }
 
-func TestProcessor_Debounce_IndependentRules(t *testing.T) {
+func TestProcessor_Throttle_IndependentRules(t *testing.T) {
 	processor := newTestProcessor()
 	rules := []Rule{
 		{
 			Trigger: Trigger{
 				NATS: &NATSTrigger{
 					Subject:  "sensors.temp",
-					Debounce: &DebounceConfig{Window: "1s"},
+					Throttle: &ThrottleConfig{Window: "1s"},
 				},
 			},
 			Action: Action{
@@ -2324,7 +2332,7 @@ func TestProcessor_Debounce_IndependentRules(t *testing.T) {
 			Trigger: Trigger{
 				NATS: &NATSTrigger{
 					Subject:  "sensors.temp",
-					Debounce: &DebounceConfig{Window: "1s"},
+					Throttle: &ThrottleConfig{Window: "1s"},
 				},
 			},
 			Action: Action{
@@ -2337,19 +2345,19 @@ func TestProcessor_Debounce_IndependentRules(t *testing.T) {
 	payload := []byte(`{}`)
 
 	// First message should fire both rules
-	actions1, _ := processor.ProcessNATS("sensors.temp", payload, nil)
+	actions1, _ := actionsOf(processor.ProcessNATS("sensors.temp", payload, nil))
 	if len(actions1) != 2 {
 		t.Fatalf("expected 2 actions (one per rule), got %d", len(actions1))
 	}
 
 	// Second message should suppress both
-	actions2, _ := processor.ProcessNATS("sensors.temp", payload, nil)
+	actions2, _ := actionsOf(processor.ProcessNATS("sensors.temp", payload, nil))
 	if len(actions2) != 0 {
 		t.Fatalf("expected 0 actions (both suppressed), got %d", len(actions2))
 	}
 }
 
-func TestProcessor_Debounce_NoDebounceUnaffected(t *testing.T) {
+func TestProcessor_Throttle_NoThrottleUnaffected(t *testing.T) {
 	processor := newTestProcessor()
 	rules := []Rule{
 		{
@@ -2365,23 +2373,23 @@ func TestProcessor_Debounce_NoDebounceUnaffected(t *testing.T) {
 
 	payload := []byte(`{}`)
 
-	// Both messages should produce actions (no debounce)
-	actions1, _ := processor.ProcessNATS("sensors.temp", payload, nil)
-	actions2, _ := processor.ProcessNATS("sensors.temp", payload, nil)
+	// Both messages should produce actions (no throttle)
+	actions1, _ := actionsOf(processor.ProcessNATS("sensors.temp", payload, nil))
+	actions2, _ := actionsOf(processor.ProcessNATS("sensors.temp", payload, nil))
 
 	if len(actions1) == 0 || len(actions2) == 0 {
-		t.Fatal("rules without debounce should always produce actions")
+		t.Fatal("rules without throttle should always produce actions")
 	}
 }
 
-func TestProcessor_Debounce_WindowExpiry(t *testing.T) {
+func TestProcessor_Throttle_WindowExpiry(t *testing.T) {
 	processor := newTestProcessor()
 	rules := []Rule{
 		{
 			Trigger: Trigger{
 				NATS: &NATSTrigger{
 					Subject:  "sensors.temp",
-					Debounce: &DebounceConfig{Window: "50ms"},
+					Throttle: &ThrottleConfig{Window: "50ms"},
 				},
 			},
 			Action: Action{
@@ -2393,16 +2401,331 @@ func TestProcessor_Debounce_WindowExpiry(t *testing.T) {
 
 	payload := []byte(`{}`)
 
-	actions1, _ := processor.ProcessNATS("sensors.temp", payload, nil)
+	actions1, _ := actionsOf(processor.ProcessNATS("sensors.temp", payload, nil))
 	if len(actions1) == 0 {
 		t.Fatal("first message should produce actions")
 	}
 
 	time.Sleep(60 * time.Millisecond)
 
-	actions2, _ := processor.ProcessNATS("sensors.temp", payload, nil)
+	actions2, _ := actionsOf(processor.ProcessNATS("sensors.temp", payload, nil))
 	if len(actions2) == 0 {
 		t.Fatal("message after window expiry should produce actions")
+	}
+}
+
+// --- Trailing-mode throttle tests ---
+
+// TestProcessor_TrailingThrottle_TagsWithoutSuppressing verifies trailing mode
+// never drops an action inside the Processor: every match is evaluated and
+// returned carrying a defer spec, and the executing layer does the coalescing.
+func TestProcessor_TrailingThrottle_TagsWithoutSuppressing(t *testing.T) {
+	processor := newTestProcessor()
+	rules := []Rule{
+		{
+			Trigger: Trigger{NATS: &NATSTrigger{Subject: "sensors.setpoint"}},
+			Action: Action{
+				NATS: &NATSAction{
+					Subject:  "hvac.setpoint",
+					Payload:  `{"v": {value}}`,
+					Throttle: &ThrottleConfig{Window: "5s", Mode: ThrottleTrailing},
+				},
+			},
+		},
+	}
+	if err := processor.LoadRules(rules); err != nil {
+		t.Fatalf("failed to load rules: %v", err)
+	}
+
+	var keys []string
+	for i := 0; i < 3; i++ {
+		out, err := processor.ProcessNATS("sensors.setpoint", []byte(`{"value": 21}`), nil)
+		if err != nil {
+			t.Fatalf("process %d failed: %v", i, err)
+		}
+		if len(out.Immediate) != 0 {
+			t.Errorf("process %d: a trailing action must not be immediate, got %d", i, len(out.Immediate))
+		}
+		if len(out.Deferred) != 1 {
+			t.Fatalf("process %d: trailing throttle must not suppress, expected 1 deferred batch, got %d",
+				i, len(out.Deferred))
+		}
+		if out.Deferred[0].Window != 5*time.Second {
+			t.Errorf("process %d: expected a 5s window, got %v", i, out.Deferred[0].Window)
+		}
+		keys = append(keys, out.Deferred[0].Key)
+	}
+
+	// Same rule and same resolved key across messages, so all three land in the
+	// same coalescing window.
+	if keys[0] != keys[1] || keys[1] != keys[2] {
+		t.Errorf("expected a stable defer key across messages, got %q / %q / %q", keys[0], keys[1], keys[2])
+	}
+}
+
+// TestProcessor_TrailingThrottle_KeySeparatesGroups verifies a templated key
+// puts distinct values in distinct coalescing windows.
+func TestProcessor_TrailingThrottle_KeySeparatesGroups(t *testing.T) {
+	processor := newTestProcessor()
+	rules := []Rule{
+		{
+			Trigger: Trigger{NATS: &NATSTrigger{Subject: "sensors.setpoint"}},
+			Action: Action{
+				NATS: &NATSAction{
+					Subject:  "hvac.setpoint",
+					Payload:  `{}`,
+					Throttle: &ThrottleConfig{Window: "5s", Key: "{room}", Mode: ThrottleTrailing},
+				},
+			},
+		},
+	}
+	if err := processor.LoadRules(rules); err != nil {
+		t.Fatalf("failed to load rules: %v", err)
+	}
+
+	kitchen, _ := processor.ProcessNATS("sensors.setpoint", []byte(`{"room": "kitchen"}`), nil)
+	attic, _ := processor.ProcessNATS("sensors.setpoint", []byte(`{"room": "attic"}`), nil)
+
+	if len(kitchen.Deferred) != 1 || len(attic.Deferred) != 1 {
+		t.Fatalf("expected one deferred batch each, got %d and %d", len(kitchen.Deferred), len(attic.Deferred))
+	}
+	if kitchen.Deferred[0].Key == attic.Deferred[0].Key {
+		t.Errorf("expected different defer keys per room, both were %q", kitchen.Deferred[0].Key)
+	}
+}
+
+// TestProcessor_TrailingThrottle_ForEachSharesOneKey verifies a fan-out is
+// tagged as a single batch, so the coalescer replaces the batch as a unit
+// instead of collapsing N actions into the last element.
+func TestProcessor_TrailingThrottle_ForEachSharesOneKey(t *testing.T) {
+	processor := newTestProcessor()
+	rules := []Rule{
+		{
+			Trigger: Trigger{NATS: &NATSTrigger{Subject: "orders.batch"}},
+			Action: Action{
+				NATS: &NATSAction{
+					Subject:  "orders.item",
+					ForEach:  "{items}",
+					Payload:  `{"sku": "{sku}"}`,
+					Throttle: &ThrottleConfig{Window: "5s", Mode: ThrottleTrailing},
+				},
+			},
+		},
+	}
+	if err := processor.LoadRules(rules); err != nil {
+		t.Fatalf("failed to load rules: %v", err)
+	}
+
+	out, err := processor.ProcessNATS("orders.batch",
+		[]byte(`{"items": [{"sku": "a"}, {"sku": "b"}, {"sku": "c"}]}`), nil)
+	if err != nil {
+		t.Fatalf("process failed: %v", err)
+	}
+
+	// One batch, not three — a trailing window replaces the fan-out as a unit.
+	if len(out.Deferred) != 1 {
+		t.Fatalf("expected the fan-out to form 1 deferred batch, got %d", len(out.Deferred))
+	}
+	if len(out.Deferred[0].Actions) != 3 {
+		t.Fatalf("expected all 3 actions in the batch, got %d", len(out.Deferred[0].Actions))
+	}
+
+	// Defer is also stamped per action so inspection surfaces can show it.
+	for i, a := range out.Deferred[0].Actions {
+		if a.Defer == nil {
+			t.Fatalf("action %d missing defer spec", i)
+		}
+		if a.Defer.Key != out.Deferred[0].Key {
+			t.Errorf("action %d has key %q, expected the batch key %q", i, a.Defer.Key, out.Deferred[0].Key)
+		}
+	}
+}
+
+// TestProcessor_LeadingThrottle_LeavesNoDeferSpec verifies leading mode still
+// gates inline and never produces deferred work.
+func TestProcessor_LeadingThrottle_LeavesNoDeferSpec(t *testing.T) {
+	processor := newTestProcessor()
+	rules := []Rule{
+		{
+			Trigger: Trigger{NATS: &NATSTrigger{Subject: "sensors.temp"}},
+			Action: Action{
+				NATS: &NATSAction{
+					Subject:  "alerts.temp",
+					Payload:  `{}`,
+					Throttle: &ThrottleConfig{Window: "5s"},
+				},
+			},
+		},
+	}
+	if err := processor.LoadRules(rules); err != nil {
+		t.Fatalf("failed to load rules: %v", err)
+	}
+
+	first, _ := processor.ProcessNATS("sensors.temp", []byte(`{}`), nil)
+	if len(first.Immediate) != 1 {
+		t.Fatalf("expected the first message to fire immediately, got %d actions", len(first.Immediate))
+	}
+	if len(first.Deferred) != 0 {
+		t.Errorf("leading mode must not produce deferred batches, got %d", len(first.Deferred))
+	}
+	if first.Immediate[0].Defer != nil {
+		t.Error("leading mode must not tag actions for deferral")
+	}
+
+	second, _ := processor.ProcessNATS("sensors.temp", []byte(`{}`), nil)
+	if !second.Empty() {
+		t.Errorf("expected the second message to be suppressed, got %d immediate / %d deferred",
+			len(second.Immediate), len(second.Deferred))
+	}
+}
+
+// TestProcessor_ActionThrottle_ForEachGatesWholeBatch pins the documented
+// semantics of an action throttle on a forEach action: the gate runs BEFORE
+// expansion, so the whole fan-out passes or is suppressed together. It is a
+// rate limit on "did this rule fire", not on individual emitted elements.
+func TestProcessor_ActionThrottle_ForEachGatesWholeBatch(t *testing.T) {
+	processor := newTestProcessor()
+	rules := []Rule{
+		{
+			Trigger: Trigger{NATS: &NATSTrigger{Subject: "orders.batch"}},
+			Action: Action{
+				NATS: &NATSAction{
+					Subject:  "orders.item",
+					ForEach:  "{items}",
+					Payload:  `{"sku": "{sku}"}`,
+					Throttle: &ThrottleConfig{Window: "5s"},
+				},
+			},
+		},
+	}
+	if err := processor.LoadRules(rules); err != nil {
+		t.Fatalf("failed to load rules: %v", err)
+	}
+
+	payload := []byte(`{"items": [{"sku": "a"}, {"sku": "b"}, {"sku": "c"}]}`)
+
+	first, _ := actionsOf(processor.ProcessNATS("orders.batch", payload, nil))
+	if len(first) != 3 {
+		t.Fatalf("expected the whole fan-out to pass the open window, got %d actions", len(first))
+	}
+
+	second, _ := actionsOf(processor.ProcessNATS("orders.batch", payload, nil))
+	if len(second) != 0 {
+		t.Errorf("expected the whole fan-out to be suppressed inside the window, got %d actions", len(second))
+	}
+}
+
+// TestProcessor_ActionThrottle_ForEachKeyUsesTriggerContext pins the known
+// limitation: because the gate precedes expansion, a key naming an array-element
+// field is not per-element — it resolves against the trigger context and comes
+// back empty, so every message shares one window. Documented in
+// docs/01-core-concepts.md; this test exists so the behaviour cannot drift
+// silently into something users might depend on.
+func TestProcessor_ActionThrottle_ForEachKeyUsesTriggerContext(t *testing.T) {
+	processor := newTestProcessor()
+	rules := []Rule{
+		{
+			Trigger: Trigger{NATS: &NATSTrigger{Subject: "orders.batch"}},
+			Action: Action{
+				NATS: &NATSAction{
+					Subject: "orders.item",
+					ForEach: "{items}",
+					Payload: `{"sku": "{sku}"}`,
+					// "sku" only exists on array elements, never at the root.
+					Throttle: &ThrottleConfig{Window: "5s", Key: "{sku}"},
+				},
+			},
+		},
+	}
+	if err := processor.LoadRules(rules); err != nil {
+		t.Fatalf("failed to load rules: %v", err)
+	}
+
+	first, _ := actionsOf(processor.ProcessNATS("orders.batch", []byte(`{"items": [{"sku": "a"}]}`), nil))
+	if len(first) != 1 {
+		t.Fatalf("expected the first batch to fire, got %d actions", len(first))
+	}
+
+	// Entirely different element values — yet the same (empty) resolved key, so
+	// this is still suppressed. This is the limitation, asserted deliberately.
+	second, _ := actionsOf(processor.ProcessNATS("orders.batch", []byte(`{"items": [{"sku": "z"}]}`), nil))
+	if len(second) != 0 {
+		t.Errorf("expected suppression: a forEach throttle key resolves against the trigger context, "+
+			"so distinct element values do not get distinct windows; got %d actions", len(second))
+	}
+}
+
+// TestProcessor_MixedRules_SplitsOutcome verifies that when one message matches
+// both a plain rule and a trailing-throttled one, the two land in different
+// Outcome fields — the split callers depend on to not publish a held action.
+func TestProcessor_MixedRules_SplitsOutcome(t *testing.T) {
+	processor := newTestProcessor()
+	rules := []Rule{
+		{
+			Trigger: Trigger{NATS: &NATSTrigger{Subject: "sensors.setpoint"}},
+			Action:  Action{NATS: &NATSAction{Subject: "audit.setpoint", Payload: `{}`}},
+		},
+		{
+			Trigger: Trigger{NATS: &NATSTrigger{Subject: "sensors.setpoint"}},
+			Action: Action{
+				NATS: &NATSAction{
+					Subject:  "hvac.setpoint",
+					Payload:  `{}`,
+					Throttle: &ThrottleConfig{Window: "5s", Mode: ThrottleTrailing},
+				},
+			},
+		},
+	}
+	if err := processor.LoadRules(rules); err != nil {
+		t.Fatalf("failed to load rules: %v", err)
+	}
+
+	out, err := processor.ProcessNATS("sensors.setpoint", []byte(`{}`), nil)
+	if err != nil {
+		t.Fatalf("process failed: %v", err)
+	}
+
+	if len(out.Immediate) != 1 {
+		t.Fatalf("expected 1 immediate action, got %d", len(out.Immediate))
+	}
+	if out.Immediate[0].NATS.Subject != "audit.setpoint" {
+		t.Errorf("wrong action ran immediately: %s", out.Immediate[0].NATS.Subject)
+	}
+	if len(out.Deferred) != 1 {
+		t.Fatalf("expected 1 deferred batch, got %d", len(out.Deferred))
+	}
+	if out.Deferred[0].Actions[0].NATS.Subject != "hvac.setpoint" {
+		t.Errorf("wrong action deferred: %s", out.Deferred[0].Actions[0].NATS.Subject)
+	}
+
+	// All() is the inspection view: everything, in evaluation order.
+	if all := out.All(); len(all) != 2 {
+		t.Errorf("expected All() to return both actions, got %d", len(all))
+	}
+	if out.Empty() {
+		t.Error("Empty() must be false when either field is populated")
+	}
+}
+
+func TestOutcome_EmptyAndAll(t *testing.T) {
+	var zero Outcome
+	if !zero.Empty() {
+		t.Error("a zero Outcome should be empty")
+	}
+	if len(zero.All()) != 0 {
+		t.Error("a zero Outcome should flatten to nothing")
+	}
+
+	deferredOnly := Outcome{Deferred: []DeferredBatch{{
+		Key:     "k",
+		Window:  time.Second,
+		Actions: []*Action{{NATS: &NATSAction{Subject: "a"}}},
+	}}}
+	if deferredOnly.Empty() {
+		t.Error("an Outcome holding only deferred work is not empty")
+	}
+	if len(deferredOnly.All()) != 1 {
+		t.Error("All() must include deferred actions")
 	}
 }
 
@@ -2481,7 +2804,7 @@ func TestProcessScheduleForEach_KVSourcedArray(t *testing.T) {
 
 	processor.LoadRules([]Rule{rule})
 
-	actions, err := processor.ProcessSchedule(processor.scheduleRules[0])
+	actions, err := actionsOf(processor.ProcessSchedule(processor.scheduleRules[0]))
 	if err != nil {
 		t.Fatalf("ProcessSchedule() error = %v", err)
 	}

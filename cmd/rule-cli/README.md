@@ -54,10 +54,11 @@ Available templates:
   - http-respond
   - nats-array-operators
   - nats-basic
-  - nats-debounce
   - nats-forEach
   - nats-kv-enrichment
   - nats-reply
+  - nats-throttle
+  - nats-throttle-trailing
   - schedule-basic
   - schedule-poll
   - signature-verification

@@ -1,0 +1,44 @@
+# templates/nats-throttle-trailing.yaml
+#
+# Trailing-edge action throttle: emit the settled value, not the first one.
+#
+# "Trailing" means the first match opens a window but nothing fires yet. Each
+# later match inside the window replaces the pending one, and when the window
+# closes the LAST value fires. Use it when only the final state matters and the
+# intermediate churn is noise — a thermostat being dragged, a slider, a
+# configuration being edited, a counter settling.
+#
+# Trade-offs, all deliberate:
+#   - Output is delayed by up to `window`. Do not use this for alerting.
+#   - The window is fixed from the first message, NOT reset on every message,
+#     so a continuously busy key still emits once per window instead of
+#     starving forever.
+#   - Delivery is at-most-once: the triggering message is ACKed when the window
+#     opens, so a crash mid-window loses the pending value.
+#   - Valid on actions only, and not with `request: true` (nothing would be
+#     left to answer).
+#
+# Example use case: a wall thermostat that emits a reading per degree while
+# someone spins the dial. Only the value they settle on should reach the HVAC
+# controller.
+#
+- trigger:
+    nats:
+      subject: "thermostat.setpoint.>"
+  action:
+    nats:
+      subject: "hvac.setpoint.applied.{@subject.2}"
+      payload: |
+        {
+          "zone": "{@subject.2}",
+          "setpoint": {setpoint},
+          "settled_at": "{@timestamp()}"
+        }
+      throttle:
+        mode: trailing
+        # Wait 2 seconds after the first change, then publish whatever the
+        # latest setpoint is at that moment.
+        window: "2s"
+        # One window per zone, so adjusting the kitchen dial does not delay or
+        # overwrite a change made in the bedroom.
+        key: "{@subject.2}"

@@ -30,6 +30,7 @@ func (m *Metrics) IncForEachActionsGenerated(ruleFile string, count int)        
 func (m *Metrics) IncForEachElementErrors(ruleFile, errorType string)              {}
 func (m *Metrics) ObserveForEachDuration(ruleFile string, seconds float64)         {}
 func (m *Metrics) IncThrottleSuppressed(phase string)                              {}
+func (m *Metrics) IncThrottleDeferred(outcome string)                              {}
 func (m *Metrics) IncArrayOperatorEvaluations(operator string, result bool)        {}
 func (m *Metrics) UpdateSystemMetrics()                                            {}
 func (m *Metrics) IncHTTPInboundRequestsTotal(path, method, status string)         {}

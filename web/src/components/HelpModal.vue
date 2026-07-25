@@ -174,12 +174,16 @@ onUnmounted(() => { document.removeEventListener('keydown', onEscape) })
           </tbody></table>
           <p class="help-text">Inside forEach, <code>{field}</code> refers to the current element. Use <code>{@msg.field}</code> to access the original root message.</p>
 
-          <h3>Debounce</h3>
-          <p class="help-text">Fire-first throttle — allows the first match, suppresses duplicates for the window duration.</p>
+          <h3>Throttle</h3>
+          <p class="help-text">Rate-limits a rule. Formerly called <code>debounce</code> — that spelling still loads but is deprecated.</p>
           <table class="help-table"><tbody>
-            <tr><td class="mono">window</td><td>Suppression duration (e.g., "5s", "1m")</td></tr>
-            <tr><td class="mono">key</td><td>Optional grouping key template (e.g., "{@subject.2}")</td></tr>
+            <tr><td class="mono">window</td><td>Window duration (e.g., "5s", "1m")</td></tr>
+            <tr><td class="mono">mode: leading</td><td>Default. Fires the first match immediately, drops the rest of the window. Use for alerting.</td></tr>
+            <tr><td class="mono">mode: trailing</td><td>Holds the action and emits the last value when the window closes. Actions only. Use for settling state (dials, setpoints).</td></tr>
+            <tr><td class="mono">key</td><td>Optional grouping key template (e.g., "{@subject.2}") — one window per resolved value</td></tr>
           </tbody></table>
+          <p class="help-text"><strong>Prefer an action throttle.</strong> A throttle on a <em>trigger</em> skips evaluation entirely, so it samples the input stream and can discard the very message that would have matched. Only use one on a rule with no conditions, or where evaluation itself is the cost you want to avoid.</p>
+          <p class="help-text">Trailing mode adds up to one window of latency and is at-most-once (the trigger is acknowledged when the window opens). Its window is fixed from the first message, not reset on each one, so a busy key still emits once per window.</p>
         </div>
 
         <!-- Triggers -->

@@ -401,83 +401,109 @@ Given an input message `{"customer_id": "c1", "amount": 99.50, "items": [...]}`,
 - If both `passthrough` and `merge` are set, `passthrough` wins
 - In `forEach` context, the merge base is the current array element (use `{@msg.field}` to pull root fields into the overlay)
 
-## 4. Debounce / Throttle
+## 4. Throttle
 
-Rules support an optional `debounce` block on triggers and/or actions to suppress rapid-fire processing. It uses **fire-first** semantics: the first message is processed immediately, and subsequent messages within the `window` are suppressed.
+Rules support an optional `throttle` block to limit how often something happens. It goes on an action (the common case) or on a trigger (a narrow case — see the warning below).
 
-### Trigger Debounce
+> **Renamed.** This block used to be called `debounce`. The old spelling still loads and behaves identically, but logs a deprecation warning at startup; setting both `throttle` and `debounce` on the same trigger or action is an error. The name changed because the default behaviour is a leading-edge rate limit, not a debounce — and `mode: trailing` now provides the actual debounce.
 
-Skips rule evaluation entirely for the duration of the window. Suppressed messages are still ACKed (not redelivered).
+### Modes
+
+| Mode | What fires | Latency | Use it for |
+|------|-----------|---------|-----------|
+| `leading` (default) | The **first** match in the window, immediately. The rest are dropped. | None | Alerting. You want the page now, and exactly one of them. |
+| `trailing` | The **last** match in the window, when the window closes. | Up to `window` | Settling state. A dial being turned, a setpoint, a config being edited. |
+
+```yaml
+action:
+  nats:
+    subject: "alerts.high_temp"
+    payload: '{"alert": true, "temp": {temperature}}'
+    throttle:
+      window: "30s"
+      mode: leading         # default; may be omitted
+      key: "{@subject.2}"   # one window per room
+```
+
+Neither mode subsumes the other. Leading gives you the earliest value with no delay; trailing gives you the settled value at the cost of delay. Pick by asking whether the *first* or the *final* value of a burst is the one that matters.
+
+### Trailing mode
+
+Trailing mode holds the evaluated action and replaces it each time the rule matches again. When the window closes, whatever is pending fires.
 
 ```yaml
 - trigger:
     nats:
-      subject: "sensors.temperature.>"
-      debounce:
-        window: "5s"              # Suppress for 5 seconds after first message
-        key: "{@subject}"         # Optional. Defaults to full subject/path.
+      subject: "thermostat.setpoint.>"
   action:
     nats:
-      subject: "alerts.temperature"
-      payload: '{"temp": {temperature}}'
+      subject: "hvac.setpoint.applied.{@subject.2}"
+      payload: '{"setpoint": {setpoint}}'
+      throttle:
+        window: "2s"
+        mode: trailing
+        key: "{@subject.2}"
 ```
 
-### Action Debounce
+Spin the dial from 18 → 19 → 20 → 21 within two seconds and the HVAC controller sees exactly one message, carrying 21.
 
-Conditions are still evaluated (the rule "matches"), but action execution is suppressed within the window.
+Four things to know before using it:
+
+- **The window is fixed from the first message, not reset on each one.** This is deliberately *not* the reset-on-every-keystroke debounce familiar from UI code. A continuously busy key emits once per window rather than starving forever, and emission latency is bounded by `window`.
+- **Delivery becomes at-most-once.** The triggering message is ACKed when its window opens, not when the action fires — otherwise the ack would expire mid-window and JetStream would redeliver. A crash inside the window loses the pending value. On a clean shutdown (SIGTERM) pending batches are flushed rather than discarded.
+- **Actions only, and not on synchronous paths.** `mode: trailing` on a trigger is a load-time error, as is combining it with `request: true`. A `respond` action takes no throttle at all. In every one of those cases something is waiting for a reply, and there is nothing to return by the time a deferred action fires.
+- **A `forEach` fan-out is held as one batch.** All actions from one evaluation share a window and are replaced together, so the "last value" is the last *batch* — never a single element of it.
+
+### Trigger throttle — read this before using it
+
+A trigger throttle skips rule evaluation entirely. Suppressed messages are still ACKed and never redelivered. It is `leading` only.
 
 ```yaml
 - trigger:
     nats:
-      subject: "sensors.temperature.>"
-  conditions:
-    operator: and
-    items:
-      - field: "{temperature}"
-        operator: gt
-        value: 30
+      subject: "sensors.telemetry.>"
+      throttle:
+        window: "5s"
   action:
     nats:
-      subject: "alerts.high_temp"
-      payload: '{"alert": true, "temp": {temperature}}'
-      debounce:
-        window: "30s"
-        key: "{@subject.2}"     # Debounce per room (e.g., "room1")
+      subject: "telemetry.sampled"
+      passthrough: true
 ```
 
-### Debounce Key
+> **A trigger throttle samples your input stream and discards the rest — including messages that would have matched.** With a 5s window and a `temperature > 30` condition: a reading of 20 arrives at t=0, consumes the window, and matches nothing. A reading of 50 arrives at t=1 and is never evaluated. No alert fires. **If your rule has conditions, you almost certainly want an action throttle instead**, which evaluates every message and only starts a window once something actually matches.
 
-The `key` field controls what gets debounced independently. It supports template syntax for grouping:
+Reach for a trigger throttle only when the rule is unconditional, or when evaluation itself is the cost you are trying to avoid — expensive KV lookups, signature verification, large `forEach` expansions on a firehose subject. On a rule with no conditions it is behaviourally identical to a leading action throttle, just cheaper.
+
+### Throttle key
+
+The `key` field controls what is throttled independently. It supports template syntax for grouping:
 
 | Key | Behavior |
 |-----|----------|
 | *(omitted)* | Defaults to the full NATS subject or HTTP path |
 | `"{@subject}"` | Same as default for NATS triggers |
-| `"{@subject.2}"` | Debounce per subject token (e.g., per room) |
-| `"{sensor_id}"` | Debounce per message field value |
-| `"{@path.1}"` | Debounce per HTTP path segment |
+| `"{@subject.2}"` | One window per subject token (e.g., per room) |
+| `"{sensor_id}"` | One window per message field value |
+| `"{@path.1}"` | One window per HTTP path segment |
 
-Each rule maintains its own independent debounce state, so two rules on the same subject never interfere with each other. Within a single rule, however, **messages whose `key` template resolves to the same value share a window** — that is exactly the point of using a non-default key. For example, with `key: "{@subject.2}"`, all messages where the third subject token resolves to `"room1"` share a window, while messages resolving to `"room2"` are tracked separately.
+Each rule maintains its own independent throttle state, so two rules on the same subject never interfere. Within a single rule, **messages whose `key` resolves to the same value share a window** — that is exactly the point of a non-default key. With `key: "{@subject.2}"`, everything resolving to `"room1"` shares a window while `"room2"` is tracked separately.
 
-State is held in-memory per Processor instance. A SIGHUP reload (which rebuilds the Processor) clears all debounce state — useful to know if you are watching for an alert immediately after a config change.
+Choosing a key with unbounded cardinality (an order ID, a request ID) is legal but pointless: every message gets its own window and nothing is ever throttled. Entries do expire and are swept, so it leaks nothing, but it also achieves nothing.
 
-### Using Both Together
+#### Key resolution with `forEach`
 
-Trigger and action debounce can be combined on a single rule:
+An action throttle gates the action **as a unit**, and it runs *before* `forEach` expansion. Two consequences:
 
-```yaml
-- trigger:
-    nats:
-      subject: "sensors.temperature.>"
-      debounce:
-        window: "5s"           # Don't evaluate more than once per 5s
-  action:
-    nats:
-      subject: "alerts.high_temp"
-      payload: '{"alert": true}'
-      debounce:
-        window: "30s"          # Don't fire more than one alert per 30s
-```
+- A whole fan-out passes or is suppressed together. You cannot throttle individual elements.
+- The key resolves against the **trigger context**, not against array elements. `key: "{sku}"` on a `forEach` action does *not* give you one window per SKU — `sku` does not exist at the message root, so it resolves empty and every message shares one window.
+
+If you need per-element rate limiting, split the fan-out into its own subject and put a rule with a throttle on the consuming side.
+
+### State and reloads
+
+Leading-mode state lives in memory on the Processor. A SIGHUP reload rebuilds the Processor and therefore clears it — worth knowing if you are watching for an alert right after a config change.
+
+Trailing-mode pending batches live in the executing layer instead, so they survive a reload and still fire. They are fully evaluated by the time they are pending, so a rule change mid-window does not alter what gets emitted.
 
 ## Environment Variables
 

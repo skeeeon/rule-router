@@ -167,19 +167,19 @@ func TestProcessForSubscription_TransportFilter_Index(t *testing.T) {
 
 	payload := []byte(`{"v":1}`)
 
-	jsActions, err := p.ProcessForSubscription("sensors.temp", "sensors.temp", payload, nil, JetStreamRuleFilter)
+	jsActions, err := actionsOf(p.ProcessForSubscription("sensors.temp", "sensors.temp", payload, nil, JetStreamRuleFilter))
 	if err != nil {
 		t.Fatalf("jetstream ProcessForSubscription failed: %v", err)
 	}
 	assertActionSubjects(t, jsActions, "out.jetstream")
 
-	coreActions, err := p.ProcessForSubscription("sensors.temp", "sensors.temp", payload, nil, CoreRuleFilter)
+	coreActions, err := actionsOf(p.ProcessForSubscription("sensors.temp", "sensors.temp", payload, nil, CoreRuleFilter))
 	if err != nil {
 		t.Fatalf("core ProcessForSubscription failed: %v", err)
 	}
 	assertActionSubjects(t, coreActions, "out.core")
 
-	allActions, err := p.ProcessForSubscription("sensors.temp", "sensors.temp", payload, nil, nil)
+	allActions, err := actionsOf(p.ProcessForSubscription("sensors.temp", "sensors.temp", payload, nil, nil))
 	if err != nil {
 		t.Fatalf("unfiltered ProcessForSubscription failed: %v", err)
 	}
@@ -206,20 +206,20 @@ func TestProcessForSubscription_TransportFilter_KV(t *testing.T) {
 
 	payload := []byte(`{"v":1}`)
 
-	jsActions, err := p.ProcessForSubscription("sensors.temp", "sensors.temp", payload, nil, JetStreamRuleFilter)
+	jsActions, err := actionsOf(p.ProcessForSubscription("sensors.temp", "sensors.temp", payload, nil, JetStreamRuleFilter))
 	if err != nil {
 		t.Fatalf("jetstream ProcessForSubscription failed: %v", err)
 	}
 	assertActionSubjects(t, jsActions, "out.jetstream")
 
-	coreActions, err := p.ProcessForSubscription("sensors.temp", "sensors.temp", payload, nil, CoreRuleFilter)
+	coreActions, err := actionsOf(p.ProcessForSubscription("sensors.temp", "sensors.temp", payload, nil, CoreRuleFilter))
 	if err != nil {
 		t.Fatalf("core ProcessForSubscription failed: %v", err)
 	}
 	assertActionSubjects(t, coreActions, "out.core")
 
 	// A core-only subject seen through the JetStream filter yields nothing.
-	empty, err := p.ProcessForSubscription("sensors.hum", "sensors.hum", payload, nil, JetStreamRuleFilter)
+	empty, err := actionsOf(p.ProcessForSubscription("sensors.hum", "sensors.hum", payload, nil, JetStreamRuleFilter))
 	if err != nil {
 		t.Fatalf("filtered-to-empty ProcessForSubscription failed: %v", err)
 	}

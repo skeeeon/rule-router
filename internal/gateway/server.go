@@ -17,6 +17,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
+	"rule-router/internal/deferred"
 	"rule-router/internal/logger"
 	"rule-router/internal/metrics"
 	"rule-router/internal/rule"
@@ -34,6 +35,9 @@ const (
 	// not specify its own timeout. Note: the HTTP server's WriteTimeout must
 	// exceed this, or a slow responder's reply may be cut off.
 	DefaultRequestTimeout = 5 * time.Second
+	// deferredActionTimeout bounds publishing of a trailing-throttle batch. The
+	// webhook was answered when the window opened, so no client is waiting.
+	deferredActionTimeout = 30 * time.Second
 )
 
 // Standard JSON responses
@@ -69,6 +73,10 @@ type InboundServer struct {
 	// Worker pool components
 	workQueue chan webhookJob // Buffered channel acting as a job queue
 	wg        sync.WaitGroup  // Waits for all workers to gracefully shut down
+
+	// coalescer holds trailing-throttle NATS actions and publishes the last one
+	// per window, long after the webhook was answered.
+	coalescer *deferred.Coalescer
 }
 
 // ServerConfig contains HTTP server configuration.
@@ -120,7 +128,7 @@ func NewInboundServer(
 		logger.Info("InboundQueueSize not set, using default", "size", serverCfg.InboundQueueSize)
 	}
 
-	return &InboundServer{
+	s := &InboundServer{
 		logger:     logger,
 		metrics:    metrics,
 		processor:  processor,
@@ -131,6 +139,28 @@ func NewInboundServer(
 		// Initialize the buffered channel for the work queue.
 		workQueue: make(chan webhookJob, serverCfg.InboundQueueSize),
 	}
+	s.coalescer = deferred.New("http-inbound", s.executeDeferred, deferredActionTimeout, logger, metrics)
+	return s
+}
+
+// executeDeferred publishes a trailing-throttle NATS action once its window has
+// closed. Only NATS actions reach here: the inbound server never runs outbound
+// HTTP actions, and respond/request actions cannot be deferred.
+func (s *InboundServer) executeDeferred(ctx context.Context, action *rule.Action) error {
+	if action.NATS == nil {
+		s.logger.Warn("deferred non-NATS action on inbound path; skipping")
+		return nil
+	}
+	if err := s.publishToNATS(ctx, action.NATS); err != nil {
+		if s.metrics != nil {
+			s.metrics.IncActionsTotal("error")
+		}
+		return fmt.Errorf("failed to publish deferred NATS action to %s: %w", action.NATS.Subject, err)
+	}
+	if s.metrics != nil {
+		s.metrics.IncActionsTotal("success")
+	}
+	return nil
 }
 
 // Start begins the HTTP server and starts the worker pool.
@@ -235,6 +265,11 @@ func (s *InboundServer) Stop(ctx context.Context) error {
 		s.logger.Warn("shutdown grace period expired with accepted webhooks still draining",
 			"remaining", len(s.workQueue))
 	}
+
+	// 4. Flush pending trailing-throttle batches. Workers are done, so no new
+	//    batches can be submitted. Shares the caller's grace period.
+	s.coalescer.Stop(ctx)
+
 	return nil
 }
 
@@ -262,7 +297,7 @@ func (s *InboundServer) processWebhookWithRecovery(ctx context.Context, path, me
 // processWebhook processes the webhook and publishes to NATS
 func (s *InboundServer) processWebhook(ctx context.Context, path, method string, body []byte, headers map[string]string) {
 	// Process through rule engine
-	actions, err := s.processor.ProcessHTTP(path, method, body, headers)
+	outcome, err := s.processor.ProcessHTTP(path, method, body, headers)
 	if err != nil {
 		s.logger.Error("failed to process webhook",
 			"path", path,
@@ -271,8 +306,14 @@ func (s *InboundServer) processWebhook(ctx context.Context, path, method string,
 		return
 	}
 
+	// Trailing-throttle batches publish when their window closes. The webhook
+	// was already answered 202, so nothing waits on them.
+	for _, batch := range outcome.Deferred {
+		s.coalescer.Submit(batch)
+	}
+
 	// Publish all matched actions to NATS
-	for _, action := range actions {
+	for _, action := range outcome.Immediate {
 		if action.NATS != nil {
 			if err := s.publishToNATS(ctx, action.NATS); err != nil {
 				s.logger.Error("failed to publish to NATS",
@@ -476,15 +517,22 @@ func (s *InboundServer) webhookHandler(w http.ResponseWriter, r *http.Request) {
 // The first respond/request action produced wins the response; any plain NATS
 // publish actions fire as side-effects. A context deadline bounds bridge calls.
 func (s *InboundServer) handleSync(w http.ResponseWriter, r *http.Request, rt routeInfo, body []byte, headers map[string]string, start time.Time) {
-	actions, err := s.processor.ProcessHTTP(rt.path, rt.method, body, headers)
+	outcome, err := s.processor.ProcessHTTP(rt.path, rt.method, body, headers)
 	if err != nil {
 		s.logger.Error("failed to process synchronous webhook", "path", rt.path, "method", rt.method, "error", err)
 		s.writeSyncError(w, rt, http.StatusInternalServerError, "Internal Server Error", start)
 		return
 	}
 
+	// Side-effect publishes on a sync path can still be trailing-throttled; the
+	// response itself cannot (the loader rejects trailing with request: true and
+	// throttle on respond actions).
+	for _, batch := range outcome.Deferred {
+		s.coalescer.Submit(batch)
+	}
+
 	responded := false
-	for _, action := range actions {
+	for _, action := range outcome.Immediate {
 		switch {
 		case action.Respond != nil:
 			if responded {

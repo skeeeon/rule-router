@@ -522,7 +522,7 @@ func (p *Processor) ReplaceKVRuleSet(set *KVRuleSet) {
 // A subject can be served by both transports — via overlapping wildcards or
 // mixed-mode rules on one subject — and each delivery must only fire its own
 // rules or every such message double-fires.
-func (p *Processor) ProcessForSubscription(triggerSubject, messageSubject string, payload []byte, headers map[string]string, filter NATSTriggerFilter) ([]*Action, error) {
+func (p *Processor) ProcessForSubscription(triggerSubject, messageSubject string, payload []byte, headers map[string]string, filter NATSTriggerFilter) (Outcome, error) {
 	set := p.loadKVRuleSet()
 	if set == nil {
 		return p.processNATSFiltered(messageSubject, payload, headers, filter)
@@ -537,7 +537,7 @@ func (p *Processor) ProcessForSubscription(triggerSubject, messageSubject string
 	// (No fallback — pattern matching would re-match the other transport's rules.)
 	rules = filterNATSRules(rules, filter)
 	if len(rules) == 0 {
-		return nil, nil
+		return Outcome{}, nil
 	}
 
 	p.logger.Debug("processing via KV rules",
@@ -560,7 +560,7 @@ func (p *Processor) ProcessForSubscription(triggerSubject, messageSubject string
 		if p.metrics != nil {
 			p.metrics.IncMessagesTotal("error")
 		}
-		return nil, err
+		return Outcome{}, err
 	}
 
 	return p.evaluateRules(rules, context, "nats")
@@ -569,7 +569,7 @@ func (p *Processor) ProcessForSubscription(triggerSubject, messageSubject string
 // ProcessSchedule processes a schedule-triggered rule.
 // Creates an evaluation context with no inbound message data — only time and KV contexts
 // are available for condition evaluation and template rendering.
-func (p *Processor) ProcessSchedule(rule *Rule) ([]*Action, error) {
+func (p *Processor) ProcessSchedule(rule *Rule) (Outcome, error) {
 	p.logger.Debug("processing schedule rule", "cron", rule.Trigger.Schedule.Cron)
 
 	context, err := NewEvaluationContext(
@@ -588,20 +588,20 @@ func (p *Processor) ProcessSchedule(rule *Rule) ([]*Action, error) {
 			p.metrics.IncMessagesTotal("error")
 		}
 		p.logger.Error("failed to create evaluation context for schedule rule", "error", err)
-		return nil, err
+		return Outcome{}, err
 	}
 
 	return p.evaluateRules([]*Rule{rule}, context, "schedule")
 }
 
 // ProcessNATS processes a NATS message through the rule engine
-func (p *Processor) ProcessNATS(subject string, payload []byte, headers map[string]string) ([]*Action, error) {
+func (p *Processor) ProcessNATS(subject string, payload []byte, headers map[string]string) (Outcome, error) {
 	return p.processNATSFiltered(subject, payload, headers, nil)
 }
 
 // processNATSFiltered is ProcessNATS with an optional transport filter applied
 // to the pattern-matched rules (see ProcessForSubscription).
-func (p *Processor) processNATSFiltered(subject string, payload []byte, headers map[string]string, filter NATSTriggerFilter) ([]*Action, error) {
+func (p *Processor) processNATSFiltered(subject string, payload []byte, headers map[string]string, filter NATSTriggerFilter) (Outcome, error) {
 	p.logger.Debug("processing NATS message", "subject", subject, "payloadSize", len(payload))
 
 	// Create SubjectContext first so we can reuse its tokens for pattern matching
@@ -609,7 +609,7 @@ func (p *Processor) processNATSFiltered(subject string, payload []byte, headers 
 
 	rules := filterNATSRules(p.index.FindAllMatchingTokenized(subject, subjectCtx.Tokens), filter)
 	if len(rules) == 0 {
-		return nil, nil
+		return Outcome{}, nil
 	}
 
 	context, err := NewEvaluationContext(
@@ -628,19 +628,19 @@ func (p *Processor) processNATSFiltered(subject string, payload []byte, headers 
 			p.metrics.IncMessagesTotal("error")
 		}
 		p.logger.Error("failed to create evaluation context", "error", err, "subject", subject)
-		return nil, err
+		return Outcome{}, err
 	}
 
 	return p.evaluateRules(rules, context, "nats")
 }
 
 // ProcessHTTP processes an HTTP request through the rule engine
-func (p *Processor) ProcessHTTP(path, method string, payload []byte, headers map[string]string) ([]*Action, error) {
+func (p *Processor) ProcessHTTP(path, method string, payload []byte, headers map[string]string) (Outcome, error) {
 	p.logger.Debug("processing HTTP request", "path", path, "method", method, "payloadSize", len(payload))
 
 	rules := p.findHTTPRules(path, method)
 	if len(rules) == 0 {
-		return nil, nil
+		return Outcome{}, nil
 	}
 
 	context, err := NewEvaluationContext(
@@ -659,7 +659,7 @@ func (p *Processor) ProcessHTTP(path, method string, payload []byte, headers map
 			p.metrics.IncMessagesTotal("error")
 		}
 		p.logger.Error("failed to create evaluation context", "error", err, "path", path)
-		return nil, err
+		return Outcome{}, err
 	}
 
 	return p.evaluateRules(rules, context, "http")
@@ -812,23 +812,31 @@ func triggerLabel(r *Rule) string {
 	}
 }
 
-// evaluateRules evaluates a set of rules against a context
-func (p *Processor) evaluateRules(rules []*Rule, context *EvaluationContext, triggerType string) ([]*Action, error) {
+// evaluateRules evaluates a set of rules against a context, returning the
+// actions to run now and those a trailing throttle is holding.
+//
+// The split happens here rather than in a pass over the result because this is
+// the only place that knows a rule is trailing — one rule's actions are exactly
+// one deferred batch, so no regrouping is needed and no caller can skip it.
+func (p *Processor) evaluateRules(rules []*Rule, context *EvaluationContext, triggerType string) (Outcome, error) {
 	// Propagate the metrics sink so lazy signature verification can record
 	// outcomes/latency. Harmless when nil (tests/CLI) or in WASM (no-op stub).
 	context.Metrics = p.metrics
 
-	var actions []*Action
+	var out Outcome
+	matched := false
 
 	for _, rule := range rules {
 		p.logger.Debug("evaluating rule", "ruleIndex", rule.index, "triggerType", triggerType)
 
-		// Trigger debounce: skip rule evaluation entirely if suppressed
-		if cfg := getTriggerDebounce(rule); cfg != nil {
+		// Trigger throttle: skip rule evaluation entirely if suppressed.
+		// Leading mode only (enforced by the loader) — the whole point is to
+		// avoid paying for evaluation, which holding a message cannot do.
+		if cfg := getTriggerThrottle(rule); cfg != nil {
 			key := ThrottleKey("t", rule.index, p.resolveThrottleKey(cfg, context, triggerType))
 			window, _ := time.ParseDuration(cfg.Window) // pre-validated by loader
 			if !p.throttle.Allow(key, window) {
-				p.logger.Debug("trigger debounce suppressed rule", "ruleIndex", rule.index, "key", key)
+				p.logger.Debug("trigger throttle suppressed rule", "ruleIndex", rule.index, "key", key)
 				if p.metrics != nil {
 					p.metrics.IncThrottleSuppressed("trigger")
 				}
@@ -837,12 +845,19 @@ func (p *Processor) evaluateRules(rules []*Rule, context *EvaluationContext, tri
 		}
 
 		if rule.Conditions == nil || p.evaluator.Evaluate(rule.Conditions, context) {
-			// Action debounce: skip action execution if suppressed
-			if cfg := getActionDebounce(rule); cfg != nil {
+			// Action throttle. Leading mode gates execution here and drops the
+			// action outright. Trailing mode evaluates the action normally and
+			// routes the result into Outcome.Deferred, leaving the coalescing
+			// and the delayed emit to the executing layer — the Processor
+			// itself never sleeps, times, or publishes.
+			var deferSpec *DeferSpec
+			if cfg := getActionThrottle(rule); cfg != nil {
 				key := ThrottleKey("a", rule.index, p.resolveThrottleKey(cfg, context, triggerType))
 				window, _ := time.ParseDuration(cfg.Window) // pre-validated by loader
-				if !p.throttle.Allow(key, window) {
-					p.logger.Debug("action debounce suppressed rule", "ruleIndex", rule.index, "key", key)
+				if cfg.IsTrailing() {
+					deferSpec = &DeferSpec{Key: key, Window: window}
+				} else if !p.throttle.Allow(key, window) {
+					p.logger.Debug("action throttle suppressed rule", "ruleIndex", rule.index, "key", key)
 					if p.metrics != nil {
 						p.metrics.IncThrottleSuppressed("action")
 					}
@@ -884,42 +899,70 @@ func (p *Processor) evaluateRules(rules []*Rule, context *EvaluationContext, tri
 				}
 			}
 
-			actions = append(actions, actionResults...)
+			if len(actionResults) == 0 {
+				continue
+			}
+			matched = true
+
+			if deferSpec == nil {
+				out.Immediate = append(out.Immediate, actionResults...)
+				continue
+			}
+
+			// One rule's fan-out is one batch, held under one key, so a
+			// trailing window replaces it as a unit rather than collapsing N
+			// forEach actions into the last element. Defer is also stamped on
+			// each action so inspection surfaces (rule-cli, web tester) can
+			// show that it is held rather than fired.
+			for _, a := range actionResults {
+				a.Defer = deferSpec
+			}
+			out.Deferred = append(out.Deferred, DeferredBatch{
+				Key:     deferSpec.Key,
+				Window:  deferSpec.Window,
+				Actions: actionResults,
+			})
 		}
 	}
 
 	atomic.AddUint64(&p.stats.Processed, 1)
-	if len(actions) > 0 {
+	if matched {
 		atomic.AddUint64(&p.stats.Matched, 1)
 	}
-	return actions, nil
+	return out, nil
 }
 
-// getTriggerDebounce returns the debounce config from a rule's trigger, or nil.
-func getTriggerDebounce(rule *Rule) *DebounceConfig {
+// getTriggerThrottle returns the throttle config from a rule's trigger, or nil.
+func getTriggerThrottle(rule *Rule) *ThrottleConfig {
 	if rule.Trigger.NATS != nil {
-		return rule.Trigger.NATS.Debounce
+		return rule.Trigger.NATS.Throttle
 	}
 	if rule.Trigger.HTTP != nil {
-		return rule.Trigger.HTTP.Debounce
+		return rule.Trigger.HTTP.Throttle
 	}
 	return nil
 }
 
-// getActionDebounce returns the debounce config from a rule's action, or nil.
-func getActionDebounce(rule *Rule) *DebounceConfig {
+// getActionThrottle returns the throttle config from a rule's action, or nil.
+// Respond actions have none: a single terminal response cannot be rate-limited.
+func getActionThrottle(rule *Rule) *ThrottleConfig {
 	if rule.Action.NATS != nil {
-		return rule.Action.NATS.Debounce
+		return rule.Action.NATS.Throttle
 	}
 	if rule.Action.HTTP != nil {
-		return rule.Action.HTTP.Debounce
+		return rule.Action.HTTP.Throttle
 	}
 	return nil
 }
 
-// resolveThrottleKey resolves the debounce key template against the evaluation context.
-// Defaults to the full NATS subject or HTTP path when no key is configured.
-func (p *Processor) resolveThrottleKey(cfg *DebounceConfig, ctx *EvaluationContext, triggerType string) string {
+// resolveThrottleKey resolves the throttle key template against the evaluation
+// context. Defaults to the full NATS subject or HTTP path when no key is set.
+//
+// Note this always runs against the *trigger* context, before any forEach
+// expansion — so a key naming an array-element field resolves empty. Action
+// throttle deliberately gates a rule's action as a unit; see the throttle
+// section of docs/01-core-concepts.md.
+func (p *Processor) resolveThrottleKey(cfg *ThrottleConfig, ctx *EvaluationContext, triggerType string) string {
 	if cfg.Key == "" {
 		if triggerType == "nats" && ctx.Subject != nil {
 			return ctx.Subject.Full
@@ -1379,7 +1422,7 @@ func (p *Processor) applyMerge(payloadTemplate string, base map[string]interface
 
 // ProcessWithSubject is kept for backward compatibility.
 // Used by internal/broker/subscription.go.
-func (p *Processor) ProcessWithSubject(subject string, payload []byte, headers map[string]string) ([]*Action, error) {
+func (p *Processor) ProcessWithSubject(subject string, payload []byte, headers map[string]string) (Outcome, error) {
 	return p.ProcessNATS(subject, payload, headers)
 }
 

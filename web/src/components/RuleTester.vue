@@ -317,9 +317,21 @@ async function runTest() {
             <div class="tester-action-header">
               <span class="tester-action-label">Action {{ result.actions.length > 1 ? `${i + 1} of ${result.actions.length}` : '' }}</span>
               <span class="tester-action-type">{{ action.type.toUpperCase() }}</span>
+              <span v-if="action.deferred" class="tester-action-deferred" title="Held by a trailing-mode throttle">
+                DEFERRED
+              </span>
             </div>
 
             <div class="tester-action-fields">
+              <div v-if="action.deferred" class="tester-action-field">
+                <span class="tester-field-label">Throttle</span>
+                <code>held {{ action.deferWindow }} under key "{{ action.deferKey }}"</code>
+                <span class="tester-field-note">
+                  Trailing mode: in production this fires when the window closes, carrying
+                  whichever batch was submitted last. The tester evaluates one message, so
+                  the wait is not simulated.
+                </span>
+              </div>
               <div v-if="action.type === 'nats'" class="tester-action-field">
                 <span class="tester-field-label">Subject</span>
                 <code>{{ action.subject }}</code>

@@ -99,11 +99,27 @@ Emitted only when `security.verification.enabled` and a rule actually references
 
 `error_type` values for `foreach_element_errors_total`: `template_subject_failed`, `template_url_failed`, `template_method_failed`, `template_publish_response_subject_failed`.
 
-### Throttle / debounce
+### Throttle
 
 | Metric | Type | Labels | Feature | Description |
 |--------|------|--------|---------|-------------|
-| `throttle_suppressed_total` | C | `phase` = `trigger` \| `action` | router, gateway | Messages suppressed by per-rule debounce, by phase. |
+| `throttle_suppressed_total` | C | `phase` = `trigger` \| `action` | router, gateway | Messages dropped by a **leading**-mode per-rule throttle, by phase. |
+| `throttle_deferred_total` | C | `outcome` = `coalesced` \| `emitted` \| `dropped` \| `error` | router, gateway, scheduler | **Trailing**-mode throttle lifecycle. |
+
+`outcome` values for `throttle_deferred_total`:
+
+| Value | Meaning |
+|-------|---------|
+| `coalesced` | A pending batch was replaced by a newer one inside its window — this is the "value discarded because a later one arrived" counter. |
+| `emitted` | An action fired at window close (or during a shutdown flush). Counted per action, so a `forEach` batch of 3 increments by 3. |
+| `dropped` | A pending batch was discarded: submitted after shutdown began, or still unflushed when the shutdown grace period expired. Non-zero here means lost actions. |
+| `error` | A deferred action failed to execute. There is no redelivery path at this point — the trigger was ACKed when the window opened. |
+
+Useful derived signals:
+
+- `rate(throttle_suppressed_total{phase="trigger"}[5m])` climbing on a rule that *has* conditions is a smell: a trigger throttle samples the input stream and may be discarding messages that would have matched. See [Core Concepts](./01-core-concepts.md#trigger-throttle--read-this-before-using-it).
+- `coalesced / (coalesced + emitted)` is how much churn trailing mode is absorbing. Near zero means the window is doing nothing and can be removed.
+- Any sustained `dropped` means shutdowns are losing settled values — raise the shutdown grace period or reconsider trailing mode for that rule.
 
 ### HTTP gateway — inbound
 

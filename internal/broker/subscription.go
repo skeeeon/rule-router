@@ -14,6 +14,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"rule-router/config"
+	"rule-router/internal/deferred"
 	"rule-router/internal/logger"
 	"rule-router/internal/metrics"
 	"rule-router/internal/rule"
@@ -29,6 +30,16 @@ const (
 
 	// errorBackoffDelay is the delay after encountering errors to avoid tight retry loops
 	errorBackoffDelay = 100 * time.Millisecond
+
+	// deferredActionTimeout bounds execution of a trailing-throttle batch. The
+	// triggering message was acknowledged when its window opened, so there is no
+	// ack deadline to respect here — this only stops a wedged publish or HTTP
+	// call from holding a goroutine forever.
+	deferredActionTimeout = 30 * time.Second
+
+	// deferredFlushTimeout bounds the shutdown flush of pending trailing-throttle
+	// batches. Anything still unstarted when it expires is dropped and logged.
+	deferredFlushTimeout = 10 * time.Second
 )
 
 // HTTPActionExecutor handles HTTP action execution. Implemented by httpclient.HTTPExecutor.
@@ -55,6 +66,7 @@ type SubscriptionManager struct {
 	httpExecutor  HTTPActionExecutor
 	consumerCfg   *config.ConsumerConfig
 	publisher     *actionPublisher
+	coalescer     *deferred.Coalescer
 	subscriptions map[string]*Subscription
 	wg            sync.WaitGroup
 	mu            sync.RWMutex
@@ -90,7 +102,7 @@ func NewSubscriptionManager(
 	consumerConfig *config.ConsumerConfig,
 	publishConfig *config.PublishConfig,
 ) *SubscriptionManager {
-	return &SubscriptionManager{
+	sm := &SubscriptionManager{
 		natsConn:      natsConn,
 		jetStream:     js,
 		logger:        logger,
@@ -100,6 +112,11 @@ func NewSubscriptionManager(
 		publisher:     newActionPublisher(natsConn, js, publishConfig, logger, metrics),
 		subscriptions: make(map[string]*Subscription),
 	}
+	// The coalescer runs deferred batches through the same executeAction path as
+	// the immediate route, so retry policy and metrics are identical. It closes
+	// over sm so a later SetHTTPExecutor is picked up.
+	sm.coalescer = deferred.New("jetstream", sm.executeAction, deferredActionTimeout, logger, metrics)
+	return sm
 }
 
 // AddSubscription creates a consumer handle for a subject.
@@ -427,10 +444,22 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 	// falling back to index-based pattern matching if no KV rules are loaded.
 	// Only JetStream-mode rules are evaluated here; core-mode and reply rules
 	// are served by the Responder's core subscriptions.
-	actions, err := sm.processor.ProcessForSubscription(triggerSubject, msg.Subject(), msg.Data(), headers, rule.JetStreamRuleFilter)
+	outcome, err := sm.processor.ProcessForSubscription(triggerSubject, msg.Subject(), msg.Data(), headers, rule.JetStreamRuleFilter)
 	if err != nil {
 		// This error will be caught by the caller (processMessageWithRecovery) and handled appropriately.
 		return fmt.Errorf("rule processing failed: %w", err)
+	}
+
+	// Actions held by a trailing-mode throttle go to the coalescer and fire when
+	// their window closes, so the ack no longer waits on them — holding it would
+	// just let AckWait expire mid-window and trigger a redelivery. That makes a
+	// trailing action at-most-once: a crash inside the window loses the batch.
+	//
+	// Submitting before the immediate actions run is safe: if one of those fails
+	// the message is NAK'd and redelivered, and the re-evaluated batch simply
+	// replaces the pending one under the same key rather than emitting twice.
+	for _, batch := range outcome.Deferred {
+		sm.coalescer.Submit(batch)
 	}
 
 	// Bound action execution to the ack window so a slow publish or HTTP call
@@ -444,59 +473,72 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 	}
 
 	// Publish all matched actions
-	for _, action := range actions {
-		// Check for NATS action
-		if action.NATS != nil {
-			if err := sm.publisher.PublishWithRetry(actionCtx, action.NATS); err != nil {
-				sm.logger.Error("failed to publish NATS action after retries",
-					"actionSubject", action.NATS.Subject,
-					"error", err)
-				if sm.metrics != nil {
-					sm.metrics.IncActionsTotal("error")
-				}
-				// Return the error to allow the message to be NAK'd, as the action failed.
-				return fmt.Errorf("failed to publish NATS action: %w", err)
-			}
-			if sm.metrics != nil {
-				sm.metrics.IncActionsTotal("success")
-			}
-		} else if action.HTTP != nil {
-			if sm.httpExecutor != nil {
-				if err := sm.httpExecutor.ExecuteHTTPAction(actionCtx, action.HTTP); err != nil {
-					sm.logger.Error("failed to execute HTTP action",
-						"url", action.HTTP.URL,
-						"method", action.HTTP.Method,
-						"error", err)
-					if sm.metrics != nil {
-						sm.metrics.IncActionsTotal("error")
-					}
-					return fmt.Errorf("failed to execute HTTP action: %w", err)
-				}
-				if sm.metrics != nil {
-					sm.metrics.IncActionsTotal("success")
-				}
-			} else {
-				sm.logger.Warn("HTTP action skipped - gateway feature not enabled",
-					"url", action.HTTP.URL,
-					"hint", "Enable features.gateway to handle HTTP actions")
-				if sm.metrics != nil {
-					sm.metrics.IncActionsTotal("skipped")
-				}
-			}
-		} else if action.Respond != nil {
-			// Defensive: reply rules are core-mode, so the JetStreamRuleFilter
-			// above should keep their respond actions from ever reaching this
-			// path. If one does, there is nothing to reply to — skip quietly.
-			sm.logger.Debug("respond action on JetStream-delivered message has no reply target; skipping",
-				"subject", msg.Subject())
-		} else {
-			sm.logger.Error("action has no NATS, HTTP, or respond configuration - this should never happen",
-				"subject", msg.Subject())
+	for _, action := range outcome.Immediate {
+		if err := sm.executeAction(actionCtx, action); err != nil {
+			// Return the error to allow the message to be NAK'd, as the action failed.
+			return err
 		}
 	}
 
 	duration := time.Since(start)
-	sm.logger.Debug("message processed", "subject", msg.Subject(), "duration", duration, "actionsPublished", len(actions))
+	sm.logger.Debug("message processed", "subject", msg.Subject(),
+		"duration", duration, "actionsPublished", len(outcome.Immediate), "actionsDeferred", len(outcome.Deferred))
+	return nil
+}
+
+// executeAction runs one evaluated action on this manager's transports. Shared
+// by the immediate path and the trailing-throttle coalescer so both get the same
+// retry policy and metrics.
+func (sm *SubscriptionManager) executeAction(ctx context.Context, action *rule.Action) error {
+	switch {
+	case action.NATS != nil:
+		if err := sm.publisher.PublishWithRetry(ctx, action.NATS); err != nil {
+			sm.logger.Error("failed to publish NATS action after retries",
+				"actionSubject", action.NATS.Subject,
+				"error", err)
+			if sm.metrics != nil {
+				sm.metrics.IncActionsTotal("error")
+			}
+			return fmt.Errorf("failed to publish NATS action: %w", err)
+		}
+		if sm.metrics != nil {
+			sm.metrics.IncActionsTotal("success")
+		}
+
+	case action.HTTP != nil:
+		if sm.httpExecutor == nil {
+			sm.logger.Warn("HTTP action skipped - gateway feature not enabled",
+				"url", action.HTTP.URL,
+				"hint", "Enable features.gateway to handle HTTP actions")
+			if sm.metrics != nil {
+				sm.metrics.IncActionsTotal("skipped")
+			}
+			return nil
+		}
+		if err := sm.httpExecutor.ExecuteHTTPAction(ctx, action.HTTP); err != nil {
+			sm.logger.Error("failed to execute HTTP action",
+				"url", action.HTTP.URL,
+				"method", action.HTTP.Method,
+				"error", err)
+			if sm.metrics != nil {
+				sm.metrics.IncActionsTotal("error")
+			}
+			return fmt.Errorf("failed to execute HTTP action: %w", err)
+		}
+		if sm.metrics != nil {
+			sm.metrics.IncActionsTotal("success")
+		}
+
+	case action.Respond != nil:
+		// Defensive: reply rules are core-mode, so JetStreamRuleFilter should
+		// keep their respond actions off this path. If one arrives there is
+		// nothing to reply to — skip quietly.
+		sm.logger.Debug("respond action on JetStream-delivered message has no reply target; skipping")
+
+	default:
+		sm.logger.Error("action has no NATS, HTTP, or respond configuration - this should never happen")
+	}
+
 	return nil
 }
 
@@ -525,6 +567,13 @@ func (sm *SubscriptionManager) Stop() error {
 	// Step 3: Wait for all workers to finish (outside lock to avoid deadlock)
 	sm.logger.Debug("waiting for all workers to finish")
 	sm.wg.Wait()
+
+	// Step 4: Flush trailing-throttle batches. Workers are done, so nothing new
+	// arrives; this runs before the NATS connection closes so the settled value
+	// still gets out.
+	flushCtx, cancel := context.WithTimeout(context.Background(), deferredFlushTimeout)
+	defer cancel()
+	sm.coalescer.Stop(flushCtx)
 
 	sm.logger.Info("all subscriptions stopped successfully")
 	return nil

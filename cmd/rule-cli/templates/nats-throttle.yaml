@@ -1,0 +1,45 @@
+# templates/nats-throttle.yaml
+#
+# Leading-edge action throttle: rate-limit the alerts a rule emits.
+#
+# "Leading" means the first match fires immediately and opens a window;
+# every match inside that window is dropped. This is the right shape for
+# alerting — you want the page now, and you want exactly one of them.
+#
+# Note the throttle is on the ACTION, not the trigger. That matters: every
+# message is still evaluated, so the window only starts when a reading
+# actually crosses the threshold. A trigger throttle would instead sample the
+# input stream and could discard the very reading that would have alerted.
+# See docs/01-core-concepts.md for when a trigger throttle is appropriate.
+#
+# Example use case: a flapping temperature sensor that would otherwise page
+# once per reading.
+#
+- trigger:
+    nats:
+      # The subject to listen on. Supports wildcards (*, >).
+      subject: "sensors.temperature.>"
+  conditions:
+    operator: and
+    items:
+      - field: "{temperature}"
+        operator: gt
+        value: 30
+  action:
+    nats:
+      subject: "alerts.high_temp.{@subject.2}"
+      payload: |
+        {
+          "alert": "High temperature detected!",
+          "temperature": {temperature},
+          "location": "{@subject.2}",
+          "timestamp": "{@timestamp()}"
+        }
+      throttle:
+        # mode: leading is the default; spelled out here for clarity.
+        mode: leading
+        # At most one alert per 30 seconds...
+        window: "30s"
+        # ...per room. Without a key, every room shares one window, so a hot
+        # kitchen would mask a hot server closet.
+        key: "{@subject.2}"

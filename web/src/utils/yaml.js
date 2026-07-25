@@ -36,8 +36,8 @@ function pushTrigger(lines, trigger, indent) {
     if (trigger.nats.queue) {
       lines.push(`${pad}  queue: ${yamlString(trigger.nats.queue)}`)
     }
-    if (trigger.nats.debounce) {
-      pushDebounce(lines, trigger.nats.debounce, indent + 2)
+    if (trigger.nats.throttle) {
+      pushThrottle(lines, trigger.nats.throttle, indent + 2)
     }
   } else if (trigger.type === 'http') {
     lines.push(`${pad}http:`)
@@ -48,8 +48,8 @@ function pushTrigger(lines, trigger, indent) {
     if (trigger.http.hmac) {
       pushHMAC(lines, trigger.http.hmac, indent + 2)
     }
-    if (trigger.http.debounce) {
-      pushDebounce(lines, trigger.http.debounce, indent + 2)
+    if (trigger.http.throttle) {
+      pushThrottle(lines, trigger.http.throttle, indent + 2)
     }
   } else if (trigger.type === 'schedule') {
     lines.push(`${pad}schedule:`)
@@ -135,8 +135,8 @@ function pushAction(lines, action, indent) {
     }
     pushPayloadFields(lines, a, indent + 2)
     pushHeaders(lines, a.headers, indent + 2)
-    if (a.debounce) {
-      pushDebounce(lines, a.debounce, indent + 2)
+    if (a.throttle) {
+      pushThrottle(lines, a.throttle, indent + 2)
     }
   } else if (action.type === 'http') {
     const a = action.http
@@ -166,8 +166,8 @@ function pushAction(lines, action, indent) {
       lines.push(`${pad}  publishResponse:`)
       lines.push(`${pad}    subject: ${yamlString(a.publishResponse.subject)}`)
     }
-    if (a.debounce) {
-      pushDebounce(lines, a.debounce, indent + 2)
+    if (a.throttle) {
+      pushThrottle(lines, a.throttle, indent + 2)
     }
   } else if (action.type === 'respond') {
     const a = action.respond
@@ -232,12 +232,16 @@ function pushHMAC(lines, hmac, indent) {
   }
 }
 
-function pushDebounce(lines, debounce, indent) {
+function pushThrottle(lines, throttle, indent) {
   const pad = ' '.repeat(indent)
-  lines.push(`${pad}debounce:`)
-  lines.push(`${pad}  window: ${yamlString(debounce.window)}`)
-  if (debounce.key) {
-    lines.push(`${pad}  key: ${yamlString(debounce.key)}`)
+  lines.push(`${pad}throttle:`)
+  lines.push(`${pad}  window: ${yamlString(throttle.window)}`)
+  // 'leading' is the engine default, so emit mode only when it differs.
+  if (throttle.mode === 'trailing') {
+    lines.push(`${pad}  mode: trailing`)
+  }
+  if (throttle.key) {
+    lines.push(`${pad}  key: ${yamlString(throttle.key)}`)
   }
 }
 

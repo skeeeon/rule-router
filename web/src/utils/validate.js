@@ -56,8 +56,8 @@ function validateTrigger(trigger, errors) {
     if (trigger.nats.queue && !trigger.nats.reply && trigger.nats.mode !== 'core') {
       errors.push({ path: 'trigger.nats.queue', message: 'Queue requires a core subscription (Request/Reply or Core NATS mode)' })
     }
-    if (trigger.nats.debounce) {
-      validateDebounce(trigger.nats.debounce, 'trigger.nats.debounce', errors)
+    if (trigger.nats.throttle) {
+      validateThrottle(trigger.nats.throttle, 'trigger.nats.throttle', errors)
     }
   } else if (trigger.type === 'http') {
     if (!trigger.http.path) {
@@ -68,8 +68,8 @@ function validateTrigger(trigger, errors) {
     if (trigger.http.method && !HTTP_METHODS.includes(trigger.http.method.toUpperCase())) {
       errors.push({ path: 'trigger.http.method', message: 'Invalid HTTP method' })
     }
-    if (trigger.http.debounce) {
-      validateDebounce(trigger.http.debounce, 'trigger.http.debounce', errors)
+    if (trigger.http.throttle) {
+      validateThrottle(trigger.http.throttle, 'trigger.http.throttle', errors)
     }
     if (trigger.http.hmac) {
       validateHMAC(trigger.http.hmac, 'trigger.http.hmac', errors)
@@ -107,8 +107,11 @@ function validateAction(action, errors) {
     if (a.filter) {
       validateConditions(a.filter, 'action.nats.filter', errors)
     }
-    if (a.debounce) {
-      validateDebounce(a.debounce, 'action.nats.debounce', errors)
+    if (a.throttle) {
+      validateThrottle(a.throttle, 'action.nats.throttle', errors, true)
+      if (a.request && a.throttle.mode === 'trailing') {
+        errors.push({ path: 'action.nats.throttle.mode', message: 'Request/Reply returns the reply synchronously and cannot use trailing mode' })
+      }
     }
     if (a.timeout) {
       if (!a.request) {
@@ -155,8 +158,8 @@ function validateAction(action, errors) {
     if (a.publishResponse && !a.publishResponse.subject) {
       errors.push({ path: 'action.http.publishResponse.subject', message: 'Subject is required when publishResponse is enabled' })
     }
-    if (a.debounce) {
-      validateDebounce(a.debounce, 'action.http.debounce', errors)
+    if (a.throttle) {
+      validateThrottle(a.throttle, 'action.http.throttle', errors, true)
     }
   } else if (action.type === 'respond') {
     const a = action.respond
@@ -232,11 +235,20 @@ function validateHMAC(hmac, prefix, errors) {
   }
 }
 
-function validateDebounce(debounce, prefix, errors) {
-  if (!debounce.window) {
+// allowTrailing mirrors the Go loader: trailing mode is actions-only, because a
+// trigger throttle exists to skip evaluation and cannot do that while holding a
+// message.
+function validateThrottle(throttle, prefix, errors, allowTrailing = false) {
+  if (!throttle.window) {
     errors.push({ path: `${prefix}.window`, message: 'Window is required' })
-  } else if (!isValidDuration(debounce.window)) {
+  } else if (!isValidDuration(throttle.window)) {
     errors.push({ path: `${prefix}.window`, message: 'Invalid duration (e.g., "5s", "1m")' })
+  }
+  if (throttle.mode && !['leading', 'trailing'].includes(throttle.mode)) {
+    errors.push({ path: `${prefix}.mode`, message: 'Mode must be leading or trailing' })
+  }
+  if (throttle.mode === 'trailing' && !allowTrailing) {
+    errors.push({ path: `${prefix}.mode`, message: 'Trailing mode is only valid on actions' })
   }
 }
 

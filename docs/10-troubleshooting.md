@@ -42,11 +42,16 @@ echo '{"temperature": 35}' | rule-cli check rules/sensors/temp.yaml --subject se
 
 This runs the real rule engine and shows whether each condition passed or failed and what the final action would be. Most subtle bugs (type mismatch, missing field, wrong operator) surface here.
 
-### 4. Is debounce suppressing it?
+### 4. Is a throttle suppressing it?
 
-If a rule has a `debounce` block, the first message fires immediately but subsequent ones within the window are silently skipped. Check the debounce key — without a `key`, all messages share one window per rule.
+If a rule has a `throttle` block (or the deprecated `debounce` spelling), a leading-mode window fires the first message immediately and silently skips the rest. Check the key — without one, all messages share a single window per rule.
 
-The `throttle_suppressed_total` Prometheus metric counts suppressions (labeled by `phase` = `trigger` | `action`).
+The `throttle_suppressed_total` Prometheus metric counts leading-mode suppressions (labeled by `phase` = `trigger` | `action`).
+
+Two specific traps:
+
+- **A trigger throttle on a rule with conditions.** The window is consumed by whichever message arrives first, match or not, and later messages are never evaluated. A reading that would have alerted gets dropped because a boring one got there first. Move the throttle to the action.
+- **`mode: trailing` looks like nothing fired.** It did not fire *yet* — the action is held until the window closes. Watch `throttle_deferred_total{outcome="emitted"}` rather than expecting an immediate publish.
 
 ## KV lookup returns empty
 
@@ -103,11 +108,22 @@ A `forEach` over an array longer than `forEach.maxIterations` (default 100) proc
 - Raise the limit in config if needed (`forEach.maxIterations: 1000`).
 - Hard ceiling is 10000 — set to `0` to disable, but be cautious.
 
-## Debounce state resets after reload
+## Throttle state resets after reload
 
-A SIGHUP reload or a KV-driven rule update rebuilds the rule processor, which clears all in-memory debounce state. If you reload and a rule fires immediately on the next matching message — even though you expected the debounce window to still be active — that's why.
+A SIGHUP reload or a KV-driven rule update rebuilds the rule processor, which clears all in-memory **leading-mode** throttle state. If you reload and a rule fires immediately on the next matching message — even though you expected the window to still be active — that's why.
 
-There is no on-disk debounce persistence. If you need durable suppression across reloads, use a KV-backed counter or last-fired timestamp instead.
+There is no on-disk throttle persistence. If you need durable suppression across reloads, use a KV-backed counter or last-fired timestamp instead.
+
+**Trailing-mode** pending batches are unaffected: they live in the executing layer, not the processor, so a reload does not disturb them and they still fire when their window closes. They are already fully evaluated at that point, so a rule change mid-window does not change what gets emitted.
+
+## A trailing-mode action never fired
+
+Trailing mode is at-most-once by construction. The triggering message is ACKed when its window *opens*, not when the action fires — otherwise the ack would expire mid-window and JetStream would redeliver the message. So:
+
+- A crash or `SIGKILL` inside the window loses the pending batch. Nothing redelivers it.
+- A clean shutdown (SIGTERM) flushes pending batches instead of dropping them, bounded by the shutdown grace period. Anything that could not be flushed in time is logged and counted as `throttle_deferred_total{outcome="dropped"}`.
+
+If losing the settled value is unacceptable, use leading mode (which fires before the ack) or persist the value to KV and read it on a schedule.
 
 ## Signature verification fails
 

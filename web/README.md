@@ -102,7 +102,7 @@ These stubs only affect the WASM build target (`GOOS=js GOARCH=wasm`). The norma
 
 - **KV lookups** use mock data provided in the test panel (same format as `rule-cli check --kv-mock`). Live NATS KV is not available during testing.
 - **Signature verification** (`@signature.valid`) is a no-op in the browser — it always returns false.
-- **Debounce/throttle** state is not simulated — rules are evaluated as single messages.
+- **Throttle** state is not simulated — rules are evaluated as single messages. A trailing-mode action is shown tagged as deferred (with its window and key) rather than actually held.
 
 ## Rule Testing
 
@@ -135,9 +135,9 @@ This is equivalent to running `rule-cli check --rule <yaml> --message <json>`.
 
 The builder supports the full rule YAML format used by all Rule Router applications:
 
-- **Triggers**: NATS subject (with wildcards, optional request/reply responder + queue), HTTP path + method (paths support NATS-style wildcards too: `/webhooks/*/events`, `/api/>`), or Cron schedule + timezone — NATS and HTTP triggers support per-trigger debounce
+- **Triggers**: NATS subject (with wildcards, optional request/reply responder + queue), HTTP path + method (paths support NATS-style wildcards too: `/webhooks/*/events`, `/api/>`), or Cron schedule + timezone — NATS and HTTP triggers support a per-trigger throttle (leading mode only)
 - **Conditions**: Nested AND/OR groups, 15 operators including array operators (`any`, `all`, `none`), `in`/`not_in` membership lists, KV lookups, time-based fields. Variables resolve on both sides of a condition (`{temperature}` `gt` `{@kv.thresholds.{device.id}:max}`).
-- **Actions**: Publish to a NATS subject, make HTTP requests, or `respond` to the caller, with payload templates, passthrough, merge, forEach iteration, forEach filters, headers, debounce, plus HTTP-only options for retry and publish-response (publish the HTTP response back to a NATS subject).
+- **Actions**: Publish to a NATS subject, make HTTP requests, or `respond` to the caller, with payload templates, passthrough, merge, forEach iteration, forEach filters, headers, throttle (leading or trailing mode), plus HTTP-only options for retry and publish-response (publish the HTTP response back to a NATS subject).
 - **Request/Reply**: `respond` returns a correlated response — the HTTP response on an HTTP trigger, or a NATS reply on a request/reply responder. An HTTP trigger can also set `request: true` on a NATS action to issue a NATS request and return the reply as the HTTP response (the HTTP↔NATS bridge).
 
 Rules built with this UI are identical to hand-written YAML and can be validated with `rule-cli lint`.

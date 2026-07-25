@@ -1639,10 +1639,10 @@ func TestRealWorldScenario_BatchNotifications(t *testing.T) {
 }
 
 // ========================================
-// DEBOUNCE VALIDATION TESTS
+// THROTTLE VALIDATION TESTS
 // ========================================
 
-func TestDebounce_Validation(t *testing.T) {
+func TestThrottle_Validation(t *testing.T) {
 	tests := []struct {
 		name        string
 		ruleContent string
@@ -1650,12 +1650,12 @@ func TestDebounce_Validation(t *testing.T) {
 		errMsg      string
 	}{
 		{
-			name: "valid trigger debounce on NATS",
+			name: "valid trigger throttle on NATS",
 			ruleContent: `
 - trigger:
     nats:
       subject: sensors.temperature.>
-      debounce:
+      throttle:
         window: "5s"
         key: "{@subject}"
   action:
@@ -1665,13 +1665,13 @@ func TestDebounce_Validation(t *testing.T) {
 			shouldPass: true,
 		},
 		{
-			name: "valid trigger debounce on HTTP",
+			name: "valid trigger throttle on HTTP",
 			ruleContent: `
 - trigger:
     http:
       path: /webhooks/github
       method: POST
-      debounce:
+      throttle:
         window: "10s"
   action:
     nats:
@@ -1680,7 +1680,7 @@ func TestDebounce_Validation(t *testing.T) {
 			shouldPass: true,
 		},
 		{
-			name: "valid action debounce on NATS action",
+			name: "valid action throttle on NATS action",
 			ruleContent: `
 - trigger:
     nats:
@@ -1689,13 +1689,13 @@ func TestDebounce_Validation(t *testing.T) {
     nats:
       subject: alerts.temperature
       payload: '{"temp": "{temperature}"}'
-      debounce:
+      throttle:
         window: "30s"
         key: "{@subject.2}"`,
 			shouldPass: true,
 		},
 		{
-			name: "valid action debounce on HTTP action",
+			name: "valid action throttle on HTTP action",
 			ruleContent: `
 - trigger:
     nats:
@@ -1705,18 +1705,106 @@ func TestDebounce_Validation(t *testing.T) {
       url: https://api.pagerduty.com/incidents
       method: POST
       payload: '{"alert": "{alert_message}"}'
-      debounce:
+      throttle:
         window: "1m"`,
 			shouldPass: true,
 		},
 		{
-			name: "valid trigger and action debounce together",
+			name: "valid trigger and action throttle together",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: sensors.temperature.>
+      throttle:
+        window: "5s"
+  action:
+    nats:
+      subject: alerts.temperature
+      payload: '{"temp": "{temperature}"}'
+      throttle:
+        window: "30s"`,
+			shouldPass: true,
+		},
+		{
+			name: "valid throttle with no key (uses default)",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: sensors.temperature.>
+      throttle:
+        window: "5s"
+  action:
+    nats:
+      subject: alerts.temperature
+      payload: '{"temp": "{temperature}"}'`,
+			shouldPass: true,
+		},
+		{
+			name: "valid explicit leading mode on trigger",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: sensors.temperature.>
+      throttle:
+        window: "5s"
+        mode: leading
+  action:
+    nats:
+      subject: alerts.temperature
+      payload: '{"temp": "{temperature}"}'`,
+			shouldPass: true,
+		},
+		{
+			name: "valid trailing mode on NATS action",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: sensors.setpoint.>
+  action:
+    nats:
+      subject: hvac.setpoint.applied
+      payload: '{"setpoint": {value}}'
+      throttle:
+        window: "2s"
+        mode: trailing`,
+			shouldPass: true,
+		},
+		{
+			name: "valid trailing mode on HTTP action",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: sensors.setpoint.>
+  action:
+    http:
+      url: https://api.example.com/setpoint
+      method: POST
+      payload: '{"setpoint": {value}}'
+      throttle:
+        window: "2s"
+        mode: trailing`,
+			shouldPass: true,
+		},
+		{
+			name: "deprecated debounce alias still loads on trigger",
 			ruleContent: `
 - trigger:
     nats:
       subject: sensors.temperature.>
       debounce:
         window: "5s"
+  action:
+    nats:
+      subject: alerts.temperature
+      payload: '{"temp": "{temperature}"}'`,
+			shouldPass: true,
+		},
+		{
+			name: "deprecated debounce alias still loads on action",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: sensors.temperature.>
   action:
     nats:
       subject: alerts.temperature
@@ -1726,51 +1814,73 @@ func TestDebounce_Validation(t *testing.T) {
 			shouldPass: true,
 		},
 		{
-			name: "valid debounce with no key (uses default)",
+			name: "throttle and debounce together is rejected",
 			ruleContent: `
 - trigger:
     nats:
       subject: sensors.temperature.>
-      debounce:
+      throttle:
         window: "5s"
-  action:
-    nats:
-      subject: alerts.temperature
-      payload: '{"temp": "{temperature}"}'`,
-			shouldPass: true,
-		},
-		{
-			name: "invalid trigger debounce - empty window",
-			ruleContent: `
-- trigger:
-    nats:
-      subject: sensors.temperature.>
       debounce:
-        window: ""
+        window: "10s"
   action:
     nats:
       subject: alerts.temperature
       payload: '{"temp": "{temperature}"}'`,
 			shouldPass: false,
-			errMsg:     "debounce window cannot be empty",
+			errMsg:     "cannot set both 'throttle' and the deprecated 'debounce'",
 		},
 		{
-			name: "invalid trigger debounce - bad duration",
+			name: "trailing mode rejected on NATS trigger",
 			ruleContent: `
 - trigger:
     nats:
       subject: sensors.temperature.>
-      debounce:
-        window: "not-a-duration"
+      throttle:
+        window: "5s"
+        mode: trailing
   action:
     nats:
       subject: alerts.temperature
       payload: '{"temp": "{temperature}"}'`,
 			shouldPass: false,
-			errMsg:     "invalid debounce window",
+			errMsg:     "mode 'trailing' is only valid on actions",
 		},
 		{
-			name: "invalid action debounce - bad duration",
+			name: "trailing mode rejected on HTTP trigger",
+			ruleContent: `
+- trigger:
+    http:
+      path: /webhooks/github
+      throttle:
+        window: "5s"
+        mode: trailing
+  action:
+    nats:
+      subject: github.events
+      passthrough: true`,
+			shouldPass: false,
+			errMsg:     "mode 'trailing' is only valid on actions",
+		},
+		{
+			name: "trailing mode rejected with request: true",
+			ruleContent: `
+- trigger:
+    http:
+      path: /api/quote
+  action:
+    nats:
+      subject: quotes.request
+      request: true
+      payload: '{"symbol": "{symbol}"}'
+      throttle:
+        window: "5s"
+        mode: trailing`,
+			shouldPass: false,
+			errMsg:     "cannot use throttle mode 'trailing'",
+		},
+		{
+			name: "invalid throttle mode",
 			ruleContent: `
 - trigger:
     nats:
@@ -1779,10 +1889,71 @@ func TestDebounce_Validation(t *testing.T) {
     nats:
       subject: alerts.temperature
       payload: '{"temp": "{temperature}"}'
-      debounce:
+      throttle:
+        window: "5s"
+        mode: sideways`,
+			shouldPass: false,
+			errMsg:     "invalid throttle mode 'sideways'",
+		},
+		{
+			name: "invalid trigger throttle - empty window",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: sensors.temperature.>
+      throttle:
+        window: ""
+  action:
+    nats:
+      subject: alerts.temperature
+      payload: '{"temp": "{temperature}"}'`,
+			shouldPass: false,
+			errMsg:     "throttle window cannot be empty",
+		},
+		{
+			name: "invalid trigger throttle - bad duration",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: sensors.temperature.>
+      throttle:
+        window: "not-a-duration"
+  action:
+    nats:
+      subject: alerts.temperature
+      payload: '{"temp": "{temperature}"}'`,
+			shouldPass: false,
+			errMsg:     "invalid throttle window",
+		},
+		{
+			name: "invalid action throttle - bad duration",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: sensors.temperature.>
+  action:
+    nats:
+      subject: alerts.temperature
+      payload: '{"temp": "{temperature}"}'
+      throttle:
         window: "abc"`,
 			shouldPass: false,
-			errMsg:     "invalid debounce window",
+			errMsg:     "invalid throttle window",
+		},
+		{
+			name: "invalid action throttle - zero window",
+			ruleContent: `
+- trigger:
+    nats:
+      subject: sensors.temperature.>
+  action:
+    nats:
+      subject: alerts.temperature
+      payload: '{"temp": "{temperature}"}'
+      throttle:
+        window: "0s"`,
+			shouldPass: false,
+			errMsg:     "throttle window must be positive",
 		},
 	}
 
@@ -1806,6 +1977,53 @@ func TestDebounce_Validation(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestThrottle_DeprecatedAliasFoldsOntoThrottle verifies the legacy `debounce`
+// key is moved onto Throttle at load time, so nothing downstream reads it.
+func TestThrottle_DeprecatedAliasFoldsOntoThrottle(t *testing.T) {
+	loader := newTestLoader()
+	tempDir := t.TempDir()
+	createTempRuleFile(t, tempDir, "test.yaml", `
+- trigger:
+    nats:
+      subject: sensors.temperature.>
+      debounce:
+        window: "5s"
+        key: "{@subject.2}"
+  action:
+    nats:
+      subject: alerts.temperature
+      payload: '{"temp": "{temperature}"}'
+      debounce:
+        window: "30s"`)
+
+	rules, err := loader.LoadFromDirectory(tempDir)
+	if err != nil {
+		t.Fatalf("expected deprecated debounce block to load, got: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+
+	trig := rules[0].Trigger.NATS
+	if trig.Debounce != nil {
+		t.Error("trigger Debounce should be cleared after normalization")
+	}
+	if trig.Throttle == nil {
+		t.Fatal("trigger Throttle should be populated from the deprecated debounce block")
+	}
+	if trig.Throttle.Window != "5s" || trig.Throttle.Key != "{@subject.2}" {
+		t.Errorf("trigger throttle not carried over: %+v", trig.Throttle)
+	}
+
+	act := rules[0].Action.NATS
+	if act.Debounce != nil {
+		t.Error("action Debounce should be cleared after normalization")
+	}
+	if act.Throttle == nil || act.Throttle.Window != "30s" {
+		t.Errorf("action throttle not carried over: %+v", act.Throttle)
 	}
 }
 

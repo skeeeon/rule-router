@@ -1476,10 +1476,17 @@ textarea:focus-visible {
   box-shadow: 0 0 0 3px rgba(74, 144, 217, 0.12);
 }
 
-/* ── Debounce editor ────────────────────────────────── */
+/* ── Throttle editor ────────────────────────────────── */
 
-.debounce-editor {
+.throttle-editor {
   padding-top: 6px;
+}
+
+.throttle-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
 }
 
 /* ── Modal ──────────────────────────────────────────── */
@@ -2249,11 +2256,29 @@ textarea:focus-visible {
   letter-spacing: 0.5px;
 }
 
+/* Marks an action held by a trailing-mode throttle rather than fired now. */
+.tester-action-deferred {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--warn-bg, rgba(214, 158, 46, 0.16));
+  color: var(--warn-text, #b7791f);
+  letter-spacing: 0.5px;
+  margin-left: 6px;
+}
+
 .tester-action-fields {
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.tester-field-note {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-muted);
 }
 
 .tester-action-field {

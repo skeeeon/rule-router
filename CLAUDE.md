@@ -52,7 +52,7 @@ The core of the system. Key types and flow:
 2. **Index** maps NATS subject patterns to rules for O(1) lookup. Wildcard patterns (`*`, `>`) compile through `pattern.go`; HTTP path patterns reuse the same machinery via `path_matcher.go` (slash-separated).
 3. **Processor** orchestrates rule evaluation on incoming messages
 4. **Evaluator** resolves template variables and checks condition operators (`eq`, `gt`, `lt`, `gte`, `lte`, `contains`, `not_contains`, `any`, `all`, `none`); `condition_resolver.go` holds shared helpers
-5. **ThrottleManager** (`throttle.go`) — per-rule fire-first suppression with a configurable window; state resets naturally when Processor is rebuilt on reload
+5. **ThrottleManager** (`throttle.go`) — per-rule leading-edge suppression with a configurable window; state resets naturally when Processor is rebuilt on reload. See Throttle below for the trailing-mode path, which does *not* live here.
 6. **Signature verification** (`signature.go` + `signature_verify.go`) — nkey-based payload signature checks (stubbed out in the WASM build)
 
 Template syntax:
@@ -86,6 +86,7 @@ Each feature is a separate `lifecycle.Application` wired up by the AppBuilder:
 - **Logger** (`internal/logger/`) — slog frontend backed by zap; structured key-value logging
 - **Metrics** (`internal/metrics/`) — Prometheus counters/histograms exposed on configurable port
 - **Gateway** (`internal/gateway/`) — HTTP handlers for inbound (fire-and-forget by default, or synchronous when a matched rule has a `respond`/`request` action — see Request/Reply below) and outbound (ACK-on-success with retry) routes. The inbound server uses a single catch-all handler that delegates path matching to the Processor; both file-loaded and KV-loaded rules support exact paths and NATS-style wildcard paths (`/webhooks/*/events`, `/api/>`). Exact and wildcard rules both fire when both match. Wildcards are validated by `rule.ValidatePathPattern`. An HTTP trigger may declare an `hmac` block (`header`/`secret`/`algorithm`/`encoding`/`prefix`), which the handler enforces as a **fail-closed gate** via `Processor.CheckHTTPHMAC` before any rule fires: a bad/missing/unverifiable HMAC over the raw body → 401. The secret accepts a literal, an env ref `${VAR}` (expanded at load), or a KV ref `{@kv.bucket.key}` (resolved per request). This is transport auth, not a rule condition — it touches no evaluation/condition machinery (`hmac.go` + `verifyHMAC`, stdlib crypto, WASM-safe so no build-tag stub).
+- **Deferred** (`internal/deferred/`) — the execution half of a trailing-edge action throttle. See Throttle below.
 - **HTTPClient** (`internal/httpclient/`) — shared HTTP client (with retry/backoff) used by GatewayApp and SchedulerApp
 - **Tester** (`internal/tester/`) — shared rule-evaluation harness used by both `rule-cli check` and the WASM build
 - **CLI helpers** (`internal/cli/`) — prompt, renderer, and validator helpers backing `rule-cli`
@@ -106,6 +107,19 @@ Both NATS triggers and NATS actions accept an optional `mode: jetstream | core`:
 - **`trigger.nats.mode`** (default `jetstream`) selects the subscription transport. `core` means a plain core NATS subscription (at-most-once, no stream/consumer required, excluded from stream validation) served by `broker.Responder` — the same component that serves `reply: true` rules (`reply` implies core; `reply` + `mode: jetstream` is a load-time error). `queue` is valid on any core-transport trigger. `NATSTrigger.IsCore()` is the single classification helper; RouterApp (`jetStreamSubjects`), RuleKVManager (`collectNATSTriggerSubjects`/`hasCoreRules`/`GetCoreRules`), StreamResolver, and GatewayApp (`setupOutboundSubscriptions`) all branch on it. The Responder lives under `features.router` — core-transport triggers do not fire in gateway-only deployments (a startup warning flags this).
 - **`action.nats.mode`** (default: inherit global `nats.publish.mode`) selects the publish transport per action. Resolved by `effectivePublishMode` in the shared `broker.actionPublisher` (used by SubscriptionManager and Responder), `NATSBroker.Publish` (scheduler/httpclient), and the gateway's `publishToNATS`. Retry/ack tuning stays global.
 - **Double-fire guard**: `Processor.ProcessForSubscription` takes a `NATSTriggerFilter` (`JetStreamRuleFilter` / `CoreRuleFilter`) so each transport only evaluates its own rules — required because a subject can be covered by both transports (mixed-mode rules or overlapping wildcards). When adding new subscription paths, always pass the right filter.
+
+### Throttle (leading & trailing)
+
+The YAML block is `throttle` on triggers and actions; `debounce` is a deprecated alias folded onto it by `loader.go::normalizeThrottle` (setting both is an error). `ThrottleConfig.Mode` is `leading` (default) or `trailing`.
+
+- **Leading** is the original behavior: `Processor.evaluateRules` calls `ThrottleManager.Allow` and drops the message inline. Fully contained in `internal/rule`.
+- **Trailing** is actions-only (rejected on triggers and with `request: true` in `validateThrottleConfig`/`validateNATSAction`). The Processor stays pure: it never sleeps, times, or publishes. `evaluateRules` routes a trailing rule's actions into `Outcome.Deferred` as one `DeferredBatch`, and `internal/deferred.Coalescer` does the holding — replace-on-submit, fixed window from first submit (not reset-on-each), flush-on-Stop.
+
+Every `Process*` method returns a **`rule.Outcome`**, not `[]*Action`: `Immediate` runs now, `Deferred` goes to a Coalescer. The two are separate fields precisely because a deferred action is indistinguishable from an immediate one by inspection — a single slice would let a caller publish a held action immediately with no error. `Outcome.All()` flattens both for *inspection only* (rule-cli, web tester, tests); never execute its result.
+
+One Coalescer per execution site, each wired to that site's own executor so retry/transport/metrics match the immediate path: `SubscriptionManager.executeAction`, `Responder.executeSideEffect`, `InboundServer.executeDeferred`, `SchedulerApp.executeDeferred`. Each site's shutdown path must call `coalescer.Stop(ctx)` after its workers stop but *before* the NATS connection closes.
+
+An action throttle gates the action as a unit and runs before `forEach` expansion, so the key resolves against the trigger context and a fan-out is one batch. This is deliberate and test-pinned (`TestProcessor_ActionThrottle_ForEach*`) — it is what keeps trailing mode from collapsing N forEach actions into the last element.
 
 ### Request/Reply & HTTP Responses
 

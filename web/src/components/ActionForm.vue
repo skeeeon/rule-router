@@ -1,8 +1,8 @@
 <script setup>
 import { ref, computed, watch, inject, nextTick, onMounted, onUnmounted } from 'vue'
-import { createDebounce, createRetry, createConditions, createPublishResponse } from '../utils/state.js'
+import { createThrottle, createRetry, createConditions, createPublishResponse } from '../utils/state.js'
 import HeadersEditor from './HeadersEditor.vue'
-import DebounceEditor from './DebounceEditor.vue'
+import ThrottleEditor from './ThrottleEditor.vue'
 import ConditionsBuilder from './ConditionsBuilder.vue'
 import FieldSuggestInput from './FieldSuggestInput.vue'
 import JsonTextarea from './JsonTextarea.vue'
@@ -207,8 +207,8 @@ function toggleOption(target, key, factory) {
           Headers
         </label>
         <label class="checkbox">
-          <input type="checkbox" :checked="!!action.nats.debounce" @change="toggleOption(action.nats, 'debounce', createDebounce)">
-          Debounce
+          <input type="checkbox" :checked="!!action.nats.throttle" @change="toggleOption(action.nats, 'throttle', createThrottle)">
+          Throttle
         </label>
       </div>
 
@@ -238,7 +238,7 @@ function toggleOption(target, key, factory) {
       </div>
 
       <HeadersEditor v-if="Object.keys(action.nats.headers).length > 0" v-model="action.nats.headers" />
-      <DebounceEditor v-if="action.nats.debounce" :debounce="action.nats.debounce" :error-for="errorFor" prefix="action.nats.debounce" />
+      <ThrottleEditor v-if="action.nats.throttle" :throttle="action.nats.throttle" :error-for="errorFor" prefix="action.nats.throttle" allow-trailing />
 
       <template v-if="isHttp">
       <label class="checkbox">
@@ -343,8 +343,8 @@ function toggleOption(target, key, factory) {
           Publish Response
         </label>
         <label class="checkbox">
-          <input type="checkbox" :checked="!!action.http.debounce" @change="toggleOption(action.http, 'debounce', createDebounce)">
-          Debounce
+          <input type="checkbox" :checked="!!action.http.throttle" @change="toggleOption(action.http, 'throttle', createThrottle)">
+          Throttle
         </label>
       </div>
 
@@ -406,7 +406,7 @@ function toggleOption(target, key, factory) {
         </span>
       </div>
 
-      <DebounceEditor v-if="action.http.debounce" :debounce="action.http.debounce" :error-for="errorFor" prefix="action.http.debounce" />
+      <ThrottleEditor v-if="action.http.throttle" :throttle="action.http.throttle" :error-for="errorFor" prefix="action.http.throttle" allow-trailing />
     </div>
 
     <!-- Respond action -->

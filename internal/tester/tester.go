@@ -952,13 +952,16 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 	}
 
 	start := time.Now()
-	var actions []*rule.Action
-	// Dispatch to the correct processor method based on trigger type
+	// Dispatch to the correct processor method based on trigger type. The
+	// tester reports every evaluated action, so it uses Outcome.All() —
+	// trailing-throttled ones are shown tagged rather than actually held.
+	var outcome rule.Outcome
 	if testConfig.MockTrigger.NATS != nil {
-		actions, err = processor.ProcessNATS(testConfig.MockTrigger.NATS.Subject, msgBytes, testConfig.Headers)
+		outcome, err = processor.ProcessNATS(testConfig.MockTrigger.NATS.Subject, msgBytes, testConfig.Headers)
 	} else {
-		actions, err = processor.ProcessHTTP(testConfig.MockTrigger.HTTP.Path, testConfig.MockTrigger.HTTP.Method, msgBytes, testConfig.Headers)
+		outcome, err = processor.ProcessHTTP(testConfig.MockTrigger.HTTP.Path, testConfig.MockTrigger.HTTP.Method, msgBytes, testConfig.Headers)
 	}
+	actions := outcome.All()
 	duration := time.Since(start)
 
 	if err != nil {
@@ -1009,6 +1012,12 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 				if len(action.Respond.Headers) > 0 {
 					fmt.Printf("Headers: %v\n", action.Respond.Headers)
 				}
+			}
+			// A trailing-mode action throttle does not drop the action, it holds
+			// it. Say so, so the output is not mistaken for an immediate publish.
+			if action.Defer != nil {
+				fmt.Printf("Deferred: held %v under throttle key %q; the last batch in the window is what fires\n",
+					action.Defer.Window, action.Defer.Key)
 			}
 			fmt.Println("-----------------------")
 		}
@@ -1171,17 +1180,20 @@ func (t *Tester) runSingleTestCase(processor *rule.Processor, messagePath string
 		return result
 	}
 
-	var actions []*rule.Action
-	// Dispatch to the correct processor method based on the mock trigger type
+	// Dispatch to the correct processor method based on the mock trigger type.
+	// Expected-output assertions cover every evaluated action, so this uses
+	// Outcome.All(): a trailing-throttled action still counts as produced.
+	var outcome rule.Outcome
 	if testConfig.MockTrigger.NATS != nil {
-		actions, err = processor.ProcessNATS(testConfig.MockTrigger.NATS.Subject, msgBytes, testConfig.Headers)
+		outcome, err = processor.ProcessNATS(testConfig.MockTrigger.NATS.Subject, msgBytes, testConfig.Headers)
 	} else if testConfig.MockTrigger.HTTP != nil {
-		actions, err = processor.ProcessHTTP(testConfig.MockTrigger.HTTP.Path, testConfig.MockTrigger.HTTP.Method, msgBytes, testConfig.Headers)
+		outcome, err = processor.ProcessHTTP(testConfig.MockTrigger.HTTP.Path, testConfig.MockTrigger.HTTP.Method, msgBytes, testConfig.Headers)
 	} else {
 		result.Error = "no mock trigger specified in test config"
 		result.DurationMs = time.Since(start).Milliseconds()
 		return result
 	}
+	actions := outcome.All()
 	result.DurationMs = time.Since(start).Milliseconds()
 
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-co-op/gocron/v2"
 	"rule-router/config"
+	"rule-router/internal/deferred"
 	"rule-router/internal/httpclient"
 	"rule-router/internal/lifecycle"
 	"rule-router/internal/logger"
@@ -21,6 +22,10 @@ import (
 const (
 	// publishTimeout is the maximum time to wait for a single publish operation
 	publishTimeout = 10 * time.Second
+
+	// deferredFlushTimeout bounds the shutdown flush of pending
+	// trailing-throttle batches.
+	deferredFlushTimeout = 10 * time.Second
 )
 
 // kvScheduleTag is used to tag cron jobs loaded from KV so they can be
@@ -39,6 +44,11 @@ type SchedulerApp struct {
 	httpExecutor *httpclient.HTTPExecutor
 	base         *BaseApp
 	scheduler    gocron.Scheduler
+
+	// coalescer holds trailing-throttle actions from cron rules. Rarely useful
+	// on a schedule trigger (cron already paces the firing) but supported for
+	// consistency: any action that accepts a throttle accepts both modes.
+	coalescer *deferred.Coalescer
 }
 
 // NewSchedulerApp creates a new rule-scheduler application instance using the pre-built base components.
@@ -52,6 +62,7 @@ func NewSchedulerApp(base *BaseApp, cfg *config.Config) (*SchedulerApp, error) {
 		httpExecutor: httpclient.NewHTTPExecutor(&cfg.HTTP.Client, base.Logger, base.Metrics, base.Broker),
 		base:         base,
 	}
+	app.coalescer = deferred.New("scheduler", app.executeDeferred, publishTimeout, base.Logger, base.Metrics)
 
 	scheduleRules := app.processor.GetScheduleRules()
 
@@ -162,7 +173,7 @@ func (app *SchedulerApp) rebuildCronJobs(rules []*rule.Rule) {
 func (app *SchedulerApp) executeScheduleRule(r *rule.Rule) {
 	app.logger.Debug("executing schedule rule", "cron", r.Trigger.Schedule.Cron)
 
-	actions, err := app.processor.ProcessSchedule(r)
+	outcome, err := app.processor.ProcessSchedule(r)
 	if err != nil {
 		app.logger.Error("failed to process schedule rule",
 			"cron", r.Trigger.Schedule.Cron,
@@ -170,13 +181,18 @@ func (app *SchedulerApp) executeScheduleRule(r *rule.Rule) {
 		return
 	}
 
-	if len(actions) == 0 {
+	if outcome.Empty() {
 		app.logger.Debug("schedule rule produced no actions (conditions not met)",
 			"cron", r.Trigger.Schedule.Cron)
 		return
 	}
 
-	for _, action := range actions {
+	// Trailing-throttle batches fire when their window closes.
+	for _, batch := range outcome.Deferred {
+		app.coalescer.Submit(batch)
+	}
+
+	for _, action := range outcome.Immediate {
 		if action.NATS != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), publishTimeout)
 			if err := app.base.Broker.Publish(ctx, action.NATS); err != nil {
@@ -263,5 +279,43 @@ func (app *SchedulerApp) Run(ctx context.Context) error {
 // Shared resources (metrics, broker, logger) are cleaned up by BaseApp.Close().
 func (app *SchedulerApp) Close() error {
 	app.logger.Info("closing scheduler components")
+
+	// Flush pending trailing-throttle batches before BaseApp closes the broker.
+	flushCtx, cancel := context.WithTimeout(context.Background(), deferredFlushTimeout)
+	defer cancel()
+	app.coalescer.Stop(flushCtx)
+
+	return nil
+}
+
+// executeDeferred runs one trailing-throttle action from a cron rule, using the
+// same publish and HTTP paths as the immediate route.
+func (app *SchedulerApp) executeDeferred(ctx context.Context, action *rule.Action) error {
+	switch {
+	case action.NATS != nil:
+		if err := app.base.Broker.Publish(ctx, action.NATS); err != nil {
+			if app.metrics != nil {
+				app.metrics.IncActionsTotal("error")
+				app.metrics.IncActionPublishFailures()
+			}
+			return fmt.Errorf("failed to publish deferred scheduled NATS action to %s: %w", action.NATS.Subject, err)
+		}
+		if app.metrics != nil {
+			app.metrics.IncActionsTotal("success")
+		}
+
+	case action.HTTP != nil:
+		if err := app.httpExecutor.ExecuteHTTPAction(ctx, action.HTTP); err != nil {
+			if app.metrics != nil {
+				app.metrics.IncActionsTotal("error")
+				app.metrics.IncActionPublishFailures()
+			}
+			return fmt.Errorf("failed to execute deferred scheduled HTTP action to %s: %w", action.HTTP.URL, err)
+		}
+		if app.metrics != nil {
+			app.metrics.IncActionsTotal("success")
+		}
+	}
+
 	return nil
 }

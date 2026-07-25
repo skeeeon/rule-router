@@ -135,16 +135,14 @@ This rule processes a batch of events, generating one new message for each "crit
         }
 ```
 
-### Example: Debounce / Throttle
+### Example: Throttle (leading — one alert per window)
 
-Suppress rapid-fire alerts per room, allowing one alert every 30 seconds:
+Suppress rapid-fire alerts per room, allowing one alert every 30 seconds. The throttle goes on the **action**, so every reading is still evaluated and the window opens only once a reading actually crosses the threshold:
 
 ```yaml
 - trigger:
     nats:
       subject: "sensors.temperature.>"
-      debounce:
-        window: "5s"
   conditions:
     operator: and
     items:
@@ -155,12 +153,32 @@ Suppress rapid-fire alerts per room, allowing one alert every 30 seconds:
     nats:
       subject: "alerts.high_temp"
       payload: '{"alert": true, "temp": {temperature}}'
-      debounce:
+      throttle:
         window: "30s"
+        key: "{@subject.2}"   # one window per room
+```
+
+### Example: Throttle (trailing — emit the settled value)
+
+When only the final value of a burst matters, `mode: trailing` holds the action for the window and emits whichever value arrived last:
+
+```yaml
+- trigger:
+    nats:
+      subject: "thermostat.setpoint.>"
+  action:
+    nats:
+      subject: "hvac.setpoint.applied.{@subject.2}"
+      payload: '{"setpoint": {setpoint}}'
+      throttle:
+        window: "2s"
+        mode: trailing
         key: "{@subject.2}"
 ```
 
-See [Core Concepts](./../../docs/01-core-concepts.md) for full debounce semantics.
+Trailing mode adds up to `window` of latency and makes the action at-most-once, so it suits settling state (dials, setpoints, config edits) rather than alerting.
+
+> A throttle can also go on a **trigger**, but it skips evaluation entirely and will discard messages that would have matched. Only use it on unconditional or expensive rules — see [Core Concepts](./../../docs/01-core-concepts.md#trigger-throttle--read-this-before-using-it) for full throttle semantics.
 
 ### Example: Polling an HTTP API into NATS
 

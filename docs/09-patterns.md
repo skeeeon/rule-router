@@ -171,12 +171,34 @@ Suppress rapid-fire events per logical key — per device, per room, per user �
     nats:
       subject: "alerts.motion"
       payload: '{"device": "{@subject.2}"}'
-      debounce:
+      throttle:
         window: "60s"
         key: "{@subject.2}"
 ```
 
 **When to reach for it:** Flappy sensors or chatty event sources. The `key` field is the lever — without it, all messages share one window; with `{@subject.N}` or `{field}`, each distinct value gets its own.
+
+Note this throttles the **action**, not the trigger, so every message is still evaluated and the window only opens once something actually matches. A trigger throttle would sample the input stream instead and could discard the reading you cared about — see [Core Concepts](./01-core-concepts.md#trigger-throttle--read-this-before-using-it).
+
+### 7b. Emit the settled value, not the first one
+
+The mirror image of Pattern 7. When a value churns and only where it lands matters, use a trailing throttle.
+
+```yaml
+- trigger:
+    nats:
+      subject: "thermostat.setpoint.>"
+  action:
+    nats:
+      subject: "hvac.setpoint.applied.{@subject.2}"
+      payload: '{"zone": "{@subject.2}", "setpoint": {setpoint}}'
+      throttle:
+        window: "2s"
+        mode: trailing
+        key: "{@subject.2}"
+```
+
+**When to reach for it:** Dials, sliders, setpoints, config edits — anything where the intermediate values are noise and the final one is the instruction. Costs up to `window` of latency and makes the action at-most-once, so never use it for alerting.
 
 ### 8. Dynamic threshold from KV
 

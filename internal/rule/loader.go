@@ -126,6 +126,14 @@ func (l *RulesLoader) ParseAndValidateYAML(data []byte, source string) ([]Rule, 
 		"source", source,
 		"ruleCount", len(rules))
 
+	// Fold the deprecated `debounce` spelling onto `throttle` before anything
+	// else reads it, so env expansion and validation only ever see one field.
+	for i := range rules {
+		if err := l.normalizeThrottle(&rules[i], source, i); err != nil {
+			return nil, fmt.Errorf("rule %d in %s: %w", i, source, err)
+		}
+	}
+
 	// Expand environment variables before validation
 	for i := range rules {
 		if err := l.expandEnvironmentVariables(&rules[i], source, i); err != nil {
@@ -147,6 +155,51 @@ func (l *RulesLoader) ParseAndValidateYAML(data []byte, source string) ([]Rule, 
 	return rules, nil
 }
 
+// normalizeThrottle folds the deprecated `debounce` block onto `throttle` on
+// every trigger and action that supports it. Setting both is an error rather
+// than a silent precedence rule, since which one wins would be a coin flip to
+// the reader. Called once per rule before env expansion and validation, so
+// everything downstream only has to know about Throttle.
+func (l *RulesLoader) normalizeThrottle(rule *Rule, filePath string, ruleIndex int) error {
+	fold := func(throttle, debounce **ThrottleConfig, location string) error {
+		if *debounce == nil {
+			return nil
+		}
+		if *throttle != nil {
+			return fmt.Errorf("%s: cannot set both 'throttle' and the deprecated 'debounce' — remove 'debounce'", location)
+		}
+		*throttle = *debounce
+		*debounce = nil
+		l.logger.Warn("rule uses deprecated 'debounce' block; rename it to 'throttle'",
+			"location", location,
+			"file", filePath,
+			"ruleIndex", ruleIndex)
+		return nil
+	}
+
+	if t := rule.Trigger.NATS; t != nil {
+		if err := fold(&t.Throttle, &t.Debounce, "trigger.nats"); err != nil {
+			return err
+		}
+	}
+	if t := rule.Trigger.HTTP; t != nil {
+		if err := fold(&t.Throttle, &t.Debounce, "trigger.http"); err != nil {
+			return err
+		}
+	}
+	if a := rule.Action.NATS; a != nil {
+		if err := fold(&a.Throttle, &a.Debounce, "action.nats"); err != nil {
+			return err
+		}
+	}
+	if a := rule.Action.HTTP; a != nil {
+		if err := fold(&a.Throttle, &a.Debounce, "action.http"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // expandEnvironmentVariables expands ${VAR_NAME} placeholders in a rule
 // This happens at load time, before validation, for static configuration
 func (l *RulesLoader) expandEnvironmentVariables(rule *Rule, filePath string, ruleIndex int) error {
@@ -154,7 +207,7 @@ func (l *RulesLoader) expandEnvironmentVariables(rule *Rule, filePath string, ru
 		"file", filePath,
 		"ruleIndex", ruleIndex)
 
-	// Expand in trigger debounce
+	// Expand in trigger throttle
 	l.expandTriggerEnvVars(&rule.Trigger, filePath, ruleIndex)
 
 	// Expand in conditions
@@ -168,15 +221,13 @@ func (l *RulesLoader) expandEnvironmentVariables(rule *Rule, filePath string, ru
 	return nil
 }
 
-// expandTriggerEnvVars expands env vars in trigger debounce fields
+// expandTriggerEnvVars expands env vars in trigger throttle fields
 func (l *RulesLoader) expandTriggerEnvVars(trigger *Trigger, filePath string, ruleIndex int) {
-	if trigger.NATS != nil && trigger.NATS.Debounce != nil {
-		trigger.NATS.Debounce.Window = l.expandEnvVarsInString(trigger.NATS.Debounce.Window, "trigger.nats.debounce.window", filePath, ruleIndex)
-		trigger.NATS.Debounce.Key = l.expandEnvVarsInString(trigger.NATS.Debounce.Key, "trigger.nats.debounce.key", filePath, ruleIndex)
+	if trigger.NATS != nil {
+		l.expandThrottleEnvVars(trigger.NATS.Throttle, "trigger.nats.throttle", filePath, ruleIndex)
 	}
-	if trigger.HTTP != nil && trigger.HTTP.Debounce != nil {
-		trigger.HTTP.Debounce.Window = l.expandEnvVarsInString(trigger.HTTP.Debounce.Window, "trigger.http.debounce.window", filePath, ruleIndex)
-		trigger.HTTP.Debounce.Key = l.expandEnvVarsInString(trigger.HTTP.Debounce.Key, "trigger.http.debounce.key", filePath, ruleIndex)
+	if trigger.HTTP != nil {
+		l.expandThrottleEnvVars(trigger.HTTP.Throttle, "trigger.http.throttle", filePath, ruleIndex)
 	}
 	if trigger.HTTP != nil && trigger.HTTP.HMAC != nil {
 		// Resolve ${ENV} secrets at load time (literals pass through unchanged;
@@ -268,11 +319,8 @@ func (l *RulesLoader) expandActionEnvVars(action *Action, filePath string, ruleI
 			l.expandConditionsEnvVars(natsAction.Filter, filePath, ruleIndex)
 		}
 
-		// Expand debounce fields
-		if natsAction.Debounce != nil {
-			natsAction.Debounce.Window = l.expandEnvVarsInString(natsAction.Debounce.Window, "action.nats.debounce.window", filePath, ruleIndex)
-			natsAction.Debounce.Key = l.expandEnvVarsInString(natsAction.Debounce.Key, "action.nats.debounce.key", filePath, ruleIndex)
-		}
+		// Expand throttle fields
+		l.expandThrottleEnvVars(natsAction.Throttle, "action.nats.throttle", filePath, ruleIndex)
 	}
 
 	if action.HTTP != nil {
@@ -300,12 +348,19 @@ func (l *RulesLoader) expandActionEnvVars(action *Action, filePath string, ruleI
 			l.expandConditionsEnvVars(httpAction.Filter, filePath, ruleIndex)
 		}
 
-		// Expand debounce fields
-		if httpAction.Debounce != nil {
-			httpAction.Debounce.Window = l.expandEnvVarsInString(httpAction.Debounce.Window, "action.http.debounce.window", filePath, ruleIndex)
-			httpAction.Debounce.Key = l.expandEnvVarsInString(httpAction.Debounce.Key, "action.http.debounce.key", filePath, ruleIndex)
-		}
+		// Expand throttle fields
+		l.expandThrottleEnvVars(httpAction.Throttle, "action.http.throttle", filePath, ruleIndex)
 	}
+}
+
+// expandThrottleEnvVars expands ${VAR} placeholders in a throttle block.
+// No-op when the block is absent.
+func (l *RulesLoader) expandThrottleEnvVars(cfg *ThrottleConfig, location, filePath string, ruleIndex int) {
+	if cfg == nil {
+		return
+	}
+	cfg.Window = l.expandEnvVarsInString(cfg.Window, location+".window", filePath, ruleIndex)
+	cfg.Key = l.expandEnvVarsInString(cfg.Key, location+".key", filePath, ruleIndex)
 }
 
 // expandEnvVarsInString expands ${VAR_NAME} placeholders in a string
@@ -407,7 +462,7 @@ func (l *RulesLoader) validateTrigger(trigger *Trigger, filePath string, ruleInd
 		if err := l.validateWildcardPattern(trigger.NATS.Subject); err != nil {
 			return fmt.Errorf("invalid NATS subject pattern: %w", err)
 		}
-		if err := l.validateDebounceConfig(trigger.NATS.Debounce, "trigger.nats.debounce"); err != nil {
+		if err := l.validateThrottleConfig(trigger.NATS.Throttle, "trigger.nats.throttle", false); err != nil {
 			return err
 		}
 		if err := validateNATSMode(trigger.NATS.Mode, "trigger"); err != nil {
@@ -437,7 +492,7 @@ func (l *RulesLoader) validateTrigger(trigger *Trigger, filePath string, ruleInd
 			}
 			trigger.HTTP.Method = method
 		}
-		if err := l.validateDebounceConfig(trigger.HTTP.Debounce, "trigger.http.debounce"); err != nil {
+		if err := l.validateThrottleConfig(trigger.HTTP.Throttle, "trigger.http.throttle", false); err != nil {
 			return err
 		}
 		if err := l.validateHMACConfig(trigger.HTTP.HMAC); err != nil {
@@ -607,8 +662,15 @@ func (l *RulesLoader) validateNATSAction(action *NATSAction) error {
 		}
 	}
 
-	if err := l.validateDebounceConfig(action.Debounce, "action.nats.debounce"); err != nil {
+	if err := l.validateThrottleConfig(action.Throttle, "action.nats.throttle", true); err != nil {
 		return err
+	}
+
+	// A trailing throttle holds the action past the caller's response, so it
+	// cannot coexist with the synchronous HTTP↔NATS bridge — there would be
+	// nothing to return by the time it fires.
+	if action.Request && action.Throttle.IsTrailing() {
+		return fmt.Errorf("action.nats: 'request: true' returns the reply to the caller synchronously and cannot use throttle mode 'trailing'")
 	}
 
 	if action.Timeout != "" {
@@ -693,7 +755,7 @@ func (l *RulesLoader) validateHTTPAction(action *HTTPAction) error {
 		}
 	}
 
-	if err := l.validateDebounceConfig(action.Debounce, "action.http.debounce"); err != nil {
+	if err := l.validateThrottleConfig(action.Throttle, "action.http.throttle", true); err != nil {
 		return err
 	}
 
@@ -752,23 +814,40 @@ func (l *RulesLoader) validateForEachConfig(forEachField string, filter *Conditi
 	return nil
 }
 
-// validateDebounceConfig validates a debounce configuration block
-func (l *RulesLoader) validateDebounceConfig(cfg *DebounceConfig, location string) error {
+// validateThrottleConfig validates a throttle configuration block.
+// allowTrailing is false for triggers: trailing mode defers execution, which a
+// trigger throttle cannot do — its entire purpose is to skip evaluation.
+func (l *RulesLoader) validateThrottleConfig(cfg *ThrottleConfig, location string, allowTrailing bool) error {
 	if cfg == nil {
 		return nil
 	}
 
 	if cfg.Window == "" {
-		return fmt.Errorf("%s: debounce window cannot be empty", location)
+		return fmt.Errorf("%s: throttle window cannot be empty", location)
 	}
 
-	if _, err := time.ParseDuration(cfg.Window); err != nil {
-		return fmt.Errorf("%s: invalid debounce window '%s': %w", location, cfg.Window, err)
+	window, err := time.ParseDuration(cfg.Window)
+	if err != nil {
+		return fmt.Errorf("%s: invalid throttle window '%s': %w", location, cfg.Window, err)
+	}
+	if window <= 0 {
+		return fmt.Errorf("%s: throttle window must be positive, got '%s'", location, cfg.Window)
+	}
+
+	switch cfg.Mode {
+	case "", ThrottleLeading:
+		// Default. Fire the first message in the window, drop the rest.
+	case ThrottleTrailing:
+		if !allowTrailing {
+			return fmt.Errorf("%s: mode 'trailing' is only valid on actions — a trigger throttle exists to skip evaluation, which it cannot do while holding a message. Move the throttle block to the action", location)
+		}
+	default:
+		return fmt.Errorf("%s: invalid throttle mode '%s' (must be '%s' or '%s')", location, cfg.Mode, ThrottleLeading, ThrottleTrailing)
 	}
 
 	if cfg.Key != "" {
 		if err := l.validateKVFieldsInTemplate(cfg.Key); err != nil {
-			return fmt.Errorf("%s: invalid KV field in debounce key: %w", location, err)
+			return fmt.Errorf("%s: invalid KV field in throttle key: %w", location, err)
 		}
 	}
 

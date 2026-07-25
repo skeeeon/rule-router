@@ -46,6 +46,25 @@ type actionResult struct {
 	Payload     string            `json:"payload"`
 	Headers     map[string]string `json:"headers,omitempty"`
 	Passthrough bool              `json:"passthrough"`
+
+	// Deferred is set when a trailing-mode action throttle holds this action.
+	// In production it fires at the end of DeferWindow, carrying whichever
+	// batch was last submitted under DeferKey. The tester evaluates one message
+	// at a time, so it shows the tag rather than simulating the wait.
+	Deferred    bool   `json:"deferred,omitempty"`
+	DeferWindow string `json:"deferWindow,omitempty"`
+	DeferKey    string `json:"deferKey,omitempty"`
+}
+
+// withDefer copies the trailing-throttle tag from an evaluated action onto its
+// JSON result, so the web tester can show that the action is held, not dropped.
+func withDefer(res actionResult, a *rule.Action) actionResult {
+	if a.Defer != nil {
+		res.Deferred = true
+		res.DeferWindow = a.Defer.Window.String()
+		res.DeferKey = a.Defer.Key
+	}
+	return res
 }
 
 func evaluateRule(_ js.Value, args []js.Value) interface{} {
@@ -114,7 +133,9 @@ func evaluateRule(_ js.Value, args []js.Value) interface{} {
 		headers = make(map[string]string)
 	}
 
-	var actions []*rule.Action
+	// The tester displays every evaluated action, so it reads Outcome.All() and
+	// marks trailing-throttled ones deferred rather than omitting them.
+	var outcome rule.Outcome
 	switch opts.TriggerType {
 	case "http":
 		path := opts.Path
@@ -125,18 +146,20 @@ func evaluateRule(_ js.Value, args []js.Value) interface{} {
 		if method == "" {
 			method = "POST"
 		}
-		actions, err = processor.ProcessHTTP(path, method, msgBytes, headers)
+		outcome, err = processor.ProcessHTTP(path, method, msgBytes, headers)
 	default:
 		subject := opts.Subject
 		if subject == "" {
 			subject = "test"
 		}
-		actions, err = processor.ProcessNATS(subject, msgBytes, headers)
+		outcome, err = processor.ProcessNATS(subject, msgBytes, headers)
 	}
 
 	if err != nil {
 		return marshalResult(evaluateResult{Error: fmt.Sprintf("processing error: %v", err)})
 	}
+
+	actions := outcome.All()
 
 	// Build result
 	result := evaluateResult{
@@ -150,27 +173,27 @@ func evaluateRule(_ js.Value, args []js.Value) interface{} {
 			if a.NATS.Passthrough && len(a.NATS.RawPayload) > 0 {
 				payload = string(a.NATS.RawPayload)
 			}
-			result.Actions = append(result.Actions, actionResult{
+			result.Actions = append(result.Actions, withDefer(actionResult{
 				Type:        "nats",
 				Subject:     a.NATS.Subject,
 				Mode:        a.NATS.Mode,
 				Payload:     payload,
 				Headers:     a.NATS.Headers,
 				Passthrough: a.NATS.Passthrough,
-			})
+			}, a))
 		} else if a.HTTP != nil {
 			payload := a.HTTP.Payload
 			if a.HTTP.Passthrough && len(a.HTTP.RawPayload) > 0 {
 				payload = string(a.HTTP.RawPayload)
 			}
-			result.Actions = append(result.Actions, actionResult{
+			result.Actions = append(result.Actions, withDefer(actionResult{
 				Type:        "http",
 				URL:         a.HTTP.URL,
 				Method:      a.HTTP.Method,
 				Payload:     payload,
 				Headers:     a.HTTP.Headers,
 				Passthrough: a.HTTP.Passthrough,
-			})
+			}, a))
 		} else if a.Respond != nil {
 			payload := a.Respond.Payload
 			if a.Respond.Passthrough && len(a.Respond.RawPayload) > 0 {

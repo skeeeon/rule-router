@@ -50,6 +50,7 @@ type Metrics struct {
 
 	// Throttle metrics (shared)
 	throttleSuppressedTotal *prometheus.CounterVec
+	throttleDeferredTotal   *prometheus.CounterVec
 
 	// Array operator metrics (shared)
 	arrayOperatorEvaluations *prometheus.CounterVec
@@ -234,9 +235,16 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 		throttleSuppressedTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "throttle_suppressed_total",
-				Help: "Total number of messages suppressed by per-rule throttle",
+				Help: "Total number of messages suppressed by a leading-mode per-rule throttle",
 			},
 			[]string{"phase"},
+		),
+		throttleDeferredTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "throttle_deferred_total",
+				Help: "Trailing-mode throttle outcomes: coalesced (pending batch replaced by a newer one), emitted (action fired at window close), dropped (discarded at shutdown), error (execution failed)",
+			},
+			[]string{"outcome"},
 		),
 
 		// Array operator metrics
@@ -323,6 +331,7 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 		m.forEachElementErrors,
 		m.forEachDuration,
 		m.throttleSuppressedTotal,
+		m.throttleDeferredTotal,
 		m.arrayOperatorEvaluations,
 		m.goroutines,
 		m.memoryBytes,
@@ -448,6 +457,12 @@ func (m *Metrics) ObserveForEachDuration(ruleFile string, seconds float64) {
 // Throttle metrics
 func (m *Metrics) IncThrottleSuppressed(phase string) {
 	m.throttleSuppressedTotal.WithLabelValues(phase).Inc()
+}
+
+// IncThrottleDeferred records a trailing-mode throttle outcome. Valid outcomes:
+// "coalesced", "emitted", "dropped", "error".
+func (m *Metrics) IncThrottleDeferred(outcome string) {
+	m.throttleDeferredTotal.WithLabelValues(outcome).Inc()
 }
 
 // Array operator metrics

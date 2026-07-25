@@ -1,6 +1,6 @@
 <script setup>
-import { createDebounce, createHMAC } from '../utils/state.js'
-import DebounceEditor from './DebounceEditor.vue'
+import { createThrottle, createHMAC } from '../utils/state.js'
+import ThrottleEditor from './ThrottleEditor.vue'
 import CronBuilder from './CronBuilder.vue'
 
 const props = defineProps({
@@ -8,11 +8,11 @@ const props = defineProps({
   errorFor: Function,
 })
 
-function toggleDebounce(target) {
-  if (target.debounce) {
-    target.debounce = null
+function toggleThrottle(target) {
+  if (target.throttle) {
+    target.throttle = null
   } else {
-    target.debounce = createDebounce()
+    target.throttle = createThrottle()
   }
 }
 
@@ -77,10 +77,10 @@ function toggleHMAC(target) {
         <span class="field-hint">Load-balance messages across subscriber instances</span>
       </div>
       <label class="checkbox">
-        <input type="checkbox" :checked="!!trigger.nats.debounce" @change="toggleDebounce(trigger.nats)">
-        Debounce
+        <input type="checkbox" :checked="!!trigger.nats.throttle" @change="toggleThrottle(trigger.nats)">
+        Throttle
       </label>
-      <DebounceEditor v-if="trigger.nats.debounce" :debounce="trigger.nats.debounce" :error-for="errorFor" prefix="trigger.nats.debounce" />
+      <ThrottleEditor v-if="trigger.nats.throttle" :throttle="trigger.nats.throttle" :error-for="errorFor" prefix="trigger.nats.throttle" />
     </div>
 
     <!-- HTTP trigger -->
@@ -170,10 +170,10 @@ function toggleHMAC(target) {
         </div>
       </div>
       <label class="checkbox">
-        <input type="checkbox" :checked="!!trigger.http.debounce" @change="toggleDebounce(trigger.http)">
-        Debounce
+        <input type="checkbox" :checked="!!trigger.http.throttle" @change="toggleThrottle(trigger.http)">
+        Throttle
       </label>
-      <DebounceEditor v-if="trigger.http.debounce" :debounce="trigger.http.debounce" :error-for="errorFor" prefix="trigger.http.debounce" />
+      <ThrottleEditor v-if="trigger.http.throttle" :throttle="trigger.http.throttle" :error-for="errorFor" prefix="trigger.http.throttle" />
     </div>
 
     <!-- Schedule trigger -->

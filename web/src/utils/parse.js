@@ -21,22 +21,12 @@ function rawToRule(raw, file) {
     rule.trigger.nats.mode = raw.trigger.nats.mode || ''
     rule.trigger.nats.reply = raw.trigger.nats.reply || false
     rule.trigger.nats.queue = raw.trigger.nats.queue || ''
-    if (raw.trigger.nats.debounce) {
-      rule.trigger.nats.debounce = {
-        window: raw.trigger.nats.debounce.window || '',
-        key: raw.trigger.nats.debounce.key || '',
-      }
-    }
+    rule.trigger.nats.throttle = rawToThrottle(raw.trigger.nats)
   } else if (raw.trigger?.http) {
     rule.trigger.type = 'http'
     rule.trigger.http.path = raw.trigger.http.path || ''
     rule.trigger.http.method = raw.trigger.http.method || ''
-    if (raw.trigger.http.debounce) {
-      rule.trigger.http.debounce = {
-        window: raw.trigger.http.debounce.window || '',
-        key: raw.trigger.http.debounce.key || '',
-      }
-    }
+    rule.trigger.http.throttle = rawToThrottle(raw.trigger.http)
     if (raw.trigger.http.hmac) {
       const h = raw.trigger.http.hmac
       rule.trigger.http.hmac = {
@@ -71,6 +61,19 @@ function rawToRule(raw, file) {
   }
 
   return rule
+}
+
+// rawToThrottle reads a throttle block off a trigger or action, accepting the
+// deprecated `debounce` spelling the same way the Go loader does. Returns null
+// when neither is present. `owner` is the raw trigger/action object.
+function rawToThrottle(owner) {
+  const raw = owner?.throttle || owner?.debounce
+  if (!raw) return null
+  return {
+    window: raw.window || '',
+    key: raw.key || '',
+    mode: raw.mode === 'trailing' ? 'trailing' : 'leading',
+  }
 }
 
 function rawToConditions(raw) {
@@ -110,9 +113,7 @@ function rawToNATSAction(raw) {
   if (raw.filter) {
     action.filter = rawToConditions(raw.filter)
   }
-  if (raw.debounce) {
-    action.debounce = { window: raw.debounce.window || '', key: raw.debounce.key || '' }
-  }
+  action.throttle = rawToThrottle(raw)
   return action
 }
 
@@ -148,8 +149,6 @@ function rawToHTTPAction(raw) {
   if (raw.filter) {
     action.filter = rawToConditions(raw.filter)
   }
-  if (raw.debounce) {
-    action.debounce = { window: raw.debounce.window || '', key: raw.debounce.key || '' }
-  }
+  action.throttle = rawToThrottle(raw)
   return action
 }

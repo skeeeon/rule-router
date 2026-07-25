@@ -4,11 +4,13 @@ package broker
 
 import (
 	"context"
+	"fmt"
 	"net/textproto"
 	"sync"
 
 	"github.com/nats-io/nats.go"
 
+	"rule-router/internal/deferred"
 	"rule-router/internal/logger"
 	"rule-router/internal/metrics"
 	"rule-router/internal/rule"
@@ -29,6 +31,7 @@ type Responder struct {
 	logger    *logger.Logger
 	metrics   *metrics.Metrics
 	publisher *actionPublisher
+	coalescer *deferred.Coalescer
 
 	mu     sync.Mutex
 	subs   []*nats.Subscription
@@ -37,13 +40,18 @@ type Responder struct {
 
 // NewResponder creates a Responder bound to the broker's core NATS connection.
 func NewResponder(b *NATSBroker, processor *rule.Processor, log *logger.Logger, m *metrics.Metrics) *Responder {
-	return &Responder{
+	r := &Responder{
 		broker:    b,
 		processor: processor,
 		logger:    log.With("component", "responder"),
 		metrics:   m,
 		publisher: newActionPublisher(b.GetNATSConn(), b.GetJetStream(), &b.config.NATS.Publish, log, m),
 	}
+	// Trailing-throttle batches run through the same side-effect path as the
+	// immediate route. Respond actions never reach it: a reply cannot be
+	// deferred, and the loader keeps throttle off respond actions entirely.
+	r.coalescer = deferred.New("core", r.executeSideEffect, deferredActionTimeout, log, m)
+	return r
 }
 
 // Rebuild tears down all existing core subscriptions and re-subscribes every
@@ -132,7 +140,7 @@ func (r *Responder) makeHandler(triggerSubject string) nats.MsgHandler {
 			}
 		}
 
-		actions, err := r.processor.ProcessForSubscription(triggerSubject, msg.Subject, msg.Data, headers, rule.CoreRuleFilter)
+		outcome, err := r.processor.ProcessForSubscription(triggerSubject, msg.Subject, msg.Data, headers, rule.CoreRuleFilter)
 		if err != nil {
 			r.logger.Error("failed to process core-delivered message", "subject", msg.Subject, "error", err)
 			if r.metrics != nil {
@@ -141,12 +149,17 @@ func (r *Responder) makeHandler(triggerSubject string) nats.MsgHandler {
 			return
 		}
 
+		// Trailing-throttle batches fire when their window closes.
+		for _, batch := range outcome.Deferred {
+			r.coalescer.Submit(batch)
+		}
+
 		// Core delivery is at-most-once: there is no ack window to redeliver
 		// failed actions into, so failures are logged and counted, not retried
 		// beyond the publisher's own retry policy.
 		ctx := context.Background()
 		responded := false
-		for _, a := range actions {
+		for _, a := range outcome.Immediate {
 			switch {
 			case a.Respond != nil:
 				if msg.Reply == "" {
@@ -243,7 +256,55 @@ func (r *Responder) unsubscribeAll() {
 // any later Rebuild (e.g. a KV event racing shutdown) is a no-op.
 func (r *Responder) Close() {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.closed = true
 	r.unsubscribeAll()
+	r.mu.Unlock()
+
+	// Flush pending trailing-throttle batches after the subscriptions are gone
+	// (so nothing new arrives) but before the NATS connection closes. Held
+	// outside r.mu: the flush publishes, and publishing must not take this lock.
+	flushCtx, cancel := context.WithTimeout(context.Background(), deferredFlushTimeout)
+	defer cancel()
+	r.coalescer.Stop(flushCtx)
+}
+
+// executeSideEffect runs one deferred NATS or HTTP action from a core-transport
+// rule. Mirrors the immediate path in makeHandler, minus respond (which cannot
+// be deferred — there is no request left to answer).
+func (r *Responder) executeSideEffect(ctx context.Context, action *rule.Action) error {
+	switch {
+	case action.NATS != nil:
+		if err := r.publisher.PublishWithRetry(ctx, action.NATS); err != nil {
+			if r.metrics != nil {
+				r.metrics.IncActionsTotal("error")
+			}
+			return fmt.Errorf("failed to publish deferred NATS action to %s: %w", action.NATS.Subject, err)
+		}
+		if r.metrics != nil {
+			r.metrics.IncActionsTotal("success")
+		}
+
+	case action.HTTP != nil:
+		exec := r.broker.GetHTTPExecutor()
+		if exec == nil {
+			r.logger.Warn("deferred HTTP action skipped - gateway feature not enabled",
+				"url", action.HTTP.URL,
+				"hint", "Enable features.gateway to handle HTTP actions")
+			if r.metrics != nil {
+				r.metrics.IncActionsTotal("skipped")
+			}
+			return nil
+		}
+		if err := exec.ExecuteHTTPAction(ctx, action.HTTP); err != nil {
+			if r.metrics != nil {
+				r.metrics.IncActionsTotal("error")
+			}
+			return fmt.Errorf("failed to execute deferred HTTP action to %s: %w", action.HTTP.URL, err)
+		}
+		if r.metrics != nil {
+			r.metrics.IncActionsTotal("success")
+		}
+	}
+
+	return nil
 }

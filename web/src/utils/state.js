@@ -10,8 +10,8 @@ export function createRule(file = '') {
     file,  // Filename grouping — rules with same file go into one YAML output
     trigger: {
       type: 'nats',
-      nats: { subject: '', mode: '', reply: false, queue: '', debounce: null },
-      http: { path: '', method: '', debounce: null, hmac: null },
+      nats: { subject: '', mode: '', reply: false, queue: '', throttle: null },
+      http: { path: '', method: '', throttle: null, hmac: null },
       schedule: { cron: '', timezone: '' },
     },
     conditions: null,
@@ -36,7 +36,7 @@ export function createNATSAction() {
     timeout: '',
     forEach: '',
     filter: null,
-    debounce: null,
+    throttle: null,
   }
 }
 
@@ -62,7 +62,7 @@ export function createHTTPAction() {
     publishResponse: null,
     forEach: '',
     filter: null,
-    debounce: null,
+    throttle: null,
   }
 }
 
@@ -78,8 +78,10 @@ export function createCondition() {
   return { id: uid(), field: '', operator: 'eq', value: '', conditions: null }
 }
 
-export function createDebounce() {
-  return { window: '', key: '' }
+// mode defaults to 'leading' and is omitted from emitted YAML, matching the Go
+// default. Trigger throttles never offer 'trailing' — see ThrottleEditor.vue.
+export function createThrottle() {
+  return { window: '', key: '', mode: 'leading' }
 }
 
 export function createHMAC() {

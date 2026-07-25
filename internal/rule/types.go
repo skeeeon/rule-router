@@ -5,14 +5,106 @@ package rule
 import (
 	"strconv"
 	"strings"
+	"time"
 )
 
-// DebounceConfig defines throttle settings for triggers or actions.
-// Uses fire-first semantics: allows the first message through immediately,
-// then suppresses subsequent messages for the duration of the window.
-type DebounceConfig struct {
-	Window string `json:"window" yaml:"window"`               // Duration string: "5s", "1m", etc.
-	Key    string `json:"key,omitempty" yaml:"key,omitempty"` // Template key: "{@subject}", "{sensor_id}", etc. Defaults to full subject/path.
+// Throttle mode values for ThrottleConfig.Mode.
+const (
+	// ThrottleLeading fires the first message in a window immediately and
+	// suppresses the rest. This is a rate limit, not a debounce.
+	ThrottleLeading = "leading"
+	// ThrottleTrailing holds the action for the length of the window and emits
+	// only the last one produced within it. Actions only.
+	ThrottleTrailing = "trailing"
+)
+
+// ThrottleConfig defines rate-limit settings for triggers or actions.
+//
+// Mode selects the edge:
+//
+//   - "leading" (default): the first message opens a window and is processed
+//     immediately; everything else in that window is dropped. Output is
+//     immediate but only the *first* value of a burst survives.
+//   - "trailing": the first message opens a window but nothing fires yet;
+//     each later message in the window replaces the pending one; when the
+//     window closes the *last* value fires. Output is delayed by up to
+//     `window` but reflects the settled state. Valid on actions only.
+//
+// Note that "trailing" is a fixed window measured from the first message, not
+// the reset-on-every-message debounce common in UI code. A continuous stream
+// therefore still emits once per window instead of starving forever.
+type ThrottleConfig struct {
+	Window string `json:"window" yaml:"window"`                 // Duration string: "5s", "1m", etc.
+	Key    string `json:"key,omitempty" yaml:"key,omitempty"`   // Template key: "{@subject}", "{sensor_id}", etc. Defaults to full subject/path.
+	Mode   string `json:"mode,omitempty" yaml:"mode,omitempty"` // "leading" (default) or "trailing"
+}
+
+// IsTrailing reports whether this throttle holds and emits the last value in
+// the window rather than firing the first one immediately.
+func (t *ThrottleConfig) IsTrailing() bool {
+	return t != nil && t.Mode == ThrottleTrailing
+}
+
+// DeferSpec marks an evaluated action as belonging to a trailing-throttle
+// window instead of executing immediately. The executing layer coalesces
+// actions by Key and emits the last batch submitted before Window elapses.
+//
+// It carries no rule pointer on purpose: by the time a DeferSpec exists the
+// action is fully evaluated (payload templated, forEach expanded), so a
+// deferred batch survives a rule reload unchanged.
+type DeferSpec struct {
+	Key    string        `json:"key"`
+	Window time.Duration `json:"window"`
+}
+
+// DeferredBatch is one trailing-throttle unit: every action a single rule
+// produced for one trigger, keyed together. forEach fan-out stays in one batch
+// so the whole batch is replaced as a unit — the "last value" is the last
+// *batch*, never a single element of it.
+type DeferredBatch struct {
+	Key     string
+	Window  time.Duration
+	Actions []*Action
+}
+
+// Outcome is the result of evaluating a message: actions to run right now, and
+// actions a trailing throttle is holding.
+//
+// The two are separate fields rather than one slice on purpose. A deferred
+// action is indistinguishable from an immediate one by inspection, so a single
+// slice would let any caller loop over "the actions" and publish a held one
+// immediately — silently, with no error. Splitting them at the point of
+// evaluation makes that mistake unrepresentable instead of merely documented.
+type Outcome struct {
+	// Immediate actions execute now, in order.
+	Immediate []*Action
+	// Deferred batches belong to a deferred.Coalescer, which emits the last
+	// batch submitted per key when its window closes.
+	Deferred []DeferredBatch
+}
+
+// Empty reports whether evaluation produced no actions at all.
+func (o Outcome) Empty() bool {
+	return len(o.Immediate) == 0 && len(o.Deferred) == 0
+}
+
+// All returns every evaluated action, immediate and deferred alike, in
+// evaluation order.
+//
+// This is for *inspection* — rule-cli, the web tester, assertions. Never
+// execute the result: it discards the distinction the Outcome type exists to
+// enforce. Deferred actions carry a non-nil Action.Defer if a caller needs to
+// tell them apart for display.
+func (o Outcome) All() []*Action {
+	if len(o.Deferred) == 0 {
+		return o.Immediate
+	}
+	all := make([]*Action, 0, len(o.Immediate)+len(o.Deferred))
+	all = append(all, o.Immediate...)
+	for _, b := range o.Deferred {
+		all = append(all, b.Actions...)
+	}
+	return all
 }
 
 // Rule represents a generic rule with trigger and action
@@ -40,8 +132,15 @@ const (
 
 // NATSTrigger represents a NATS subject-based trigger
 type NATSTrigger struct {
-	Subject  string          `json:"subject" yaml:"subject"`
-	Debounce *DebounceConfig `json:"debounce,omitempty" yaml:"debounce,omitempty"`
+	Subject string `json:"subject" yaml:"subject"`
+
+	// Throttle rate-limits how often this subject is evaluated. Leading mode
+	// only — a trigger throttle exists to skip evaluation cost, which trailing
+	// mode cannot do. See ThrottleConfig.
+	Throttle *ThrottleConfig `json:"throttle,omitempty" yaml:"throttle,omitempty"`
+	// Deprecated: use Throttle. Accepted at load time and folded into Throttle
+	// by normalizeThrottle, which logs a warning.
+	Debounce *ThrottleConfig `json:"debounce,omitempty" yaml:"debounce,omitempty"`
 
 	// Mode selects the subscription transport: "jetstream" (default — durable
 	// pull consumer, at-least-once) or "core" (plain NATS subscription,
@@ -82,9 +181,13 @@ type ScheduleTrigger struct {
 
 // HTTPTrigger represents an HTTP endpoint-based trigger
 type HTTPTrigger struct {
-	Path     string          `json:"path" yaml:"path"`
-	Method   string          `json:"method,omitempty" yaml:"method,omitempty"` // Optional, defaults to all methods
-	Debounce *DebounceConfig `json:"debounce,omitempty" yaml:"debounce,omitempty"`
+	Path   string `json:"path" yaml:"path"`
+	Method string `json:"method,omitempty" yaml:"method,omitempty"` // Optional, defaults to all methods
+
+	// Throttle rate-limits how often this path is evaluated. Leading mode only.
+	Throttle *ThrottleConfig `json:"throttle,omitempty" yaml:"throttle,omitempty"`
+	// Deprecated: use Throttle.
+	Debounce *ThrottleConfig `json:"debounce,omitempty" yaml:"debounce,omitempty"`
 
 	// HMAC, when set, makes the inbound gateway verify a shared-secret HMAC over
 	// the raw request body BEFORE the rule fires (fail-closed: bad/missing/
@@ -116,13 +219,18 @@ type Action struct {
 	NATS    *NATSAction    `json:"nats,omitempty" yaml:"nats,omitempty"`
 	HTTP    *HTTPAction    `json:"http,omitempty" yaml:"http,omitempty"`
 	Respond *RespondAction `json:"respond,omitempty" yaml:"respond,omitempty"`
+
+	// Defer is set by the Processor on evaluated actions held by a trailing
+	// throttle. It is never authored in YAML: it is output, not config. A nil
+	// Defer means execute immediately.
+	Defer *DeferSpec `json:"-" yaml:"-"`
 }
 
 // RespondAction sends the evaluated payload back to the caller instead of
 // publishing onward. On an HTTP-triggered rule it is written as the HTTP
 // response; on a NATS trigger with `reply: true` it is sent via msg.Respond.
 // It mirrors NATSAction's payload shape so the same templating helpers apply.
-// A respond is a single terminal response, so it has no forEach/debounce.
+// A respond is a single terminal response, so it has no forEach/throttle.
 type RespondAction struct {
 	StatusCode  int               `json:"statusCode,omitempty" yaml:"statusCode,omitempty"` // HTTP only; defaults to 200; ignored for NATS replies
 	Payload     string            `json:"payload,omitempty" yaml:"payload,omitempty"`
@@ -155,9 +263,15 @@ type NATSAction struct {
 
 	// Array iteration fields for forEach functionality
 	// ForEach must use template syntax: "{arrayField}" or "{nested.array}" or "{@items}"
-	ForEach  string          `json:"forEach,omitempty" yaml:"forEach,omitempty"`
-	Filter   *Conditions     `json:"filter,omitempty" yaml:"filter,omitempty"`
-	Debounce *DebounceConfig `json:"debounce,omitempty" yaml:"debounce,omitempty"`
+	ForEach string      `json:"forEach,omitempty" yaml:"forEach,omitempty"`
+	Filter  *Conditions `json:"filter,omitempty" yaml:"filter,omitempty"`
+
+	// Throttle rate-limits this action. Gates the action as a unit: it is
+	// applied before forEach expansion, so the key resolves against the trigger
+	// context and a whole fan-out passes or is suppressed together.
+	Throttle *ThrottleConfig `json:"throttle,omitempty" yaml:"throttle,omitempty"`
+	// Deprecated: use Throttle.
+	Debounce *ThrottleConfig `json:"debounce,omitempty" yaml:"debounce,omitempty"`
 
 	// Pre-computed at load time (nil for system fields or dynamic paths)
 	forEachPath []string
@@ -177,9 +291,15 @@ type HTTPAction struct {
 
 	// Array iteration fields for forEach functionality
 	// ForEach must use template syntax: "{arrayField}" or "{nested.array}" or "{@items}"
-	ForEach  string          `json:"forEach,omitempty" yaml:"forEach,omitempty"`
-	Filter   *Conditions     `json:"filter,omitempty" yaml:"filter,omitempty"`
-	Debounce *DebounceConfig `json:"debounce,omitempty" yaml:"debounce,omitempty"`
+	ForEach string      `json:"forEach,omitempty" yaml:"forEach,omitempty"`
+	Filter  *Conditions `json:"filter,omitempty" yaml:"filter,omitempty"`
+
+	// Throttle rate-limits this action. Gates the action as a unit: it is
+	// applied before forEach expansion, so the key resolves against the trigger
+	// context and a whole fan-out passes or is suppressed together.
+	Throttle *ThrottleConfig `json:"throttle,omitempty" yaml:"throttle,omitempty"`
+	// Deprecated: use Throttle.
+	Debounce *ThrottleConfig `json:"debounce,omitempty" yaml:"debounce,omitempty"`
 
 	// Pre-computed at load time (nil for system fields or dynamic paths)
 	forEachPath []string
