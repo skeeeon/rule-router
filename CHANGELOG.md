@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixes
+- **Unbounded metric cardinality on wildcard HTTP routes** — `http_inbound_requests_total` and `http_request_duration_seconds` labelled `path` with the raw request path, so every distinct URL matching a wildcard rule (`/internal-api/>`, `/webhooks/*/events`) minted a new Prometheus series. High-traffic wildcard routes over per-user or UUID paths grew series count without bound. Both metrics now label `path` with the **matched rule route** — the pattern for wildcard rules, the path itself for exact rules — so cardinality is bounded by rule count. Unmatched paths continue to use the `path="_unknown_"` sentinel. **Breaking for dashboards:** queries filtering on a concrete path that was served by a wildcard rule must now filter on the pattern instead.
+
+### Improvements
+- **Metrics/health server timeouts** — the metrics server (which also serves `/health` and `/ready`) and the `nats-auth-manager` metrics server were constructed with no timeouts, leaving those listeners able to hold connections open indefinitely (Slowloris). Both now set `ReadHeaderTimeout`, `ReadTimeout`, and `IdleTimeout`. No `WriteTimeout` is set, so a large scrape over a slow connection is never truncated mid-response. The gateway inbound server was already fully configured.
+- **Dependency refresh** — `nats.go` 1.49.0 → 1.52.0, `gocron/v2` 2.19.1 → 2.22.0, `client_golang` 1.23.2 → 1.24.1, `zap` 1.27.1 → 1.28.0, `nkeys` 0.4.15 → 0.4.16, plus web build deps (`vite` 8.0.8 → 8.1.5, `vue` 3.5.31 → 3.5.40, `cronstrue` 3.14 → 3.24, and others). No advisories outstanding on either side; routine maintenance.
+- Replaced three `err != http.ErrServerClosed` comparisons with `errors.Is`, per the project's error-handling convention; removed a dead `outboundSetupTimeout` constant and a redundant `streamNames` allocation in the stream resolver (both flagged by staticcheck). `gofmt`, `go vet`, and `staticcheck` are now clean across the tree.
+
 ## [0.16.0] - 2026-07-20
 
 ### Features

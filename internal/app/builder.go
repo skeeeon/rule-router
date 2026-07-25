@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -139,8 +140,11 @@ func (b *AppBuilder) WithMetrics() *AppBuilder {
 	})
 
 	b.base.MetricsServer = &http.Server{
-		Addr:    b.cfg.Metrics.Address,
-		Handler: mux,
+		Addr:              b.cfg.Metrics.Address,
+		Handler:           mux,
+		ReadHeaderTimeout: config.DefaultMetricsReadHeaderTimeout,
+		ReadTimeout:       config.DefaultMetricsReadHeaderTimeout,
+		IdleTimeout:       config.DefaultMetricsIdleTimeout,
 	}
 
 	// Track the metrics server goroutine with WaitGroup for graceful shutdown
@@ -150,7 +154,7 @@ func (b *AppBuilder) WithMetrics() *AppBuilder {
 		b.base.Logger.Info("starting metrics server",
 			"address", b.cfg.Metrics.Address,
 			"path", b.cfg.Metrics.Path)
-		if err := b.base.MetricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := b.base.MetricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			b.base.Logger.Error("metrics server error", "error", err)
 		}
 	}()

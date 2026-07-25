@@ -170,7 +170,7 @@ func (s *InboundServer) Start(ctx context.Context) error {
 			"workers", s.serverCfg.InboundWorkerCount,
 			"queueSize", s.serverCfg.InboundQueueSize)
 
-		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			s.logger.Error("HTTP server error", "error", err)
 		}
 	}()
@@ -352,6 +352,18 @@ func (s *InboundServer) publishToNATS(ctx context.Context, action *rule.NATSActi
 	}
 }
 
+// routeInfo carries a request's routing identity through the response helpers.
+//
+// path is the concrete request path — used for rule matching and logging.
+// route is the rule-declared pattern that matched it, used as the Prometheus
+// `path` label so a wildcard route reports one series instead of one per URL.
+// For exact-path rules the two are identical.
+type routeInfo struct {
+	path   string
+	route  string
+	method string
+}
+
 // webhookHandler is the single HTTP entry point. It delegates path matching
 // to the Processor (which handles both exact paths and wildcard patterns),
 // enqueues matching requests onto the worker pool, and returns 503 when the
@@ -366,7 +378,10 @@ func (s *InboundServer) webhookHandler(w http.ResponseWriter, r *http.Request) {
 		"method", r.Method,
 		"remoteAddr", r.RemoteAddr)
 
-	if !s.processor.HasHTTPPath(path) {
+	// Metrics are labelled with the matched rule pattern, never the raw path —
+	// see Processor.MatchHTTPPath.
+	matchedRoute, matched := s.processor.MatchHTTPPath(path)
+	if !matched {
 		s.logger.Debug("no rule for path, returning 404", "path", path, "method", r.Method)
 		http.Error(w, "Not Found", http.StatusNotFound)
 		if s.metrics != nil {
@@ -376,6 +391,8 @@ func (s *InboundServer) webhookHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rt := routeInfo{path: path, route: matchedRoute, method: r.Method}
+
 	defer r.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, MaxInboundBodySize))
@@ -383,8 +400,8 @@ func (s *InboundServer) webhookHandler(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("failed to read request body", "error", err)
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		if s.metrics != nil {
-			s.metrics.IncHTTPInboundRequestsTotal(path, r.Method, "400")
-			s.metrics.ObserveHTTPRequestDuration(path, r.Method, time.Since(start).Seconds())
+			s.metrics.IncHTTPInboundRequestsTotal(rt.route, rt.method, "400")
+			s.metrics.ObserveHTTPRequestDuration(rt.route, rt.method, time.Since(start).Seconds())
 		}
 		return
 	}
@@ -403,8 +420,8 @@ func (s *InboundServer) webhookHandler(w http.ResponseWriter, r *http.Request) {
 	if required, ok := s.processor.CheckHTTPHMAC(path, r.Method, body, headers); required && !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		if s.metrics != nil {
-			s.metrics.IncHTTPInboundRequestsTotal(path, r.Method, "401")
-			s.metrics.ObserveHTTPRequestDuration(path, r.Method, time.Since(start).Seconds())
+			s.metrics.IncHTTPInboundRequestsTotal(rt.route, rt.method, "401")
+			s.metrics.ObserveHTTPRequestDuration(rt.route, rt.method, time.Since(start).Seconds())
 		}
 		return
 	}
@@ -414,7 +431,7 @@ func (s *InboundServer) webhookHandler(w http.ResponseWriter, r *http.Request) {
 	// fire-and-forget worker queue. Plain webhook routes keep the bounded-queue
 	// fire-and-forget behavior below.
 	if s.processor.HasSyncHTTPPath(path, r.Method) {
-		s.handleSync(w, r, path, body, headers, start)
+		s.handleSync(w, r, rt, body, headers, start)
 		return
 	}
 
@@ -431,7 +448,7 @@ func (s *InboundServer) webhookHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(responseAccepted))
 		if s.metrics != nil {
-			s.metrics.IncHTTPInboundRequestsTotal(path, r.Method, "200")
+			s.metrics.IncHTTPInboundRequestsTotal(rt.route, rt.method, "200")
 			s.metrics.SetMessageProcessingBacklog(float64(len(s.workQueue)))
 		}
 	default:
@@ -442,12 +459,12 @@ func (s *InboundServer) webhookHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Service Unavailable: webhook queue full (capacity %d). Increase http.server.inboundQueueSize in config.",
 			s.serverCfg.InboundQueueSize), http.StatusServiceUnavailable)
 		if s.metrics != nil {
-			s.metrics.IncHTTPInboundRequestsTotal(path, r.Method, "503")
+			s.metrics.IncHTTPInboundRequestsTotal(rt.route, rt.method, "503")
 		}
 	}
 
 	if s.metrics != nil {
-		s.metrics.ObserveHTTPRequestDuration(path, r.Method, time.Since(start).Seconds())
+		s.metrics.ObserveHTTPRequestDuration(rt.route, rt.method, time.Since(start).Seconds())
 	}
 }
 
@@ -458,11 +475,11 @@ func (s *InboundServer) webhookHandler(w http.ResponseWriter, r *http.Request) {
 //
 // The first respond/request action produced wins the response; any plain NATS
 // publish actions fire as side-effects. A context deadline bounds bridge calls.
-func (s *InboundServer) handleSync(w http.ResponseWriter, r *http.Request, path string, body []byte, headers map[string]string, start time.Time) {
-	actions, err := s.processor.ProcessHTTP(path, r.Method, body, headers)
+func (s *InboundServer) handleSync(w http.ResponseWriter, r *http.Request, rt routeInfo, body []byte, headers map[string]string, start time.Time) {
+	actions, err := s.processor.ProcessHTTP(rt.path, rt.method, body, headers)
 	if err != nil {
-		s.logger.Error("failed to process synchronous webhook", "path", path, "method", r.Method, "error", err)
-		s.writeSyncError(w, path, r.Method, http.StatusInternalServerError, "Internal Server Error", start)
+		s.logger.Error("failed to process synchronous webhook", "path", rt.path, "method", rt.method, "error", err)
+		s.writeSyncError(w, rt, http.StatusInternalServerError, "Internal Server Error", start)
 		return
 	}
 
@@ -473,35 +490,35 @@ func (s *InboundServer) handleSync(w http.ResponseWriter, r *http.Request, path 
 			if responded {
 				continue
 			}
-			s.writeRespond(w, path, r.Method, action.Respond, start)
+			s.writeRespond(w, rt, action.Respond, start)
 			responded = true
 		case action.NATS != nil && action.NATS.Request:
 			if responded {
 				continue
 			}
-			s.bridgeRequest(w, r, path, action.NATS, start)
+			s.bridgeRequest(w, r, rt, action.NATS, start)
 			responded = true
 		case action.NATS != nil:
 			// Plain publish fires as a side-effect alongside the response.
 			if err := s.publishToNATS(r.Context(), action.NATS); err != nil {
 				s.logger.Error("failed to publish side-effect NATS action",
-					"path", path, "subject", action.NATS.Subject, "error", err)
+					"path", rt.path, "subject", action.NATS.Subject, "error", err)
 			}
 		case action.HTTP != nil:
 			s.logger.Warn("HTTP action in inbound webhook rule - this should use outbound client",
-				"path", path, "url", action.HTTP.URL)
+				"path", rt.path, "url", action.HTTP.URL)
 		}
 	}
 
 	if !responded {
 		// The path has a sync rule (HasSyncHTTPPath) but no respond/request action
 		// fired this time — conditions didn't match. Nothing to return.
-		s.writeSyncError(w, path, r.Method, http.StatusNotFound, "Not Found", start)
+		s.writeSyncError(w, rt, http.StatusNotFound, "Not Found", start)
 	}
 }
 
 // writeRespond writes a respond action's evaluated payload as the HTTP response.
-func (s *InboundServer) writeRespond(w http.ResponseWriter, path, method string, action *rule.RespondAction, start time.Time) {
+func (s *InboundServer) writeRespond(w http.ResponseWriter, rt routeInfo, action *rule.RespondAction, start time.Time) {
 	for k, v := range action.Headers {
 		w.Header().Set(k, v)
 	}
@@ -519,12 +536,12 @@ func (s *InboundServer) writeRespond(w http.ResponseWriter, path, method string,
 	} else {
 		w.Write([]byte(action.Payload))
 	}
-	s.recordSync(path, method, status, start)
+	s.recordSync(rt, status, start)
 }
 
 // bridgeRequest performs the HTTP↔NATS bridge: it sends a NATS request and
 // returns the reply as the HTTP response. No responder → 503; timeout → 504.
-func (s *InboundServer) bridgeRequest(w http.ResponseWriter, r *http.Request, path string, action *rule.NATSAction, start time.Time) {
+func (s *InboundServer) bridgeRequest(w http.ResponseWriter, r *http.Request, rt routeInfo, action *rule.NATSAction, start time.Time) {
 	timeout := DefaultRequestTimeout
 	if action.Timeout != "" {
 		if d, err := time.ParseDuration(action.Timeout); err == nil {
@@ -555,20 +572,20 @@ func (s *InboundServer) bridgeRequest(w http.ResponseWriter, r *http.Request, pa
 	if err != nil {
 		switch {
 		case errors.Is(err, nats.ErrNoResponders):
-			s.logger.Warn("NATS bridge request: no responders", "path", path, "subject", action.Subject)
-			s.writeSyncError(w, path, r.Method, http.StatusServiceUnavailable, "Service Unavailable: no NATS responder", start)
+			s.logger.Warn("NATS bridge request: no responders", "path", rt.path, "subject", action.Subject)
+			s.writeSyncError(w, rt, http.StatusServiceUnavailable, "Service Unavailable: no NATS responder", start)
 		case r.Context().Err() != nil:
 			// The client disconnected before the reply arrived — the parent request
 			// context (not our timeout) was cancelled. Nothing to send; don't pretend
 			// it was a timeout. 499 (nginx "Client Closed Request") for the metric only.
-			s.logger.Debug("NATS bridge request abandoned: client disconnected", "path", path, "subject", action.Subject)
-			s.recordSync(path, r.Method, 499, start)
+			s.logger.Debug("NATS bridge request abandoned: client disconnected", "path", rt.path, "subject", action.Subject)
+			s.recordSync(rt, 499, start)
 		case errors.Is(err, context.DeadlineExceeded) || errors.Is(err, nats.ErrTimeout):
-			s.logger.Warn("NATS bridge request timed out", "path", path, "subject", action.Subject, "timeout", timeout)
-			s.writeSyncError(w, path, r.Method, http.StatusGatewayTimeout, "Gateway Timeout: NATS request timed out", start)
+			s.logger.Warn("NATS bridge request timed out", "path", rt.path, "subject", action.Subject, "timeout", timeout)
+			s.writeSyncError(w, rt, http.StatusGatewayTimeout, "Gateway Timeout: NATS request timed out", start)
 		default:
-			s.logger.Warn("NATS bridge request failed", "path", path, "subject", action.Subject, "error", err)
-			s.writeSyncError(w, path, r.Method, http.StatusBadGateway, "Bad Gateway: NATS request failed", start)
+			s.logger.Warn("NATS bridge request failed", "path", rt.path, "subject", action.Subject, "error", err)
+			s.writeSyncError(w, rt, http.StatusBadGateway, "Bad Gateway: NATS request failed", start)
 		}
 		return
 	}
@@ -580,20 +597,21 @@ func (s *InboundServer) bridgeRequest(w http.ResponseWriter, r *http.Request, pa
 	w.Header().Set("Content-Type", ct)
 	w.WriteHeader(http.StatusOK)
 	w.Write(reply.Data)
-	s.recordSync(path, r.Method, http.StatusOK, start)
+	s.recordSync(rt, http.StatusOK, start)
 }
 
 // writeSyncError writes an error status for a synchronous route and records metrics.
-func (s *InboundServer) writeSyncError(w http.ResponseWriter, path, method string, status int, msg string, start time.Time) {
+func (s *InboundServer) writeSyncError(w http.ResponseWriter, rt routeInfo, status int, msg string, start time.Time) {
 	http.Error(w, msg, status)
-	s.recordSync(path, method, status, start)
+	s.recordSync(rt, status, start)
 }
 
-// recordSync records the request-total and duration metrics for a sync response.
-func (s *InboundServer) recordSync(path, method string, status int, start time.Time) {
+// recordSync records the request-total and duration metrics for a sync response,
+// labelled by matched route rather than concrete request path.
+func (s *InboundServer) recordSync(rt routeInfo, status int, start time.Time) {
 	if s.metrics != nil {
-		s.metrics.IncHTTPInboundRequestsTotal(path, method, strconv.Itoa(status))
-		s.metrics.ObserveHTTPRequestDuration(path, method, time.Since(start).Seconds())
+		s.metrics.IncHTTPInboundRequestsTotal(rt.route, rt.method, strconv.Itoa(status))
+		s.metrics.ObserveHTTPRequestDuration(rt.route, rt.method, time.Since(start).Seconds())
 	}
 }
 

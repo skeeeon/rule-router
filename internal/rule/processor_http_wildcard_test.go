@@ -223,6 +223,83 @@ func TestProcessHTTP_HasHTTPPathHandlesPatterns(t *testing.T) {
 	}
 }
 
+// MatchHTTPPath must report the rule-declared pattern, not the concrete request
+// path — the inbound gateway uses it as a Prometheus label, so returning the raw
+// path would give unbounded cardinality under a wildcard route.
+func TestMatchHTTPPath_ReturnsPatternNotRequestPath(t *testing.T) {
+	processor := newTestProcessor()
+	rules := []Rule{
+		httpRule("/webhooks/github/pr", "POST", "exact"),
+		httpRule("/webhooks/*/events", "POST", "single-wildcard"),
+		httpRule("/internal-api/>", "POST", "multi-wildcard"),
+	}
+	if err := processor.LoadRules(rules); err != nil {
+		t.Fatalf("LoadRules: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		path      string
+		wantRoute string
+		wantOK    bool
+	}{
+		{"exact path reports itself", "/webhooks/github/pr", "/webhooks/github/pr", true},
+		{"single wildcard collapses", "/webhooks/github/events", "/webhooks/*/events", true},
+		{"single wildcard collapses other tenant", "/webhooks/stripe/events", "/webhooks/*/events", true},
+		{"multi wildcard collapses", "/internal-api/users/1", "/internal-api/>", true},
+		{"multi wildcard collapses deeper", "/internal-api/a/b/c/d", "/internal-api/>", true},
+		{"no match", "/nope/bar", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			route, ok := processor.MatchHTTPPath(tt.path)
+			if ok != tt.wantOK {
+				t.Fatalf("MatchHTTPPath(%q) ok = %v, want %v", tt.path, ok, tt.wantOK)
+			}
+			if route != tt.wantRoute {
+				t.Errorf("MatchHTTPPath(%q) route = %q, want %q", tt.path, route, tt.wantRoute)
+			}
+		})
+	}
+
+	// The point of the change: many distinct URLs under one wildcard rule must
+	// collapse to a single label value.
+	routes := make(map[string]struct{})
+	for _, p := range []string{"/internal-api/1", "/internal-api/2", "/internal-api/x/y/z"} {
+		route, ok := processor.MatchHTTPPath(p)
+		if !ok {
+			t.Fatalf("expected %q to match", p)
+		}
+		routes[route] = struct{}{}
+	}
+	if len(routes) != 1 {
+		t.Errorf("expected 1 distinct metric label for wildcard route, got %d: %v", len(routes), routes)
+	}
+}
+
+func TestMatchHTTPPath_KVPatternReportsPattern(t *testing.T) {
+	processor := newTestProcessor()
+
+	kvRule := httpRule("/kv/*/ok", "POST", "kv-wildcard")
+	matcher, err := NewPathMatcher(kvRule.Trigger.HTTP.Path)
+	if err != nil {
+		t.Fatalf("NewPathMatcher: %v", err)
+	}
+	processor.ReplaceKVRuleSet(&KVRuleSet{HTTP: &HTTPKVRuleSet{
+		Exact:    map[string][]*Rule{},
+		Patterns: []*HTTPPatternRule{{Rule: &kvRule, Matcher: matcher}},
+	}})
+
+	route, ok := processor.MatchHTTPPath("/kv/anything/ok")
+	if !ok {
+		t.Fatal("expected KV pattern to match")
+	}
+	if route != "/kv/*/ok" {
+		t.Errorf("route = %q, want %q", route, "/kv/*/ok")
+	}
+}
+
 func TestProcessHTTP_KVRulesetWithPatterns(t *testing.T) {
 	processor := newTestProcessor()
 

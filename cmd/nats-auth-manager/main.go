@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -23,6 +24,15 @@ import (
 const (
 	// shutdownTimeout is the maximum time to wait for graceful shutdown
 	shutdownTimeout = 10 * time.Second
+
+	// metricsReadHeaderTimeout bounds how long the metrics server waits for a
+	// request's headers, so the listener is not Slowloris-exposed. No
+	// WriteTimeout is set on purpose: a large scrape over a slow connection must
+	// not be truncated mid-response.
+	metricsReadHeaderTimeout = 10 * time.Second
+
+	// metricsIdleTimeout bounds retention of idle keep-alive connections.
+	metricsIdleTimeout = 120 * time.Second
 )
 
 // version is set at build time via -ldflags "-X main.version=..."
@@ -73,11 +83,17 @@ func run() error {
 		// Start metrics server
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
-		metricsServer = &http.Server{Addr: cfg.Metrics.Address, Handler: mux}
+		metricsServer = &http.Server{
+			Addr:              cfg.Metrics.Address,
+			Handler:           mux,
+			ReadHeaderTimeout: metricsReadHeaderTimeout,
+			ReadTimeout:       metricsReadHeaderTimeout,
+			IdleTimeout:       metricsIdleTimeout,
+		}
 
 		go func() {
 			appLogger.Info("starting metrics server", "address", cfg.Metrics.Address)
-			if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				appLogger.Error("metrics server error", "error", err)
 			}
 		}()

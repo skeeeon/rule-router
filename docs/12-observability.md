@@ -109,8 +109,8 @@ Emitted only when `security.verification.enabled` and a rule actually references
 
 | Metric | Type | Labels | Feature | Description |
 |--------|------|--------|---------|-------------|
-| `http_inbound_requests_total` | C | `path`, `method`, `status` | gateway | Inbound requests. Unmatched paths use the sentinel `path="_unknown_"` (see cardinality note). HMAC rejections appear here as `status="401"`. |
-| `http_request_duration_seconds` | H | `path`, `method` | gateway | Inbound request latency. |
+| `http_inbound_requests_total` | C | `path`, `method`, `status` | gateway | Inbound requests. `path` is the **matched rule route**, not the raw request path — a wildcard rule reports its pattern (see cardinality note). Unmatched paths use the sentinel `path="_unknown_"`. HMAC rejections appear here as `status="401"`. |
+| `http_request_duration_seconds` | H | `path`, `method` | gateway | Inbound request latency. `path` is the matched rule route, as above. |
 | `webhook_hmac_verifications_total` | C | `result` = `valid` \| `invalid` \| `missing` \| `error` | gateway | Inbound webhook [HMAC verifications](./02-gateway.md#verifying-webhook-signatures-hmac) by outcome, for paths whose rule declares an `hmac` block. `missing` = no signature header; `error` = misconfiguration (empty secret, unknown algorithm/encoding, unresolvable KV ref). Only `valid` proceeds; everything else returns `401`. |
 | `message_processing_backlog` | G | — | gateway | Depth of the inbound webhook worker queue, sampled on enqueue/dequeue. Climbs toward `inboundQueueSize` when workers can't keep up (a full queue returns `503`). Gateway-only — router pulls from JetStream on demand and has no in-process backlog. |
 
@@ -134,7 +134,7 @@ Emitted whenever an HTTP *action* runs (gateway outbound rules and scheduler HTT
 
 ### Cardinality guidance
 
-- `http_inbound_requests_total` and `http_request_duration_seconds` carry the real request `path` for **matched** routes. A wildcard rule (e.g. `/api/>`) that matches high-cardinality URLs (UUIDs, per-user paths) grows the series count. Scope wildcards tightly, or front the gateway with a proxy that normalizes paths.
+- `http_inbound_requests_total` and `http_request_duration_seconds` label `path` with the **rule route that matched**, not the raw request path. An exact-path rule reports its own path; a wildcard rule reports its pattern, so every URL under `/api/>` collapses into a single `path="/api/>"` series. Cardinality is therefore bounded by your rule count, and wildcards matching UUIDs or per-user paths are safe. If two wildcard rules match the same request, the first in load order names the label — all matching rules still fire, and per-rule attribution lives in `rule_matches_total{trigger}`.
 - `404` responses are recorded as `path="_unknown_"` so path-scanning traffic cannot blow up cardinality.
 - `rule_file` labels track the rule's source file (or KV key). This is bounded by your rule count and is safe.
 

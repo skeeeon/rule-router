@@ -5,7 +5,6 @@ package app
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"rule-router/config"
 	"rule-router/internal/gateway"
@@ -14,12 +13,6 @@ import (
 	"rule-router/internal/logger"
 	"rule-router/internal/metrics"
 	"rule-router/internal/rule"
-)
-
-// Timeout constants for GatewayApp operations
-const (
-	// outboundSetupTimeout is the maximum time to wait for outbound subscriptions to be configured
-	outboundSetupTimeout = 60 * time.Second
 )
 
 // Verify GatewayApp implements lifecycle.Application interface at compile time

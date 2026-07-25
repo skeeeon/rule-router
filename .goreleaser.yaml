@@ -1,0 +1,126 @@
+# .goreleaser.yaml - Simple, Grug-approved config
+
+# What git tag pattern to use
+version: 2
+
+# Metadata
+project_name: rule-router
+
+# Build configuration
+builds:
+  # Build 1: rule-router
+  - id: rule-router
+    main: ./cmd/rule-router
+    binary: rule-router
+    env:
+      - CGO_ENABLED=0  # Static binaries, no C dependencies
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - linux
+      - windows
+      - freebsd
+    goarch:
+      - amd64
+      - arm64
+    # Don't build arm64 for Windows (rarely needed)
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+  # Build 2: rule-cli
+  - id: rule-cli
+    main: ./cmd/rule-cli
+    binary: rule-cli
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - linux
+      - windows
+      - freebsd
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+  # Build 4: nats-auth-manager
+  - id: nats-auth-manager
+    main: ./cmd/nats-auth-manager
+    binary: nats-auth-manager
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - linux
+      - windows
+      - freebsd
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+# Archive configuration (how to package binaries)
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    # Use zip for Windows
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    # Include example files in release archives
+    files:
+      - LICENSE
+      - README.md
+      - config/*.yaml
+      - rules/**/*
+    # Archive name format
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+
+# Checksum of all artifacts
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+# Generate CHANGELOG from git commits
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - '^ci:'
+
+# GitHub release configuration
+release:
+  github:
+    owner: skeeeon 
+    name: rule-router  # Replace with your repo name
+  
+  # Release notes template
+  header: |
+    ## Rule Router v{{ .Version }}
+    
+    Another release! 
+    
+    This release includes:
+    - `rule-router`: High-performance NATS message router
+    - `rule-cli`: Offline rule utility
+    - `nats-auth-manager`: Oauth2 and HTTP JWT auth manager
+  footer: |
+    **Full Changelog**: https://github.com/skeeeon/rule-router/commits/{{ .Tag }}
+    
+    ---

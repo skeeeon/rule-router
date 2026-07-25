@@ -54,6 +54,16 @@ const (
 
 	// DefaultMaxHeaderBytes is the default maximum header size (1MB)
 	DefaultMaxHeaderBytes = 1 << 20
+
+	// DefaultMetricsReadHeaderTimeout bounds how long the metrics/health server
+	// waits for a request's headers. Without it that listener holds connections
+	// open indefinitely (Slowloris). No WriteTimeout is set on purpose: a large
+	// scrape over a slow connection must not be truncated mid-response.
+	DefaultMetricsReadHeaderTimeout = 10 * time.Second
+
+	// DefaultMetricsIdleTimeout bounds how long an idle keep-alive connection to
+	// the metrics/health server is retained.
+	DefaultMetricsIdleTimeout = 120 * time.Second
 )
 
 // Default numeric configuration values

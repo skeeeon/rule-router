@@ -141,7 +141,6 @@ type NATSAction struct {
 	// no ack). Empty inherits the global nats.publish.mode config.
 	Mode string `json:"mode,omitempty" yaml:"mode,omitempty"`
 
-
 	Payload     string            `json:"payload,omitempty" yaml:"payload,omitempty"`
 	Passthrough bool              `json:"passthrough,omitempty" yaml:"passthrough,omitempty"`
 	Merge       bool              `json:"merge,omitempty" yaml:"merge,omitempty"`

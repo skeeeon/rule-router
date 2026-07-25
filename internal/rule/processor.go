@@ -355,29 +355,47 @@ func (p *Processor) GetHTTPPaths() []string {
 	return paths
 }
 
-// HasHTTPPath returns true if any loaded rule's HTTP trigger matches the given
-// request path. Checks exact-path maps first (O(1)), then walks wildcard
-// patterns. Used by the inbound gateway to early-reject unknown paths.
-func (p *Processor) HasHTTPPath(path string) bool {
+// MatchHTTPPath returns the rule-declared route that matches the given request
+// path, and whether anything matched at all. Exact-path rules report the path
+// itself; wildcard rules report the pattern string ("/webhooks/*/events") rather
+// than the concrete request path.
+//
+// The inbound gateway uses the returned route as the Prometheus `path` label:
+// labelling with the raw request path would mint one label value per distinct
+// URL under a wildcard route (e.g. every /internal-api/> request), which is
+// unbounded series growth. The pattern is bounded by rule count.
+//
+// Checks exact-path maps first (O(1)), then walks wildcard patterns, so the
+// most specific route wins. When several wildcard rules match, the first in
+// load order names the label — all matching rules still fire, and per-rule
+// attribution lives in rule_matches_total.
+func (p *Processor) MatchHTTPPath(path string) (string, bool) {
 	if len(p.httpExactPaths[path]) > 0 {
-		return true
+		return path, true
 	}
 	for _, pr := range p.httpPatternRules {
 		if MatchPath(pr.Matcher, path) {
-			return true
+			return pr.Rule.Trigger.HTTP.Path, true
 		}
 	}
 	if set := p.loadKVRuleSet(); set != nil {
 		if len(set.HTTP.Exact[path]) > 0 {
-			return true
+			return path, true
 		}
 		for _, pr := range set.HTTP.Patterns {
 			if MatchPath(pr.Matcher, path) {
-				return true
+				return pr.Rule.Trigger.HTTP.Path, true
 			}
 		}
 	}
-	return false
+	return "", false
+}
+
+// HasHTTPPath returns true if any loaded rule's HTTP trigger matches the given
+// request path. Used by the inbound gateway to early-reject unknown paths.
+func (p *Processor) HasHTTPPath(path string) bool {
+	_, ok := p.MatchHTTPPath(path)
+	return ok
 }
 
 // HasSyncHTTPPath returns true if any rule matching the path+method produces a

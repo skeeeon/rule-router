@@ -80,8 +80,6 @@ func (sr *StreamResolver) Discover(ctx context.Context) error {
 	// Get stream lister using the new API
 	streamLister := sr.jetStream.ListStreams(discoverCtx)
 
-	streamNames := make([]string, 0)
-
 	newStreams, streamNames, err := sr.listStreams(streamLister)
 	if err != nil {
 		return err
