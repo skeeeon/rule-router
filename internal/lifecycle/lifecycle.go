@@ -13,6 +13,12 @@ import (
 	"rule-router/internal/logger"
 )
 
+// runStopTimeout bounds how long shutdown waits for Application.Run to return
+// after its context is cancelled, before closing shared resources anyway. Sized
+// above the slowest feature stop (gocron's job drain, HTTP server shutdown) so
+// a healthy app always unwinds cleanly, while a wedged one still exits.
+const runStopTimeout = 30 * time.Second
+
 // RunWithReload runs an application with automatic reload support on SIGHUP.
 // It handles the complete lifecycle including:
 // - Initial startup
@@ -99,6 +105,7 @@ func RunWithReload(
 		// rejected reload never tears anything down.
 		var shouldReload bool
 		var runErr error
+		var runReturned bool
 
 	waitLoop:
 		for {
@@ -128,12 +135,32 @@ func RunWithReload(
 					"error", runErr,
 					"reloadCount", reloadCount)
 				shouldReload = false
+				runReturned = true
 				break waitLoop
 			}
 		}
 
 		// Cancel context to stop application
 		cancel()
+
+		// Wait for Run to unwind before closing anything. Run owns the orderly
+		// stop of each feature (cron jobs finishing their publishes, HTTP servers
+		// draining); Close tears down the shared resources those stops depend on,
+		// starting with the NATS connection. Closing first leaves in-flight work
+		// publishing into a connection that is already draining.
+		if !runReturned {
+			select {
+			case stopErr := <-errCh:
+				// Deliberately not promoted to runErr: this is the unwind of an
+				// already-decided shutdown or reload, not the reason for it.
+				if stopErr != nil {
+					log.Error("application run loop returned an error while stopping", "error", stopErr)
+				}
+			case <-time.After(runStopTimeout):
+				log.Warn("timeout waiting for application run loop to stop; closing anyway",
+					"timeout", runStopTimeout)
+			}
+		}
 
 		// Stop listening for signals and cleanup channels
 		signal.Stop(shutdownSig)

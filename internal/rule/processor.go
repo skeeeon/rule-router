@@ -1071,7 +1071,11 @@ func (p *Processor) processNATSAction(action *NATSAction, context *EvaluationCon
 		return p.processNATSActionWithForEach(action, context)
 	}
 
+	// Mode must be carried onto the evaluated action: it is what the publishing
+	// layer reads to pick core vs JetStream. Dropping it silently downgrades
+	// every `mode: core` action to a JetStream publish.
 	result := &NATSAction{
+		Mode:        action.Mode,
 		Passthrough: action.Passthrough,
 		Merge:       action.Merge,
 		Request:     action.Request,
@@ -1135,8 +1139,9 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 			return nil, &forEachElementError{ErrorType: "template_subject_failed", Err: err}
 		}
 		return &Action{NATS: &NATSAction{
-			Subject: subject, Passthrough: pl.Passthrough,
-			Merge: action.Merge, Payload: pl.Text,
+			Subject: subject, Mode: action.Mode,
+			Passthrough: pl.Passthrough,
+			Merge:       action.Merge, Payload: pl.Text,
 			RawPayload: pl.Raw, Headers: headers,
 			Request: action.Request, Timeout: action.Timeout,
 		}}, nil

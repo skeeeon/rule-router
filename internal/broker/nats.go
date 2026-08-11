@@ -49,6 +49,19 @@ const (
 	// ~18s of grace, then fail fast so a genuine misconfiguration still surfaces.
 	initialConnectMaxAttempts = 10
 	initialConnectRetryWait   = 2 * time.Second
+
+	// publishAsyncMaxPending caps outstanding async JetStream publishes. Once it
+	// is reached, further publishes fail fast with ErrTooManyStalledMsgs.
+	publishAsyncMaxPending = 2048
+
+	// publishAsyncAckSlack extends the client-side expiry of a pending async
+	// publish past our own ack wait. Without an expiry, a publish whose ack never
+	// arrives (permissions violation, dropped reply) holds its pending slot
+	// forever; enough of those and the publisher is wedged at max pending for the
+	// life of the process. The slack keeps our AckTimeout the primary deadline —
+	// callers still get "timeout waiting for publish ack" — while this backstop
+	// releases the slot shortly after.
+	publishAsyncAckSlack = 5 * time.Second
 )
 
 // NATSBroker connects to external NATS JetStream servers with KV support and local caching
@@ -419,6 +432,25 @@ type kvWatchHandle struct {
 	watcher   jetstream.KeyWatcher
 }
 
+// stopKVWatcher stops a watcher, treating an already-torn-down subscription as
+// success. The watcher's underlying subscription is created with the broker
+// context, and nats.go unsubscribes it on its own as soon as that context is
+// cancelled — so on shutdown our explicit Stop() races that goroutine and
+// usually loses, returning nats.ErrBadSubscription. That is the expected
+// outcome, not a shutdown failure worth reporting.
+func stopKVWatcher(w jetstream.KeyWatcher) error {
+	if w == nil {
+		return nil
+	}
+	err := w.Stop()
+	if err == nil ||
+		errors.Is(err, nats.ErrBadSubscription) ||
+		errors.Is(err, nats.ErrConnectionClosed) {
+		return nil
+	}
+	return err
+}
+
 func (h *kvWatchHandle) current() jetstream.KeyWatcher {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -495,7 +527,7 @@ func (b *NATSBroker) restartKVWatchers() {
 	for _, h := range handles {
 		// Stopping closes the watcher's Updates() channel; runKVWatch detects
 		// the close and re-creates the watcher in place.
-		if err := h.current().Stop(); err != nil {
+		if err := stopKVWatcher(h.current()); err != nil {
 			b.logger.Warn("failed to stop stale KV watcher during reconnect", "bucket", h.bucket, "error", err)
 		}
 	}
@@ -674,7 +706,11 @@ func (b *NATSBroker) initializeNATSConnection() error {
 	// Configure JetStream for Async Publishing ---
 	jsOpts := []jetstream.JetStreamOpt{
 		// Set a limit on the number of outstanding async publishes. This is crucial for backpressure.
-		jetstream.WithPublishAsyncMaxPending(2048),
+		jetstream.WithPublishAsyncMaxPending(publishAsyncMaxPending),
+		// Expire pending publishes that never get an ack so their slots are
+		// released; without this the pending set only grows and the publisher
+		// eventually stalls permanently. See publishAsyncAckSlack.
+		jetstream.WithPublishAsyncTimeout(b.config.NATS.Publish.AckTimeout + publishAsyncAckSlack),
 		// Set up a handler to log any errors that occur in the background.
 		jetstream.WithPublishAsyncErrHandler(func(js jetstream.JetStream, msg *nats.Msg, err error) {
 			b.logger.Error("asynchronous publish failed", "subject", msg.Subject, "error", err)
@@ -965,7 +1001,7 @@ func (b *NATSBroker) Close() error {
 	b.kvWatchers = nil
 	b.kvWatchersMu.Unlock()
 	for i, h := range handles {
-		if err := h.current().Stop(); err != nil {
+		if err := stopKVWatcher(h.current()); err != nil {
 			errors = append(errors, fmt.Errorf("failed to stop KV watcher %d (bucket %s): %w", i, h.bucket, err))
 		}
 	}

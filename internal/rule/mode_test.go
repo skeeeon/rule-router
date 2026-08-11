@@ -227,3 +227,76 @@ func TestProcessForSubscription_TransportFilter_KV(t *testing.T) {
 		t.Fatalf("expected no actions for core-only subject under jetstream filter, got %d", len(empty))
 	}
 }
+
+// TestActionMode_SurvivesEvaluation pins that action.nats.mode reaches the
+// evaluated action on every path that produces one. Every publisher resolves
+// the transport from the *evaluated* action, so a dropped Mode silently sends
+// core actions through JetStream — where a subject with no stream never acks.
+func TestActionMode_SurvivesEvaluation(t *testing.T) {
+	t.Run("subject trigger", func(t *testing.T) {
+		p := newTestProcessor()
+		if err := p.LoadRules([]Rule{{
+			Trigger: Trigger{NATS: &NATSTrigger{Subject: "sensors.temp"}},
+			Action:  Action{NATS: &NATSAction{Subject: "out.beat", Mode: ModeCore, Payload: "{}"}},
+		}}); err != nil {
+			t.Fatalf("LoadRules failed: %v", err)
+		}
+
+		actions, err := actionsOf(p.ProcessForSubscription("sensors.temp", "sensors.temp", []byte(`{"v":1}`), nil, nil))
+		if err != nil {
+			t.Fatalf("ProcessForSubscription failed: %v", err)
+		}
+		if len(actions) != 1 {
+			t.Fatalf("expected 1 action, got %d", len(actions))
+		}
+		if actions[0].NATS.Mode != ModeCore {
+			t.Errorf("action mode = %q, want %q", actions[0].NATS.Mode, ModeCore)
+		}
+	})
+
+	t.Run("forEach expansion", func(t *testing.T) {
+		p := newTestProcessor()
+		if err := p.LoadRules([]Rule{{
+			Trigger: Trigger{NATS: &NATSTrigger{Subject: "sensors.batch"}},
+			Action: Action{NATS: &NATSAction{
+				Subject: "out.{item.id}", Mode: ModeCore,
+				ForEach: "{items}", Payload: "{}",
+			}},
+		}}); err != nil {
+			t.Fatalf("LoadRules failed: %v", err)
+		}
+
+		actions, err := actionsOf(p.ProcessForSubscription("sensors.batch", "sensors.batch",
+			[]byte(`{"items":[{"id":"a"},{"id":"b"}]}`), nil, nil))
+		if err != nil {
+			t.Fatalf("ProcessForSubscription failed: %v", err)
+		}
+		if len(actions) != 2 {
+			t.Fatalf("expected 2 actions, got %d", len(actions))
+		}
+		for i, a := range actions {
+			if a.NATS.Mode != ModeCore {
+				t.Errorf("action %d mode = %q, want %q", i, a.NATS.Mode, ModeCore)
+			}
+		}
+	})
+
+	t.Run("schedule trigger", func(t *testing.T) {
+		p := newTestProcessor()
+		r := &Rule{
+			Trigger: Trigger{Schedule: &ScheduleTrigger{Cron: "*/1 * * * *"}},
+			Action:  Action{NATS: &NATSAction{Subject: "out.beat", Mode: ModeCore, Payload: "{}"}},
+		}
+
+		actions, err := actionsOf(p.ProcessSchedule(r))
+		if err != nil {
+			t.Fatalf("ProcessSchedule failed: %v", err)
+		}
+		if len(actions) != 1 {
+			t.Fatalf("expected 1 action, got %d", len(actions))
+		}
+		if actions[0].NATS.Mode != ModeCore {
+			t.Errorf("action mode = %q, want %q", actions[0].NATS.Mode, ModeCore)
+		}
+	})
+}
