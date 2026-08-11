@@ -372,15 +372,9 @@ func (base *BaseApp) Close() error {
 		errs = append(errs, err)
 	}
 
-	// Stop subscription manager
-	if base.Broker != nil {
-		subMgr := base.Broker.GetSubscriptionManager()
-		if subMgr != nil {
-			if err := subMgr.Stop(); err != nil {
-				errs = append(errs, fmt.Errorf("failed to stop subscription manager: %w", err))
-			}
-		}
-	}
+	// The subscription manager is stopped by Broker.Close below, which owns the
+	// order the NATS teardown has to happen in (stop consumers, then watchers,
+	// then drain). Stopping it here as well only re-logs and re-waits.
 
 	// Stop KV rule manager
 	if base.RuleKVManager != nil {

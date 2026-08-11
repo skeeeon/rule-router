@@ -65,7 +65,7 @@ type SubscriptionManager struct {
 	processor     *rule.Processor
 	httpExecutor  HTTPActionExecutor
 	consumerCfg   *config.ConsumerConfig
-	publisher     *actionPublisher
+	publisher     *ActionPublisher
 	coalescer     *deferred.Coalescer
 	subscriptions map[string]*Subscription
 	wg            sync.WaitGroup
@@ -109,7 +109,7 @@ func NewSubscriptionManager(
 		metrics:       metrics,
 		processor:     processor,
 		consumerCfg:   consumerConfig,
-		publisher:     newActionPublisher(natsConn, js, publishConfig, logger, metrics),
+		publisher:     NewActionPublisher(natsConn, js, publishConfig, logger, metrics),
 		subscriptions: make(map[string]*Subscription),
 	}
 	// The coalescer runs deferred batches through the same executeAction path as

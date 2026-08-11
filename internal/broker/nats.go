@@ -84,6 +84,9 @@ type NATSBroker struct {
 	// Stream resolver for JetStream stream discovery
 	streamResolver *StreamResolver
 
+	// Shared action publisher (retry + per-action mode resolution)
+	publisher *ActionPublisher
+
 	// Subscription manager for message processing
 	subscriptionMgr *SubscriptionManager
 
@@ -726,6 +729,11 @@ func (b *NATSBroker) initializeNATSConnection() error {
 		return fmt.Errorf("failed to create JetStream interface: %w", err)
 	}
 
+	// One publisher for every path that publishes a rule action without a
+	// SubscriptionManager of its own (scheduler, HTTP publishResponse, inbound
+	// gateway), so they share the retry policy and mode resolution.
+	b.publisher = NewActionPublisher(b.natsConn, b.jetStream, &b.config.NATS.Publish, b.logger, b.metrics)
+
 	b.logger.Info("JetStream interface created successfully with async publishing enabled")
 	return nil
 }
@@ -908,36 +916,18 @@ func newActionMsg(action *rule.NATSAction) *nats.Msg {
 	return msg
 }
 
-// Publish publishes a NATS action using the action's publish mode when set,
-// falling back to the configured global mode (jetstream or core).
-// This is used by the scheduler to publish without a SubscriptionManager.
+// Publish publishes a NATS action on the shared ActionPublisher: the action's
+// own mode when set, the configured global mode otherwise, with the configured
+// retry policy. Used by the paths that publish without a SubscriptionManager of
+// their own (the scheduler, and HTTP publishResponse).
 func (b *NATSBroker) Publish(ctx context.Context, action *rule.NATSAction) error {
-	msg := newActionMsg(action)
+	return b.publisher.PublishWithRetry(ctx, action)
+}
 
-	if effectivePublishMode(action, b.config.NATS.Publish.Mode) == "core" {
-		if len(msg.Header) == 0 {
-			return b.natsConn.Publish(msg.Subject, msg.Data)
-		}
-		return b.natsConn.PublishMsg(msg)
-	}
-
-	// JetStream async publish
-	ackF, err := b.jetStream.PublishMsgAsync(msg)
-	if err != nil {
-		return fmt.Errorf("jetstream async publish failed: %w", err)
-	}
-
-	pubCtx, cancel := context.WithTimeout(ctx, b.config.NATS.Publish.AckTimeout)
-	defer cancel()
-
-	select {
-	case <-ackF.Ok():
-		return nil
-	case err := <-ackF.Err():
-		return fmt.Errorf("jetstream publish ack failed: %w", err)
-	case <-pubCtx.Done():
-		return fmt.Errorf("timeout waiting for publish ack: %w", pubCtx.Err())
-	}
+// ActionPublisher returns the shared publisher so features outside this package
+// (the inbound gateway) publish actions exactly the way the router does.
+func (b *NATSBroker) ActionPublisher() *ActionPublisher {
+	return b.publisher
 }
 
 // AddAndStartSubscription creates a consumer and immediately starts a pull subscription.

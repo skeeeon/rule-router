@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/jetstream"
 
 	"rule-router/internal/deferred"
 	"rule-router/internal/logger"
@@ -64,10 +63,9 @@ type InboundServer struct {
 	logger     *logger.Logger
 	metrics    *metrics.Metrics
 	processor  *rule.Processor
-	jetstream  jetstream.JetStream
+	publisher  NATSPublisher
 	natsConn   *nats.Conn
 	httpServer *http.Server
-	publishCfg *PublishConfig
 	serverCfg  *ServerConfig
 
 	// Worker pool components
@@ -98,23 +96,24 @@ type ServerConfig struct {
 	InboundQueueSize int
 }
 
-// PublishConfig contains NATS publish configuration
-type PublishConfig struct {
-	Mode           string // "jetstream" or "core"
-	AckTimeout     time.Duration
-	MaxRetries     int
-	RetryBaseDelay time.Duration
+// NATSPublisher publishes an evaluated NATS action. Satisfied by the broker's
+// shared ActionPublisher, which owns transport selection (per-action mode over
+// the global default), the ack wait, and the retry policy — so this package
+// does not reimplement any of it.
+type NATSPublisher interface {
+	PublishWithRetry(ctx context.Context, action *rule.NATSAction) error
 }
 
 // NewInboundServer creates a new HTTP inbound server with a worker pool.
+// nc is used only for the HTTP↔NATS request/reply bridge; ordinary publishes go
+// through publisher.
 func NewInboundServer(
 	logger *logger.Logger,
 	metrics *metrics.Metrics,
 	processor *rule.Processor,
-	js jetstream.JetStream,
+	publisher NATSPublisher,
 	nc *nats.Conn,
 	serverCfg *ServerConfig,
-	publishCfg *PublishConfig,
 ) *InboundServer {
 	logger = logger.With("component", "gateway")
 
@@ -129,13 +128,12 @@ func NewInboundServer(
 	}
 
 	s := &InboundServer{
-		logger:     logger,
-		metrics:    metrics,
-		processor:  processor,
-		jetstream:  js,
-		natsConn:   nc,
-		serverCfg:  serverCfg,
-		publishCfg: publishCfg,
+		logger:    logger,
+		metrics:   metrics,
+		processor: processor,
+		publisher: publisher,
+		natsConn:  nc,
+		serverCfg: serverCfg,
 		// Initialize the buffered channel for the work queue.
 		workQueue: make(chan webhookJob, serverCfg.InboundQueueSize),
 	}
@@ -342,55 +340,11 @@ func (s *InboundServer) processWebhook(ctx context.Context, path, method string,
 	}
 }
 
-// publishToNATS publishes a NATS action with retry logic
+// publishToNATS publishes a NATS action on the shared publisher, so an inbound
+// webhook reaches NATS by exactly the same path — transport, mode resolution,
+// ack wait, retry policy — as a router or scheduler action.
 func (s *InboundServer) publishToNATS(ctx context.Context, action *rule.NATSAction) error {
-	// Prepare payload
-	var payloadBytes []byte
-	if action.Passthrough {
-		payloadBytes = action.RawPayload
-	} else {
-		payloadBytes = []byte(action.Payload)
-	}
-
-	// Create NATS message
-	msg := nats.NewMsg(action.Subject)
-	msg.Data = payloadBytes
-
-	// Add headers if present
-	if len(action.Headers) > 0 {
-		msg.Header = make(nats.Header)
-		for key, value := range action.Headers {
-			msg.Header.Set(key, value)
-		}
-	}
-
-	// Publish based on mode: per-action override, else the global config
-	mode := s.publishCfg.Mode
-	if action.Mode != "" {
-		mode = action.Mode
-	}
-	if mode == "core" {
-		return s.natsConn.PublishMsg(msg)
-	}
-
-	// JetStream async publish with timeout derived from parent context
-	ctx, cancel := context.WithTimeout(ctx, s.publishCfg.AckTimeout)
-	defer cancel()
-
-	ackF, err := s.jetstream.PublishMsgAsync(msg)
-	if err != nil {
-		return fmt.Errorf("jetstream async publish failed: %w", err)
-	}
-
-	// Wait for ACK
-	select {
-	case <-ackF.Ok():
-		return nil
-	case err := <-ackF.Err():
-		return fmt.Errorf("jetstream publish failed: %w", err)
-	case <-ctx.Done():
-		return fmt.Errorf("publish timeout: %w", ctx.Err())
-	}
+	return s.publisher.PublishWithRetry(ctx, action)
 }
 
 // routeInfo carries a request's routing identity through the response helpers.

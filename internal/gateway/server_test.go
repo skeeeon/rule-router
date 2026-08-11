@@ -41,7 +41,7 @@ func newHMACTestServer(t *testing.T, secret string) *InboundServer {
 	if err := proc.LoadRules([]rule.Rule{r}); err != nil {
 		t.Fatalf("LoadRules: %v", err)
 	}
-	return NewInboundServer(log, nil, proc, nil, nil, &ServerConfig{}, &PublishConfig{})
+	return NewInboundServer(log, nil, proc, nil, nil, &ServerConfig{})
 }
 
 func TestWebhookHandler_HMACGate(t *testing.T) {

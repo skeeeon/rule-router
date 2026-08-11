@@ -29,10 +29,10 @@ func effectivePublishMode(action *rule.NATSAction, globalMode string) string {
 	return globalMode
 }
 
-// actionPublisher publishes rule NATS actions with retry and per-action mode
+// ActionPublisher publishes rule NATS actions with retry and per-action mode
 // resolution. Shared by the JetStream SubscriptionManager and the core-NATS
 // Responder so both transports get identical publish semantics.
-type actionPublisher struct {
+type ActionPublisher struct {
 	natsConn *nats.Conn
 	js       jetstream.JetStream
 	cfg      *config.PublishConfig
@@ -40,14 +40,14 @@ type actionPublisher struct {
 	metrics  *metrics.Metrics
 }
 
-func newActionPublisher(
+func NewActionPublisher(
 	nc *nats.Conn,
 	js jetstream.JetStream,
 	cfg *config.PublishConfig,
 	log *logger.Logger,
 	m *metrics.Metrics,
-) *actionPublisher {
-	return &actionPublisher{
+) *ActionPublisher {
+	return &ActionPublisher{
 		natsConn: nc,
 		js:       js,
 		cfg:      cfg,
@@ -57,7 +57,7 @@ func newActionPublisher(
 }
 
 // PublishWithRetry publishes a NATS action with exponential backoff and jitter.
-func (ap *actionPublisher) PublishWithRetry(ctx context.Context, action *rule.NATSAction) error {
+func (ap *ActionPublisher) PublishWithRetry(ctx context.Context, action *rule.NATSAction) error {
 	maxRetries := ap.cfg.MaxRetries
 	baseDelay := ap.cfg.RetryBaseDelay
 	publishMode := effectivePublishMode(action, ap.cfg.Mode)
@@ -105,7 +105,7 @@ func (ap *actionPublisher) PublishWithRetry(ctx context.Context, action *rule.NA
 }
 
 // publishJetStream publishes to JetStream using the async model for high throughput.
-func (ap *actionPublisher) publishJetStream(ctx context.Context, action *rule.NATSAction) error {
+func (ap *ActionPublisher) publishJetStream(ctx context.Context, action *rule.NATSAction) error {
 	msg := newActionMsg(action)
 
 	// Publish async
@@ -135,7 +135,7 @@ func (ap *actionPublisher) publishJetStream(ctx context.Context, action *rule.NA
 }
 
 // publishCore publishes to core NATS (fire-and-forget, no ack).
-func (ap *actionPublisher) publishCore(action *rule.NATSAction) error {
+func (ap *ActionPublisher) publishCore(action *rule.NATSAction) error {
 	msg := newActionMsg(action)
 
 	// Fast path: if there are no headers, use the simple Publish method.

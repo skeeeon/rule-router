@@ -133,21 +133,13 @@ func (app *GatewayApp) setupInboundServer() error {
 		InboundWorkerCount:  app.config.HTTP.Server.InboundWorkerCount,
 		InboundQueueSize:    app.config.HTTP.Server.InboundQueueSize,
 	}
-	publishConfig := &gateway.PublishConfig{
-		Mode:           app.config.NATS.Publish.Mode,
-		AckTimeout:     app.config.NATS.Publish.AckTimeout,
-		MaxRetries:     app.config.NATS.Publish.MaxRetries,
-		RetryBaseDelay: app.config.NATS.Publish.RetryBaseDelay,
-	}
-
 	app.inboundServer = gateway.NewInboundServer(
 		app.logger,
 		app.metrics,
 		app.processor,
-		app.base.Broker.GetJetStream(),
+		app.base.Broker.ActionPublisher(),
 		app.base.Broker.GetNATSConn(),
 		serverConfig,
-		publishConfig,
 	)
 
 	app.logger.Info("inbound server configured", "address", serverConfig.Address)

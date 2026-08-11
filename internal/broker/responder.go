@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/textproto"
+	"runtime/debug"
 	"sync"
 
 	"github.com/nats-io/nats.go"
@@ -30,7 +31,7 @@ type Responder struct {
 	processor *rule.Processor
 	logger    *logger.Logger
 	metrics   *metrics.Metrics
-	publisher *actionPublisher
+	publisher *ActionPublisher
 	coalescer *deferred.Coalescer
 
 	mu     sync.Mutex
@@ -45,7 +46,7 @@ func NewResponder(b *NATSBroker, processor *rule.Processor, log *logger.Logger, 
 		processor: processor,
 		logger:    log.With("component", "responder"),
 		metrics:   m,
-		publisher: newActionPublisher(b.GetNATSConn(), b.GetJetStream(), &b.config.NATS.Publish, log, m),
+		publisher: b.ActionPublisher(),
 	}
 	// Trailing-throttle batches run through the same side-effect path as the
 	// immediate route. Respond actions never reach it: a reply cannot be
@@ -129,6 +130,23 @@ func (r *Responder) Rebuild(rules []*rule.Rule) {
 //   - HTTP actions run on the gateway's executor when the feature is enabled
 func (r *Responder) makeHandler(triggerSubject string) nats.MsgHandler {
 	return func(msg *nats.Msg) {
+		// nats.go runs subscription callbacks without a recover of its own, so an
+		// unguarded panic here takes the process down — unlike the JetStream
+		// worker and the inbound HTTP worker, which contain theirs. Core delivery
+		// is at-most-once, so there is nothing to redeliver into: log it, count
+		// it, drop the message.
+		defer func() {
+			if rec := recover(); rec != nil {
+				r.logger.Error("panic recovered in core subscription handler",
+					"panic", rec,
+					"subject", msg.Subject,
+					"stack", string(debug.Stack()))
+				if r.metrics != nil {
+					r.metrics.IncMessagesTotal("error")
+				}
+			}
+		}()
+
 		if r.metrics != nil {
 			r.metrics.IncMessagesTotal("received")
 		}
