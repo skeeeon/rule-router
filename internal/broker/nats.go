@@ -771,6 +771,47 @@ func (b *NATSBroker) initializeKVStores(ctx context.Context) error {
 	return nil
 }
 
+// asyncErrorKind classifies an async NATS error for the metric label. The set is
+// deliberately tiny: the two kinds worth alerting on, and everything else.
+func asyncErrorKind(err error) string {
+	switch {
+	case errors.Is(err, nats.ErrSlowConsumer):
+		return "slow_consumer"
+	case err != nil && strings.Contains(strings.ToLower(err.Error()), "permissions violation"):
+		return "permissions_violation"
+	default:
+		return "other"
+	}
+}
+
+// handleAsyncError logs errors the server or client reports outside any single
+// request. This is the ONLY place two important failures are ever announced:
+//
+//   - Slow consumer: a subscription's handler cannot keep up, so nats.go drops
+//     messages from its pending buffer. Core subscriptions run one message at a
+//     time (see Responder), so a rule with a slow action is the usual cause.
+//   - Permissions violation: the account is not allowed to publish or subscribe
+//     on a subject. A denied publish never gets an ack, so without this it looks
+//     exactly like a subject with no stream — silence until something times out.
+//
+// Without a handler installed, nats.go discards both.
+func (b *NATSBroker) handleAsyncError(_ *nats.Conn, sub *nats.Subscription, err error) {
+	subject := ""
+	if sub != nil {
+		subject = sub.Subject
+	}
+
+	kind := asyncErrorKind(err)
+	b.logger.Error("NATS asynchronous error",
+		"kind", kind,
+		"subject", subject,
+		"error", err)
+
+	if b.metrics != nil {
+		b.metrics.IncNATSAsyncErrors(kind)
+	}
+}
+
 // buildNATSOptions creates NATS connection options with proper authentication and TLS
 func (b *NATSBroker) buildNATSOptions() ([]nats.Option, error) {
 	var natsOptions []nats.Option
@@ -778,6 +819,7 @@ func (b *NATSBroker) buildNATSOptions() ([]nats.Option, error) {
 	natsOptions = append(natsOptions,
 		nats.ReconnectWait(b.config.NATS.Connection.ReconnectWait),
 		nats.MaxReconnects(b.config.NATS.Connection.MaxReconnects),
+		nats.ErrorHandler(b.handleAsyncError),
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
 			b.logger.Warn("NATS client disconnected", "error", err)
 			if b.metrics != nil {

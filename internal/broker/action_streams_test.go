@@ -3,8 +3,11 @@
 package broker
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"rule-router/internal/rule"
 )
@@ -151,4 +154,30 @@ func TestUnstreamedSubjects(t *testing.T) {
 			t.Fatalf("UnstreamedSubjects() = %v, want nil before discovery", got)
 		}
 	})
+}
+
+// TestAsyncErrorKind pins the classification of async NATS errors. Only two
+// kinds are worth alerting on; everything else is deliberately one bucket.
+func TestAsyncErrorKind(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"slow consumer", nats.ErrSlowConsumer, "slow_consumer"},
+		{"wrapped slow consumer", fmt.Errorf("subscription: %w", nats.ErrSlowConsumer), "slow_consumer"},
+		// The server sends this as a plain text -ERR, so there is no sentinel to
+		// match on — only the message.
+		{"permissions violation", errors.New(`nats: Permissions Violation for Publication to "camera.hq.evt"`), "permissions_violation"},
+		{"unknown", errors.New("nats: connection reset"), "other"},
+		{"nil", nil, "other"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := asyncErrorKind(tt.err); got != tt.want {
+				t.Errorf("asyncErrorKind(%v) = %q, want %q", tt.err, got, tt.want)
+			}
+		})
+	}
 }

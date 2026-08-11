@@ -175,7 +175,17 @@ func (r *Responder) makeHandler(triggerSubject string) nats.MsgHandler {
 		// Core delivery is at-most-once: there is no ack window to redeliver
 		// failed actions into, so failures are logged and counted, not retried
 		// beyond the publisher's own retry policy.
-		ctx := context.Background()
+		//
+		// The deadline matters more here than on the JetStream path, which is
+		// already bounded by the consumer's ack wait. nats.go delivers a
+		// subscription's messages one at a time, so everything below holds this
+		// subject's queue: without a bound, one action multiplying its own
+		// retries (3 × ackTimeout, or an HTTP client timeout per attempt) stalls
+		// the subject long enough to overflow the pending buffer and drop
+		// messages. Capped here, a bad action costs one slow message.
+		ctx, cancel := context.WithTimeout(context.Background(), coreActionTimeout)
+		defer cancel()
+
 		responded := false
 		for _, a := range outcome.Immediate {
 			switch {

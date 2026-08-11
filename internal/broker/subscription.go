@@ -40,6 +40,15 @@ const (
 	// deferredFlushTimeout bounds the shutdown flush of pending trailing-throttle
 	// batches. Anything still unstarted when it expires is dropped and logged.
 	deferredFlushTimeout = 10 * time.Second
+
+	// coreActionTimeout bounds all the actions of one core-delivered message.
+	// The JetStream path gets its bound from the consumer's ack wait; core
+	// delivery has no ack, so this is the equivalent ceiling — and, because a
+	// core subscription processes messages one at a time, it is also the longest
+	// one message can block its subject. Generous enough for a legitimate slow
+	// HTTP action, short enough that a wedged one cannot silently drain the
+	// subscription's pending buffer.
+	coreActionTimeout = 30 * time.Second
 )
 
 // HTTPActionExecutor handles HTTP action execution. Implemented by httpclient.HTTPExecutor.

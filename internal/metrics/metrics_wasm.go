@@ -18,6 +18,7 @@ func (m *Metrics) IncActionPublishFailures()                                    
 func (m *Metrics) IncTemplateOpsTotal(status string)                               {}
 func (m *Metrics) SetNATSConnectionStatus(connected bool)                          {}
 func (m *Metrics) IncNATSReconnects()                                              {}
+func (m *Metrics) IncNATSAsyncErrors(kind string)                                  {}
 func (m *Metrics) IncSignatureVerifications(result string)                         {}
 func (m *Metrics) ObserveSignatureVerificationDuration(seconds float64)            {}
 func (m *Metrics) IncWebhookHMACVerifications(result string)                       {}

@@ -61,6 +61,8 @@ trigger:
 
 Rules of thumb: pick `core` when losing a message during a restart or disconnect is acceptable; keep the JetStream default when every message must be processed. Core-mode subjects are excluded from stream validation, and a subject can safely be covered by both core-mode and JetStream rules (each rule fires exactly once, on its own transport). Core-transport triggers (`mode: core` and `reply: true`) are served by the **router** feature — enable `features.router` for them to fire.
 
+> **Core subscriptions process one message at a time, per subject.** NATS delivers a core subscription's messages serially, so a rule's actions run to completion before the next message on that subject is read — and if they take long enough, NATS drops queued messages as a slow consumer (watch `nats_async_errors_total{kind="slow_consumer"}`). Each message's actions are capped at 30 seconds, so one bad action costs one slow message rather than the subscription. Keep core-mode rules cheap: publishes and replies, not slow outbound HTTP calls. Put anything slow on a JetStream trigger, where a worker pool processes messages concurrently and redelivery covers failures. To scale a core subject across processes, use `queue` rather than expecting in-process concurrency.
+
 Add `reply: true` to turn the subject into a **request/reply service**: the router subscribes via core NATS (`reply` implies `mode: core`) and answers each request via a `respond` action. An optional `queue` joins a queue group so multiple instances load-balance requests.
 ```yaml
 trigger:

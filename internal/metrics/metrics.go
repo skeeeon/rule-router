@@ -28,6 +28,7 @@ type Metrics struct {
 	// NATS connection metrics (shared)
 	natsConnectionStatus prometheus.Gauge
 	natsReconnects       prometheus.Counter
+	natsAsyncErrors      *prometheus.CounterVec
 
 	// Signature verification metrics (shared)
 	signatureVerificationsTotal   *prometheus.CounterVec
@@ -146,6 +147,13 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 				Name: "nats_reconnects_total",
 				Help: "Total number of NATS reconnections",
 			},
+		),
+		natsAsyncErrors: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "nats_async_errors_total",
+				Help: "Total NATS asynchronous errors, by kind (slow_consumer, permissions_violation, other)",
+			},
+			[]string{"kind"},
 		),
 
 		// Signature verification
@@ -319,6 +327,7 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 		m.templateOpsTotal,
 		m.natsConnectionStatus,
 		m.natsReconnects,
+		m.natsAsyncErrors,
 		m.signatureVerificationsTotal,
 		m.signatureVerificationDuration,
 		m.webhookHMACVerificationsTotal,
@@ -400,6 +409,13 @@ func (m *Metrics) SetNATSConnectionStatus(connected bool) {
 	} else {
 		m.natsConnectionStatus.Set(0)
 	}
+}
+
+// IncNATSAsyncErrors counts an error the server or client reported outside any
+// request — the only place slow-consumer drops and permission violations are
+// ever announced. kind is one of slow_consumer, permissions_violation, other.
+func (m *Metrics) IncNATSAsyncErrors(kind string) {
+	m.natsAsyncErrors.WithLabelValues(kind).Inc()
 }
 
 func (m *Metrics) IncNATSReconnects() {

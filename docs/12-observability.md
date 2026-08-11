@@ -64,6 +64,7 @@ Types: **C** = Counter, **G** = Gauge, **H** = Histogram. "Feature" indicates wh
 |--------|------|--------|---------|-------------|
 | `nats_connection_status` | G | — | all | `1` = connected, `0` = disconnected. Primary readiness signal. |
 | `nats_reconnects_total` | C | — | all | Cumulative reconnect events. |
+| `nats_async_errors_total` | C | `kind` | all | Errors NATS reports outside any request. `kind="slow_consumer"`: a subscription fell behind and messages were **dropped** — on a core subject, usually a rule whose actions are too slow (see [Core concepts](01-core-concepts.md)). `kind="permissions_violation"`: the account may not publish or subscribe on a subject; a denied publish never acks, so this is the only signal. `kind="other"`: everything else. Any non-zero value deserves a look. |
 
 ### Key-Value cache
 
@@ -202,6 +203,13 @@ groups:
         labels: { severity: critical }
         annotations:
           summary: "rule-router lost its NATS connection"
+
+      - alert: RuleRouterNATSAsyncErrors
+        expr: increase(nats_async_errors_total[5m]) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "rule-router NATS async errors ({{ $labels.kind }}) — dropped messages or denied subjects"
 
       - alert: RuleRouterHighErrorRate
         expr: |
