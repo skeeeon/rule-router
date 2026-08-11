@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-08-10
+
 ### Fixes
 - **`action.nats.mode` was ignored — every action published over JetStream** — the Processor built the evaluated `NATSAction` without copying `Mode`, and every publisher (`NATSBroker.Publish`, the shared `actionPublisher`, the gateway) resolves the transport from the *evaluated* action. `mode: core` therefore fell back to the global `nats.publish.mode` on all three features since 0.15.0. The practical damage lands on subjects deliberately marked core because no stream covers them (device heartbeats and similar): each publish waits out `ackTimeout` for an ack that can never arrive, then fails. The web tester's mode field, read from the same evaluated action, was likewise always blank. Both the plain and `forEach` action paths now carry `Mode`, pinned by `TestActionMode_SurvivesEvaluation`.
 - **Unacked JetStream publishes leaked pending slots until the publisher stalled permanently** — the client was configured with `WithPublishAsyncMaxPending(2048)` but no async publish timeout, so a publish whose ack never returns held its pending slot for the life of the process. Publishing steadily to a subject no stream captures (see above) filled the pending set within hours, after which *every* JetStream publish — including correctly configured ones — failed with `stalled with too many outstanding async published messages`, with no recovery short of a restart. Pending publishes now expire at `ackTimeout + 5s`, so an unstreamed subject costs one error per fire instead of degrading the whole process. `ackTimeout` remains the deadline callers see.
@@ -216,6 +218,7 @@
 - Signature verification
 - Rule-cli utility
 
+[0.17.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.17.0
 [0.16.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.16.0
 [0.15.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.15.0
 [0.14.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.14.0
