@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"runtime/debug"
-	"strings"
 	"time"
 
 	"github.com/go-co-op/gocron/v2"
@@ -90,7 +89,6 @@ func NewSchedulerApp(base *BaseApp, cfg *config.Config) (*SchedulerApp, error) {
 	}
 
 	app.logger.Info("schedule rules registered", "count", len(scheduleRules))
-	app.warnUnstreamedNATSActions(scheduleRules)
 
 	// Register KV callback so cron jobs are rebuilt when rules change
 	if cfg.KV.Rules.Enabled {
@@ -165,72 +163,10 @@ func (app *SchedulerApp) rebuildCronJobs(rules []*rule.Rule) {
 	}
 
 	app.logger.Info("cron jobs rebuilt from KV rules", "count", len(rules))
-	app.warnUnstreamedNATSActions(rules)
 
 	if app.metrics != nil {
 		app.metrics.SetRulesActive(float64(len(rules)))
 	}
-}
-
-// maxWarnedSubjects caps how many offending subjects are named in the
-// unstreamed-action warning; the rest are reported as a count.
-const maxWarnedSubjects = 20
-
-// warnUnstreamedNATSActions warns about schedule rules that publish in
-// JetStream mode to a subject no discovered stream captures.
-//
-// Such a publish is never acked: it burns the full AckTimeout, fails, and holds
-// one of the client's pending-async-publish slots until that pending entry
-// expires. On a 1-minute cron across many rules the pending set fills faster
-// than it drains and the publisher stalls outright ("too many outstanding async
-// published messages") — at which point every JetStream publish fails, including
-// the correctly configured ones. Almost always the rule meant `mode: core`, so
-// say it once at startup instead of one timeout at a time.
-//
-// Templated subjects are skipped: they are only known per evaluation.
-func (app *SchedulerApp) warnUnstreamedNATSActions(rules []*rule.Rule) {
-	if app.base == nil || app.base.Broker == nil {
-		return
-	}
-
-	seen := make(map[string]struct{})
-	var unstreamed []string
-
-	for _, r := range rules {
-		action := r.Action.NATS
-		if action == nil || action.Mode == rule.ModeCore {
-			continue
-		}
-		if action.Mode == "" && app.config.NATS.Publish.Mode == "core" {
-			continue
-		}
-		subject := action.Subject
-		if subject == "" || strings.Contains(subject, "{") {
-			continue
-		}
-		if _, ok := seen[subject]; ok {
-			continue
-		}
-		seen[subject] = struct{}{}
-
-		if _, err := app.base.Broker.FindStreamForSubject(subject); err != nil {
-			unstreamed = append(unstreamed, subject)
-		}
-	}
-
-	if len(unstreamed) == 0 {
-		return
-	}
-
-	shown := unstreamed
-	if len(shown) > maxWarnedSubjects {
-		shown = shown[:maxWarnedSubjects]
-	}
-	app.logger.Warn("schedule rules publish to JetStream subjects with no matching stream; "+
-		"these publishes will time out waiting for an ack and can stall the publisher — "+
-		"add a stream covering them or set 'mode: core' on the action",
-		"subjects", len(unstreamed),
-		"examples", shown)
 }
 
 // executeScheduleRule processes a schedule-triggered rule and publishes resulting actions

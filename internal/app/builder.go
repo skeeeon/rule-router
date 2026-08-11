@@ -319,6 +319,11 @@ func (b *AppBuilder) Build() (*BaseApp, error) {
 	// Initialize SubscriptionManager for all features that need NATS-trigger subscriptions
 	if b.base.Broker != nil && b.base.Processor != nil {
 		b.base.Broker.InitializeSubscriptionManager(b.base.Processor)
+
+		// One pass over every file-loaded rule, whatever feature will run it —
+		// action subjects are not validated anywhere else. KV-loaded rules are
+		// checked per key by RuleKVManager as they arrive.
+		b.base.Broker.WarnUnstreamedActionSubjects(b.base.Processor.GetAllRules(), b.rulesPath)
 	}
 
 	return b.base, nil

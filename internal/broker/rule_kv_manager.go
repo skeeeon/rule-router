@@ -306,6 +306,14 @@ func (m *RuleKVManager) handleRulePut(key string, value []byte, revision uint64)
 		return
 	}
 
+	// Trigger subjects are covered; action subjects only warn (see
+	// WarnUnstreamedActionSubjects) so a stream created later stays workable.
+	ruleRefs := make([]*rule.Rule, len(rules))
+	for i := range rules {
+		ruleRefs[i] = &rules[i]
+	}
+	m.broker.WarnUnstreamedActionSubjects(ruleRefs, key)
+
 	// Atomically update the rule set
 	m.mu.Lock()
 
