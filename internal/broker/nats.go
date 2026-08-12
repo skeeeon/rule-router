@@ -377,7 +377,15 @@ func (b *NATSBroker) HTTPExecutor() HTTPActionExecutor {
 	return b.httpExecutor
 }
 
-// InitializeKVCache populates the local cache and subscribes to changes using Watch API
+// InitializeKVCache populates the local cache and subscribes to changes using
+// the Watch API.
+//
+// The cache is an optimization, not a requirement: KVContext reads straight from
+// NATS KV whenever the cache misses, so a caller may log a failure here and carry
+// on with correct (if slower) lookups. An error means no bucket could be watched
+// at all, in which case the cache is switched off rather than left enabled and
+// permanently empty — nothing turns it back on later, since reconnect only cycles
+// watchers that were successfully established.
 func (b *NATSBroker) InitializeKVCache() error {
 	if !b.config.KV.Enabled {
 		b.logger.Info("KV not enabled, skipping cache initialization")
@@ -390,12 +398,9 @@ func (b *NATSBroker) InitializeKVCache() error {
 		return nil
 	}
 
-	b.logger.Info("initializing local KV cache", "buckets", b.config.KV.BucketNames())
-
-	// Subscribe to KV changes using the new Watch API
 	if err := b.subscribeToKVChanges(); err != nil {
-		b.logger.Error("failed to subscribe to KV changes", "error", err)
-		return nil
+		b.localKVCache.SetEnabled(false)
+		return fmt.Errorf("local KV cache unavailable: %w", err)
 	}
 
 	b.logger.Info("local KV cache initialized successfully",
@@ -405,7 +410,14 @@ func (b *NATSBroker) InitializeKVCache() error {
 	return nil
 }
 
-// subscribeToKVChanges subscribes to KV change streams using the new Watch API
+// subscribeToKVChanges starts one watcher per configured KV bucket.
+//
+// A bucket that cannot be watched is not fatal on its own: lookups against it
+// miss the cache and fall through to a direct NATS KV read, which is correct,
+// just slower. It is never retried though — reconnect only cycles watchers that
+// already exist — so the degraded state lasts for the life of the process and is
+// worth a warning. Only a total failure is returned as an error, because then
+// the cache can never hold anything at all.
 func (b *NATSBroker) subscribeToKVChanges() error {
 	total := len(b.config.KV.Buckets)
 	b.logger.Info("subscribing to KV changes using Watch API", "buckets", total)
@@ -418,8 +430,12 @@ func (b *NATSBroker) subscribeToKVChanges() error {
 		}
 	}
 
+	if total > 0 && len(failedBuckets) == total {
+		return fmt.Errorf("no KV bucket could be watched (%s)", strings.Join(failedBuckets, ", "))
+	}
+
 	if len(failedBuckets) > 0 {
-		b.logger.Warn("KV watch subscriptions partially established",
+		b.logger.Warn("KV watch subscriptions partially established; unwatched buckets read directly from NATS KV for the life of the process",
 			"watching", len(b.kvWatchers),
 			"failed", len(failedBuckets),
 			"total", total,
