@@ -1,4 +1,3 @@
-// file: internal/rule/signature_verify_test.go
 // Pure-crypto unit tests for NKey signature verification — no NATS server required.
 
 package rule
@@ -46,10 +45,10 @@ func newSigContext(t *testing.T, payload []byte, headers map[string]string, sv *
 		headers,
 		NewSubjectContext("test.subject"),
 		nil, // httpCtx
-		NewSystemTimeProvider().GetCurrentContext(),
+		NewSystemTimeProvider().CurrentContext(),
 		nil, // kvCtx
 		sv,
-		logger.NewNopLogger(),
+		logger.NewNop(),
 	)
 	if err != nil {
 		t.Fatalf("NewEvaluationContext: %v", err)
@@ -243,7 +242,7 @@ func TestVerifySignatureIdempotent(t *testing.T) {
 // registry without reaching into the metrics package's unexported fields.
 func sigVerifyCount(t *testing.T, m *metrics.Metrics, result string) float64 {
 	t.Helper()
-	mfs, err := m.GetRegistry().Gather()
+	mfs, err := m.Registry().Gather()
 	if err != nil {
 		t.Fatalf("gather metrics: %v", err)
 	}

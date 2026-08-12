@@ -11,17 +11,17 @@ import (
 // LocalKVCache provides in-memory caching for NATS KV buckets
 // Uses simple map structure for fast access and easy debugging
 type LocalKVCache struct {
-	cache   map[string]map[string]interface{} // bucket -> key -> parsed JSON value
-	mu      sync.RWMutex                      // Simple read-write mutex for concurrent access
-	logger  *logger.Logger                    // For debugging and monitoring
-	enabled bool                              // Feature flag for easy disable
-	metrics *metrics.Metrics                  // Optional; nil in tests/CLI/WASM (no-op)
+	cache   map[string]map[string]any // bucket -> key -> parsed JSON value
+	mu      sync.RWMutex              // Simple read-write mutex for concurrent access
+	logger  *logger.Logger            // For debugging and monitoring
+	enabled bool                      // Feature flag for easy disable
+	metrics *metrics.Metrics          // Optional; nil in tests/CLI/WASM (no-op)
 }
 
 // NewLocalKVCache creates a new local KV cache instance
 func NewLocalKVCache(logger *logger.Logger) *LocalKVCache {
 	cache := &LocalKVCache{
-		cache:   make(map[string]map[string]interface{}),
+		cache:   make(map[string]map[string]any),
 		logger:  logger,
 		enabled: true,
 	}
@@ -51,7 +51,7 @@ func (c *LocalKVCache) totalKeysLocked() int {
 
 // Get retrieves a value from the local cache
 // Returns the value and whether it was found
-func (c *LocalKVCache) Get(bucket, key string) (interface{}, bool) {
+func (c *LocalKVCache) Get(bucket, key string) (any, bool) {
 	if !c.enabled {
 		c.logger.Debug("local cache disabled, returning cache miss", "bucket", bucket, "key", key)
 		return nil, false
@@ -79,7 +79,7 @@ func (c *LocalKVCache) Get(bucket, key string) (interface{}, bool) {
 
 // Set stores a value in the local cache
 // Value should be the parsed JSON object, not raw bytes
-func (c *LocalKVCache) Set(bucket, key string, value interface{}) {
+func (c *LocalKVCache) Set(bucket, key string, value any) {
 	if !c.enabled {
 		c.logger.Debug("local cache disabled, skipping set", "bucket", bucket, "key", key)
 		return
@@ -90,7 +90,7 @@ func (c *LocalKVCache) Set(bucket, key string, value interface{}) {
 
 	// Initialize bucket map if it doesn't exist
 	if c.cache[bucket] == nil {
-		c.cache[bucket] = make(map[string]interface{})
+		c.cache[bucket] = make(map[string]any)
 	}
 
 	c.cache[bucket][key] = value
@@ -144,19 +144,19 @@ func (c *LocalKVCache) Clear() {
 	defer c.mu.Unlock()
 
 	previousSize := len(c.cache)
-	c.cache = make(map[string]map[string]interface{})
+	c.cache = make(map[string]map[string]any)
 	c.logger.Info("cache cleared", "previousBuckets", previousSize)
 	if c.metrics != nil {
 		c.metrics.SetKVCacheSize(0)
 	}
 }
 
-// GetStats returns cache statistics for monitoring
-func (c *LocalKVCache) GetStats() map[string]interface{} {
+// Stats returns cache statistics for monitoring
+func (c *LocalKVCache) Stats() map[string]any {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	stats := map[string]interface{}{
+	stats := map[string]any{
 		"enabled": c.enabled,
 		"buckets": make(map[string]int),
 	}
@@ -173,9 +173,9 @@ func (c *LocalKVCache) GetStats() map[string]interface{} {
 	return stats
 }
 
-// GetAllKeys returns all keys for a specific bucket
+// Keys returns all keys for a specific bucket
 // Useful for debugging and monitoring
-func (c *LocalKVCache) GetAllKeys(bucket string) []string {
+func (c *LocalKVCache) Keys(bucket string) []string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -190,8 +190,8 @@ func (c *LocalKVCache) GetAllKeys(bucket string) []string {
 	return []string{}
 }
 
-// GetAllBuckets returns all bucket names in the cache
-func (c *LocalKVCache) GetAllBuckets() []string {
+// Buckets returns all bucket names in the cache
+func (c *LocalKVCache) Buckets() []string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 

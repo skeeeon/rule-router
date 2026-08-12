@@ -1,8 +1,7 @@
-// file: internal/rule/path_matcher.go
-
 package rule
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -30,7 +29,7 @@ func MatchPath(pm *PatternMatcher, requestPath string) bool {
 // ValidatePathPattern enforces HTTP path pattern syntax.
 func ValidatePathPattern(path string) error {
 	if path == "" {
-		return fmt.Errorf("path cannot be empty")
+		return errors.New("path cannot be empty")
 	}
 	if !strings.HasPrefix(path, "/") {
 		return fmt.Errorf("path must start with '/': %s", path)
@@ -54,7 +53,7 @@ func ValidatePathPattern(path string) error {
 			// valid anywhere
 		default:
 			if strings.Contains(token, "*") || strings.Contains(token, ">") {
-				return fmt.Errorf("invalid wildcard usage in segment '%s' at position %d", token, i)
+				return fmt.Errorf("invalid wildcard usage in segment %q at position %d", token, i)
 			}
 		}
 	}

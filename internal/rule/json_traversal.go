@@ -24,9 +24,9 @@ func NewJSONPathTraverser() *JSONPathTraverser {
 }
 
 // TraversePath navigates through a JSON structure using a dot-separated path
-// Supports both map[string]interface{} for objects and []interface{} for arrays
+// Supports both map[string]any for objects and []any for arrays
 // Returns the value at the path and an error if the path is invalid
-func (t *JSONPathTraverser) TraversePath(data interface{}, path []string) (interface{}, error) {
+func (t *JSONPathTraverser) TraversePath(data any, path []string) (any, error) {
 	if len(path) == 0 {
 		return data, nil
 	}
@@ -51,7 +51,7 @@ func (t *JSONPathTraverser) TraversePath(data interface{}, path []string) (inter
 
 // TraversePathString is a convenience method that takes a dot-separated string path
 // Example: "user.profile.email" or "readings.0.value"
-func (t *JSONPathTraverser) TraversePathString(data interface{}, pathStr string) (interface{}, error) {
+func (t *JSONPathTraverser) TraversePathString(data any, pathStr string) (any, error) {
 	if pathStr == "" {
 		return data, nil
 	}
@@ -61,21 +61,21 @@ func (t *JSONPathTraverser) TraversePathString(data interface{}, pathStr string)
 }
 
 // traverseSegment handles traversal of a single path segment
-func (t *JSONPathTraverser) traverseSegment(current interface{}, segment string, position int, fullPath []string) (interface{}, error) {
+func (t *JSONPathTraverser) traverseSegment(current any, segment string, position int, fullPath []string) (any, error) {
 	switch v := current.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		// Object property access
 		value, exists := v[segment]
 		if !exists {
 			// Provide helpful context in error message
 			availableKeys := t.getMapKeys(v, 5) // Get first 5 keys for context
-			return nil, fmt.Errorf("key '%s' not found at path position %d (available keys: %s)",
+			return nil, fmt.Errorf("key %q not found at path position %d (available keys: %s)",
 				segment, position, strings.Join(availableKeys, ", "))
 		}
 		return value, nil
 
-	case map[interface{}]interface{}:
-		// Handle maps with interface{} keys (common in unmarshaled YAML)
+	case map[any]any:
+		// Handle maps with any-typed keys (common in unmarshaled YAML)
 		value, exists := v[segment]
 		if !exists {
 			// Try with various type conversions for the key
@@ -84,11 +84,11 @@ func (t *JSONPathTraverser) traverseSegment(current interface{}, segment string,
 					return val, nil
 				}
 			}
-			return nil, fmt.Errorf("key '%s' not found at path position %d", segment, position)
+			return nil, fmt.Errorf("key %q not found at path position %d", segment, position)
 		}
 		return value, nil
 
-	case []interface{}:
+	case []any:
 		// Array index access
 		index, err := t.parseArrayIndex(segment, len(v))
 		if err != nil {
@@ -104,12 +104,12 @@ func (t *JSONPathTraverser) traverseSegment(current interface{}, segment string,
 		return v[index], nil
 
 	case nil:
-		return nil, fmt.Errorf("cannot traverse into nil at path position %d (segment: '%s')", position, segment)
+		return nil, fmt.Errorf("cannot traverse into nil at path position %d (segment: %q)", position, segment)
 
 	default:
 		// Primitive type or unknown type - cannot traverse further
 		typeStr := fmt.Sprintf("%T", current)
-		return nil, fmt.Errorf("cannot traverse into %s at path position %d (segment: '%s')", typeStr, position, segment)
+		return nil, fmt.Errorf("cannot traverse into %s at path position %d (segment: %q)", typeStr, position, segment)
 	}
 }
 
@@ -120,7 +120,7 @@ func (t *JSONPathTraverser) traverseSegment(current interface{}, segment string,
 func (t *JSONPathTraverser) parseArrayIndex(segment string, arrayLen int) (int, error) {
 	index, err := strconv.Atoi(segment)
 	if err != nil {
-		return 0, fmt.Errorf("invalid array index '%s': must be an integer", segment)
+		return 0, fmt.Errorf("invalid array index %q: must be an integer", segment)
 	}
 
 	// Handle negative indices (Python-style reverse indexing)
@@ -128,7 +128,7 @@ func (t *JSONPathTraverser) parseArrayIndex(segment string, arrayLen int) (int, 
 		// -1 means last element, -2 means second to last, etc.
 		index = arrayLen + index
 		if index < 0 {
-			return 0, fmt.Errorf("negative array index '%s' out of bounds (array length: %d)", segment, arrayLen)
+			return 0, fmt.Errorf("negative array index %q out of bounds (array length: %d)", segment, arrayLen)
 		}
 	}
 
@@ -136,7 +136,7 @@ func (t *JSONPathTraverser) parseArrayIndex(segment string, arrayLen int) (int, 
 }
 
 // getMapKeys returns up to maxKeys keys from a map for error messages
-func (t *JSONPathTraverser) getMapKeys(m map[string]interface{}, maxKeys int) []string {
+func (t *JSONPathTraverser) getMapKeys(m map[string]any, maxKeys int) []string {
 	keys := make([]string, 0, maxKeys)
 	count := 0
 	for k := range m {
@@ -152,7 +152,7 @@ func (t *JSONPathTraverser) getMapKeys(m map[string]interface{}, maxKeys int) []
 
 // ExtractValue is a convenience function for simple path extraction
 // Returns nil if the path doesn't exist (no error)
-func (t *JSONPathTraverser) ExtractValue(data interface{}, path []string) interface{} {
+func (t *JSONPathTraverser) ExtractValue(data any, path []string) any {
 	value, err := t.TraversePath(data, path)
 	if err != nil {
 		return nil
@@ -161,7 +161,7 @@ func (t *JSONPathTraverser) ExtractValue(data interface{}, path []string) interf
 }
 
 // HasPath checks if a path exists in the data structure
-func (t *JSONPathTraverser) HasPath(data interface{}, path []string) bool {
+func (t *JSONPathTraverser) HasPath(data any, path []string) bool {
 	_, err := t.TraversePath(data, path)
 	return err == nil
 }
@@ -236,21 +236,21 @@ var defaultTraverser = NewJSONPathTraverser()
 
 // TraverseJSONPath is a package-level convenience function using the default traverser
 // This is what most code will use
-func TraverseJSONPath(data interface{}, path []string) (interface{}, error) {
+func TraverseJSONPath(data any, path []string) (any, error) {
 	return defaultTraverser.TraversePath(data, path)
 }
 
 // TraverseJSONPathString is a package-level convenience function for string paths
-func TraverseJSONPathString(data interface{}, pathStr string) (interface{}, error) {
+func TraverseJSONPathString(data any, pathStr string) (any, error) {
 	return defaultTraverser.TraversePathString(data, pathStr)
 }
 
 // ExtractJSONValue is a package-level convenience function that returns nil on error
-func ExtractJSONValue(data interface{}, path []string) interface{} {
+func ExtractJSONValue(data any, path []string) any {
 	return defaultTraverser.ExtractValue(data, path)
 }
 
 // HasJSONPath is a package-level convenience function to check path existence
-func HasJSONPath(data interface{}, path []string) bool {
+func HasJSONPath(data any, path []string) bool {
 	return defaultTraverser.HasPath(data, path)
 }

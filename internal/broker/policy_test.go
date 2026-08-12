@@ -1,5 +1,3 @@
-// file: internal/broker/policy_test.go
-
 package broker
 
 import (
@@ -14,7 +12,7 @@ import (
 // newTestBroker creates a minimal NATSBroker for testing policy parsing functions
 func newTestBroker() *NATSBroker {
 	return &NATSBroker{
-		logger: logger.NewNopLogger(),
+		logger: logger.NewNop(),
 		config: &config.Config{
 			NATS: config.NATSConfig{
 				Consumers: config.ConsumerConfig{

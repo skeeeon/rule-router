@@ -1,5 +1,9 @@
-// file: internal/authmgr/manager.go
-
+// Package authmgr fetches API tokens from external identity providers and keeps
+// them current in a NATS KV bucket, where rules can read them as ordinary KV
+// values.
+//
+// Manager owns the refresh loop; the concrete provider implementations
+// (OAuth2 client-credentials, custom HTTP) live in the providers subpackage.
 package authmgr
 
 import (
@@ -145,7 +149,7 @@ func (m *Manager) authenticate(p providers.Provider) error {
 	defer cancel()
 
 	// Get token from provider
-	token, err := p.GetToken(ctx)
+	token, err := p.Token(ctx)
 	if err != nil {
 		if m.metrics != nil {
 			m.metrics.IncAuthFailure(providerID)

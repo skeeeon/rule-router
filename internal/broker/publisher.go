@@ -1,5 +1,3 @@
-// file: internal/broker/publisher.go
-
 package broker
 
 import (
@@ -125,7 +123,7 @@ func (ap *ActionPublisher) publishJetStream(ctx context.Context, action *rule.NA
 	case err := <-ackF.Err():
 		// The server returned an error for this publish.
 		if errors.Is(err, nats.ErrNoResponders) {
-			return fmt.Errorf("jetstream publish failed: no stream is configured for action subject '%s'", action.Subject)
+			return fmt.Errorf("jetstream publish failed: no stream is configured for action subject %q", action.Subject)
 		}
 		return fmt.Errorf("jetstream async publish failed on ack: %w", err)
 	case <-pubCtx.Done():

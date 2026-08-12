@@ -1,5 +1,10 @@
-// file: internal/app/builder.go
-
+// Package app wires the binary's three features — router, gateway, and
+// scheduler — onto a shared set of components.
+//
+// AppBuilder constructs that shared set (logger, metrics, broker, processor, KV
+// rule manager) as a BaseApp. Each feature is a lifecycle.Application built on
+// top of it, and CompositeApp runs any combination of them under one lifecycle,
+// closing the shared resources exactly once.
 package app
 
 import (
@@ -26,10 +31,10 @@ type BaseApp struct {
 	Metrics       *metrics.Metrics
 	Broker        *broker.NATSBroker
 	Processor     *rule.Processor
-	RulesLoader   *rule.RulesLoader
+	Loader        *rule.Loader
 	RuleKVManager *broker.RuleKVManager
 	MetricsServer *http.Server
-	Collector     *metrics.MetricsCollector
+	Collector     *metrics.Collector
 
 	// metricsServerWg tracks the metrics server goroutine for graceful shutdown
 	metricsServerWg sync.WaitGroup
@@ -53,7 +58,7 @@ func (base *BaseApp) IsReady() bool {
 	if !base.ready.Load() || base.Broker == nil {
 		return false
 	}
-	nc := base.Broker.GetNATSConn()
+	nc := base.Broker.Conn()
 	return nc != nil && nc.IsConnected()
 }
 
@@ -79,7 +84,7 @@ func (b *AppBuilder) WithLogger() *AppBuilder {
 	if b.err != nil {
 		return b
 	}
-	b.base.Logger, b.err = logger.NewLogger(&b.cfg.Logging)
+	b.base.Logger, b.err = logger.New(&b.cfg.Logging)
 	if b.err != nil {
 		b.err = fmt.Errorf("failed to initialize logger: %w", b.err)
 	}
@@ -110,7 +115,7 @@ func (b *AppBuilder) WithMetrics() *AppBuilder {
 		return b
 	}
 
-	b.base.Collector = metrics.NewMetricsCollector(b.base.Metrics, updateInterval)
+	b.base.Collector = metrics.NewCollector(b.base.Metrics, updateInterval)
 	b.base.Collector.Start()
 
 	// Setup and start the metrics server
@@ -203,7 +208,7 @@ func (b *AppBuilder) WithRuleProcessor() *AppBuilder {
 		kvBuckets = b.cfg.KV.BucketNames()
 	}
 
-	rulesLoader := rule.NewRulesLoader(b.base.Logger, kvBuckets)
+	rulesLoader := rule.NewLoader(b.base.Logger, kvBuckets)
 	rules, err := rulesLoader.LoadFromDirectory(b.rulesPath)
 	if err != nil {
 		b.err = fmt.Errorf("failed to load rules: %w", err)
@@ -212,8 +217,8 @@ func (b *AppBuilder) WithRuleProcessor() *AppBuilder {
 
 	var kvContext *rule.KVContext
 	if b.cfg.KV.Enabled && b.base.Broker != nil {
-		kvStores := b.base.Broker.GetKVStores()
-		localKVCache := b.base.Broker.GetLocalKVCache()
+		kvStores := b.base.Broker.KVStores()
+		localKVCache := b.base.Broker.LocalKVCache()
 		kvContext = rule.NewKVContext(kvStores, b.base.Logger, localKVCache)
 	}
 
@@ -226,10 +231,12 @@ func (b *AppBuilder) WithRuleProcessor() *AppBuilder {
 		)
 	}
 
-	b.base.Processor = rule.NewProcessor(b.base.Logger, b.base.Metrics, kvContext, sigVerification)
-
-	// Configure forEach iteration limit
-	b.base.Processor.SetMaxForEachIterations(b.cfg.ForEach.MaxIterations)
+	b.base.Processor = rule.NewProcessor(b.base.Logger,
+		rule.WithMetrics(b.base.Metrics),
+		rule.WithKVContext(kvContext),
+		rule.WithSignatureVerification(sigVerification),
+		rule.WithMaxForEachIterations(b.cfg.ForEach.MaxIterations),
+	)
 
 	if err := b.base.Processor.LoadRules(rules); err != nil {
 		b.err = fmt.Errorf("failed to load rules into processor: %w", err)
@@ -255,12 +262,12 @@ func (b *AppBuilder) WithKVRuleProcessor() *AppBuilder {
 		kvBuckets = b.cfg.KV.BucketNames()
 	}
 
-	b.base.RulesLoader = rule.NewRulesLoader(b.base.Logger, kvBuckets)
+	b.base.Loader = rule.NewLoader(b.base.Logger, kvBuckets)
 
 	var kvContext *rule.KVContext
 	if b.cfg.KV.Enabled && b.base.Broker != nil {
-		kvStores := b.base.Broker.GetKVStores()
-		localKVCache := b.base.Broker.GetLocalKVCache()
+		kvStores := b.base.Broker.KVStores()
+		localKVCache := b.base.Broker.LocalKVCache()
 		kvContext = rule.NewKVContext(kvStores, b.base.Logger, localKVCache)
 	}
 
@@ -273,8 +280,12 @@ func (b *AppBuilder) WithKVRuleProcessor() *AppBuilder {
 		)
 	}
 
-	b.base.Processor = rule.NewProcessor(b.base.Logger, b.base.Metrics, kvContext, sigVerification)
-	b.base.Processor.SetMaxForEachIterations(b.cfg.ForEach.MaxIterations)
+	b.base.Processor = rule.NewProcessor(b.base.Logger,
+		rule.WithMetrics(b.base.Metrics),
+		rule.WithKVContext(kvContext),
+		rule.WithSignatureVerification(sigVerification),
+		rule.WithMaxForEachIterations(b.cfg.ForEach.MaxIterations),
+	)
 
 	b.base.Logger.Info("KV rule processor initialized (rules loaded via KV Watch)")
 
@@ -296,7 +307,7 @@ func (b *AppBuilder) WithKVRuleManager() *AppBuilder {
 		kvCfg.AutoProvision,
 		b.base.Processor,
 		b.base.Broker,
-		b.base.RulesLoader,
+		b.base.Loader,
 		b.base.Logger,
 	)
 
@@ -323,7 +334,7 @@ func (b *AppBuilder) Build() (*BaseApp, error) {
 		// One pass over every file-loaded rule, whatever feature will run it —
 		// action subjects are not validated anywhere else. KV-loaded rules are
 		// checked per key by RuleKVManager as they arrive.
-		b.base.Broker.WarnUnstreamedActionSubjects(b.base.Processor.GetAllRules(), b.rulesPath)
+		b.base.Broker.WarnUnstreamedActionSubjects(b.base.Processor.AllRules(), b.rulesPath)
 	}
 
 	return b.base, nil
@@ -393,8 +404,7 @@ func (base *BaseApp) Close() error {
 		base.Logger.Sync()
 	}
 
-	if len(errs) > 0 {
-		return fmt.Errorf("errors during BaseApp close: %v", errs)
-	}
-	return nil
+	// Joined rather than formatted into a string: shutdown errors stay
+	// inspectable with errors.Is/As instead of collapsing to prose.
+	return errors.Join(errs...)
 }

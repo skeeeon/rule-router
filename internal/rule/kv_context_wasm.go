@@ -1,4 +1,3 @@
-// file: internal/rule/kv_context_wasm.go
 // WASM-compatible KV context — local cache only, no NATS/jetstream dependency.
 
 //go:build js && wasm
@@ -68,7 +67,7 @@ func NewKVContext(stores KVStores, logger *logger.Logger, localCache *LocalKVCac
 	return kvCtx
 }
 
-func (kv *KVContext) GetField(field string) (interface{}, bool) {
+func (kv *KVContext) Field(field string) (any, bool) {
 	bucket, key, jsonPath, err := kv.parseKVField(field)
 	if err != nil {
 		kv.logger.Debug("invalid KV field format", "field", field, "error", err)
@@ -91,7 +90,7 @@ func (kv *KVContext) GetField(field string) (interface{}, bool) {
 	return nil, false
 }
 
-func (kv *KVContext) GetFieldWithContext(field string, msgData map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext) (interface{}, bool) {
+func (kv *KVContext) FieldWithContext(field string, msgData map[string]any, timeCtx *TimeContext, subjectCtx *SubjectContext) (any, bool) {
 	resolvedField, hasUnresolvedVars, err := kv.resolveVariablesEnhanced(field, msgData, timeCtx, subjectCtx)
 	if err != nil {
 		return "", false
@@ -100,7 +99,7 @@ func (kv *KVContext) GetFieldWithContext(field string, msgData map[string]interf
 		return "", false
 	}
 
-	value, found := kv.GetField(resolvedField)
+	value, found := kv.Field(resolvedField)
 	if !found {
 		return "", false
 	}
@@ -181,7 +180,7 @@ func (kv *KVContext) parseKVFieldUncached(field string) (bucket, key string, jso
 	return bucket, key, jsonPath, nil
 }
 
-func (kv *KVContext) resolveVariablesEnhanced(field string, msgData map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext) (string, bool, error) {
+func (kv *KVContext) resolveVariablesEnhanced(field string, msgData map[string]any, timeCtx *TimeContext, subjectCtx *SubjectContext) (string, bool, error) {
 	if !strings.Contains(field, "{") {
 		return field, false, nil
 	}
@@ -201,19 +200,19 @@ func (kv *KVContext) resolveVariablesEnhanced(field string, msgData map[string]i
 	return result, hasUnresolvedVars, nil
 }
 
-func (kv *KVContext) resolveVariable(varName string, msgData map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext) (interface{}, bool) {
+func (kv *KVContext) resolveVariable(varName string, msgData map[string]any, timeCtx *TimeContext, subjectCtx *SubjectContext) (any, bool) {
 	if strings.HasPrefix(varName, "@") {
 		if strings.HasPrefix(varName, "@subject") {
 			if subjectCtx == nil {
 				return nil, false
 			}
-			return subjectCtx.GetField(varName)
+			return subjectCtx.Field(varName)
 		}
 		if strings.HasPrefix(varName, "@time") || strings.HasPrefix(varName, "@date") || strings.HasPrefix(varName, "@timestamp") {
 			if timeCtx == nil {
 				return nil, false
 			}
-			return timeCtx.GetField(varName)
+			return timeCtx.Field(varName)
 		}
 		return nil, false
 	}
@@ -226,7 +225,7 @@ func (kv *KVContext) resolveVariable(varName string, msgData map[string]interfac
 	return value, true
 }
 
-func (kv *KVContext) convertToString(value interface{}) string {
+func (kv *KVContext) convertToString(value any) string {
 	switch v := value.(type) {
 	case string:
 		return v
@@ -250,7 +249,7 @@ func (kv *KVContext) convertToString(value interface{}) string {
 	}
 }
 
-func (kv *KVContext) GetAllBuckets() []string {
+func (kv *KVContext) Buckets() []string {
 	return []string{}
 }
 
@@ -262,14 +261,14 @@ func (kv *KVContext) HasBucket(bucketName string) bool {
 	return false
 }
 
-func (kv *KVContext) GetStats() map[string]interface{} {
-	stats := map[string]interface{}{
+func (kv *KVContext) Stats() map[string]any {
+	stats := map[string]any{
 		"bucket_count": 0,
 		"initialized":  true,
 		"mode":         "wasm-cache-only",
 	}
 	if kv.localCache != nil {
-		stats["local_cache"] = kv.localCache.GetStats()
+		stats["local_cache"] = kv.localCache.Stats()
 	}
 	return stats
 }

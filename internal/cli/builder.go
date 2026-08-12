@@ -1,8 +1,11 @@
-// file: internal/cli/builder.go
+// Package cli holds the interactive pieces behind rule-cli: the prompter that
+// reads answers from a terminal, the rule builder that turns those answers into
+// a rule, and the renderer that writes rules and scaffolding out as YAML.
 package cli
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -622,7 +625,7 @@ func (rb *RuleBuilder) getPublishResponse() (*rule.PublishResponseSpec, error) {
 	}
 	subject = strings.TrimSpace(subject)
 	if subject == "" {
-		return nil, fmt.Errorf("publishResponse subject cannot be empty")
+		return nil, errors.New("publishResponse subject cannot be empty")
 	}
 	return &rule.PublishResponseSpec{Subject: subject}, nil
 }
@@ -639,7 +642,7 @@ func (rb *RuleBuilder) getForEachField() (string, error) {
 
 		field = strings.TrimSpace(field)
 		if field == "" {
-			return "", fmt.Errorf("forEach field cannot be empty")
+			return "", errors.New("forEach field cannot be empty")
 		}
 
 		// Check if field uses template syntax

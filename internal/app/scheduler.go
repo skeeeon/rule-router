@@ -1,9 +1,8 @@
-// file: internal/app/scheduler.go
-
 package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"time"
@@ -41,7 +40,7 @@ type SchedulerApp struct {
 	logger       *logger.Logger
 	metrics      *metrics.Metrics
 	processor    *rule.Processor
-	httpExecutor *httpclient.HTTPExecutor
+	httpExecutor *httpclient.Executor
 	base         *BaseApp
 	scheduler    gocron.Scheduler
 
@@ -59,18 +58,18 @@ func NewSchedulerApp(base *BaseApp, cfg *config.Config) (*SchedulerApp, error) {
 		logger:       base.Logger.With("component", "scheduler"),
 		metrics:      base.Metrics,
 		processor:    base.Processor,
-		httpExecutor: httpclient.NewHTTPExecutor(&cfg.HTTP.Client, base.Logger, base.Metrics, base.Broker),
+		httpExecutor: httpclient.NewExecutor(&cfg.HTTP.Client, base.Logger, base.Metrics, base.Broker),
 		base:         base,
 	}
 	app.coalescer = deferred.New("scheduler", app.executeDeferred, publishTimeout, base.Logger, base.Metrics)
 
-	scheduleRules := app.processor.GetScheduleRules()
+	scheduleRules := app.processor.ScheduleRules()
 
 	if len(scheduleRules) == 0 {
 		if cfg.KV.Rules.Enabled {
 			app.logger.Info("no schedule rules loaded yet (KV mode: rules will arrive via KV watch)")
 		} else {
-			return nil, fmt.Errorf("no schedule-triggered rules found")
+			return nil, errors.New("no schedule-triggered rules found")
 		}
 	}
 
@@ -239,7 +238,7 @@ func (app *SchedulerApp) executeScheduleRule(r *rule.Rule) {
 
 // Run starts the scheduler and waits for shutdown signal.
 func (app *SchedulerApp) Run(ctx context.Context) error {
-	scheduleRules := app.processor.GetScheduleRules()
+	scheduleRules := app.processor.ScheduleRules()
 
 	app.logger.Info("configuration summary",
 		"scheduleRules", len(scheduleRules),

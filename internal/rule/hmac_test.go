@@ -1,5 +1,3 @@
-// file: internal/rule/hmac_test.go
-
 package rule
 
 import (

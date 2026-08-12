@@ -1,8 +1,7 @@
-// file: internal/rule/evaluator.go
-
 package rule
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -145,8 +144,8 @@ func (e *Evaluator) evaluateCondition(cond *Condition, context *EvaluationContex
 
 // evaluateArrayCondition handles array operators: any, all, none
 // Now supports primitive array elements via ensureObject wrapping
-func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Condition, context *EvaluationContext) bool {
-	array, ok := fieldValue.([]interface{})
+func (e *Evaluator) evaluateArrayCondition(fieldValue any, cond *Condition, context *EvaluationContext) bool {
+	array, ok := fieldValue.([]any)
 	if !ok {
 		e.logger.Debug("array operator used on non-array field",
 			"field", cond.Field,
@@ -236,7 +235,7 @@ func (e *Evaluator) evaluateArrayCondition(fieldValue interface{}, cond *Conditi
 }
 
 // compareRecent checks if a timestamp is within tolerance
-func (e *Evaluator) compareRecent(msgTimestamp, tolerance interface{}, context *EvaluationContext) bool {
+func (e *Evaluator) compareRecent(msgTimestamp, tolerance any, context *EvaluationContext) bool {
 	toleranceStr, ok := tolerance.(string)
 	if !ok {
 		return false
@@ -263,7 +262,7 @@ func (e *Evaluator) compareRecent(msgTimestamp, tolerance interface{}, context *
 }
 
 // parseTimestamp flexibly parses timestamps
-func (e *Evaluator) parseTimestamp(value interface{}) (time.Time, error) {
+func (e *Evaluator) parseTimestamp(value any) (time.Time, error) {
 	switch v := value.(type) {
 	case json.Number:
 		f, err := v.Float64()
@@ -288,7 +287,7 @@ func (e *Evaluator) parseTimestamp(value interface{}) (time.Time, error) {
 
 // --- Comparison Helpers ---
 
-func (e *Evaluator) compareValues(a, b interface{}, op string) bool {
+func (e *Evaluator) compareValues(a, b any, op string) bool {
 	if a == nil && b == nil {
 		return op == "eq"
 	}
@@ -349,8 +348,8 @@ func (e *Evaluator) compareValues(a, b interface{}, op string) bool {
 	return !equal
 }
 
-func (e *Evaluator) compareContains(fieldValue, searchValue interface{}) bool {
-	if arr, isArray := fieldValue.([]interface{}); isArray {
+func (e *Evaluator) compareContains(fieldValue, searchValue any) bool {
+	if arr, isArray := fieldValue.([]any); isArray {
 		for _, item := range arr {
 			if e.compareValues(item, searchValue, "eq") {
 				return true
@@ -364,8 +363,8 @@ func (e *Evaluator) compareContains(fieldValue, searchValue interface{}) bool {
 	return strings.Contains(fieldStr, searchStr)
 }
 
-func (e *Evaluator) compareIn(fieldValue, allowedValues interface{}) bool {
-	arr, isArray := allowedValues.([]interface{})
+func (e *Evaluator) compareIn(fieldValue, allowedValues any) bool {
+	arr, isArray := allowedValues.([]any)
 	if !isArray {
 		return false
 	}
@@ -378,7 +377,7 @@ func (e *Evaluator) compareIn(fieldValue, allowedValues interface{}) bool {
 	return false
 }
 
-func (e *Evaluator) compareNumeric(a, b interface{}, op string) bool {
+func (e *Evaluator) compareNumeric(a, b any, op string) bool {
 	var numA, numB float64
 	var err error
 
@@ -405,7 +404,7 @@ func (e *Evaluator) compareNumeric(a, b interface{}, op string) bool {
 	}
 }
 
-func (e *Evaluator) toFloat(v interface{}) (float64, error) {
+func (e *Evaluator) toFloat(v any) (float64, error) {
 	switch val := v.(type) {
 	case json.Number:
 		return val.Float64()
@@ -418,11 +417,11 @@ func (e *Evaluator) toFloat(v interface{}) (float64, error) {
 	case string:
 		return strconv.ParseFloat(val, 64)
 	default:
-		return 0, fmt.Errorf("not a number")
+		return 0, errors.New("not a number")
 	}
 }
 
-func (e *Evaluator) convertToString(value interface{}) string {
+func (e *Evaluator) convertToString(value any) string {
 	if value == nil {
 		return ""
 	}
@@ -432,7 +431,7 @@ func (e *Evaluator) convertToString(value interface{}) string {
 // normalizeNumber converts json.Number to a native Go numeric type
 // so callers don't need separate json.Number branches in type switches.
 // Returns float64 for decimals, int for integers that fit.
-func normalizeNumber(v interface{}) interface{} {
+func normalizeNumber(v any) any {
 	n, ok := v.(json.Number)
 	if !ok {
 		return v

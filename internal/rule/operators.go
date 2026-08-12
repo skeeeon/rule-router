@@ -1,5 +1,3 @@
-// file: internal/rule/operators.go
-
 package rule
 
 // validOperators is the single source of truth for valid rule condition

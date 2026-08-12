@@ -1,5 +1,3 @@
-// file: internal/tester/tester_test.go
-
 package tester
 
 import (
@@ -384,7 +382,7 @@ func TestAnalyzeRuleFeatures(t *testing.T) {
 			rule: rule.Rule{
 				Conditions: &rule.Conditions{
 					Items: []rule.Condition{
-						{Field: "@day.weekday", Operator: "in", Value: []interface{}{"Monday", "Tuesday"}},
+						{Field: "@day.weekday", Operator: "in", Value: []any{"Monday", "Tuesday"}},
 					},
 				},
 			},

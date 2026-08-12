@@ -1,11 +1,10 @@
-// file: internal/authmgr/providers/custom_http.go
-
 package providers
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -57,8 +56,8 @@ func (p *CustomHTTPProvider) ID() string {
 	return p.id
 }
 
-// GetToken performs HTTP authentication and extracts the token
-func (p *CustomHTTPProvider) GetToken(ctx context.Context) (string, error) {
+// Token performs HTTP authentication and extracts the token
+func (p *CustomHTTPProvider) Token(ctx context.Context) (string, error) {
 	// The body is now pre-expanded by the config loader.
 	body := p.bodyTemplate
 
@@ -87,7 +86,7 @@ func (p *CustomHTTPProvider) GetToken(ctx context.Context) (string, error) {
 	}
 
 	// Parse JSON response
-	var result interface{}
+	var result any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", fmt.Errorf("failed to parse JSON response: %w", err)
 	}
@@ -95,11 +94,11 @@ func (p *CustomHTTPProvider) GetToken(ctx context.Context) (string, error) {
 	// Extract token using JSON path
 	token, err := p.extractJSONPath(result, p.tokenPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to extract token at path '%s': %w", p.tokenPath, err)
+		return "", fmt.Errorf("failed to extract token at path %q: %w", p.tokenPath, err)
 	}
 
 	if token == "" {
-		return "", fmt.Errorf("extracted token is empty")
+		return "", errors.New("extracted token is empty")
 	}
 
 	return token, nil
@@ -112,9 +111,9 @@ func (p *CustomHTTPProvider) RefreshInterval() time.Duration {
 
 // extractJSONPath extracts a value from parsed JSON using dot notation
 // Supports simple paths like "token" or "data.access_token"
-func (p *CustomHTTPProvider) extractJSONPath(data interface{}, path string) (string, error) {
+func (p *CustomHTTPProvider) extractJSONPath(data any, path string) (string, error) {
 	if path == "" {
-		return "", fmt.Errorf("empty path")
+		return "", errors.New("empty path")
 	}
 
 	parts := strings.Split(path, ".")
@@ -122,10 +121,10 @@ func (p *CustomHTTPProvider) extractJSONPath(data interface{}, path string) (str
 
 	for i, part := range parts {
 		switch v := current.(type) {
-		case map[string]interface{}:
+		case map[string]any:
 			val, exists := v[part]
 			if !exists {
-				return "", fmt.Errorf("key '%s' not found at path segment %d", part, i)
+				return "", fmt.Errorf("key %q not found at path segment %d", part, i)
 			}
 			current = val
 		default:

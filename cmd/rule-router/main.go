@@ -1,5 +1,7 @@
-// file: cmd/rule-router/main.go
-
+// Command rule-router is the unified rule-routing daemon. Config selects which
+// of its three features run: the router (NATS to NATS), the gateway (HTTP to
+// NATS and back), and the scheduler (cron-driven publishes). SIGHUP reloads
+// rules in place; SIGTERM shuts down gracefully.
 package main
 
 import (
@@ -21,7 +23,7 @@ var version = "dev"
 
 func main() {
 	if err := run(); err != nil {
-		logger.NewBootstrapLogger().Fatal("application error", "error", err)
+		logger.NewBootstrap().Fatal("application error", "error", err)
 	}
 }
 
@@ -30,7 +32,7 @@ func run() error {
 	cfg, rulesPath := parseFlags()
 
 	// Setup logger early for the lifecycle manager
-	appLogger, err := logger.NewLogger(&cfg.Logging)
+	appLogger, err := logger.New(&cfg.Logging)
 	if err != nil {
 		return err
 	}
@@ -125,11 +127,11 @@ func run() error {
 		if cfg.KV.Enabled {
 			kvBuckets = cfg.KV.BucketNames()
 		}
-		rules, err := rule.NewRulesLoader(appLogger, kvBuckets).LoadFromDirectory(rulesPath)
+		rules, err := rule.NewLoader(appLogger, kvBuckets).LoadFromDirectory(rulesPath)
 		if err != nil {
 			return err
 		}
-		return rule.NewProcessor(appLogger, nil, nil, nil).LoadRules(rules)
+		return rule.NewProcessor(appLogger).LoadRules(rules)
 	}
 
 	// Run with reload support (handles SIGHUP automatically)
@@ -153,7 +155,7 @@ func parseFlags() (*config.Config, string) {
 	// RR_LOGGING_LEVEL), layered over the config file in config.Load.
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		logger.NewBootstrapLogger().Fatal("failed to load config", "error", err)
+		logger.NewBootstrap().Fatal("failed to load config", "error", err)
 	}
 
 	return cfg, *rulesPath

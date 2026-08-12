@@ -1,4 +1,3 @@
-// file: cmd/rule-cli/cmd/lint.go
 package cmd
 
 import (
@@ -19,7 +18,7 @@ triggers, actions, and conditions. This is a great first step for CI/CD pipeline
 			return cmd.Help()
 		}
 
-		log := logger.NewNopLogger()
+		log := logger.NewNop()
 		testRunner := tester.New(log, false, 0)
 
 		return testRunner.Lint(rulesDir)

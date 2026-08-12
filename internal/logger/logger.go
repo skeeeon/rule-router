@@ -1,11 +1,10 @@
-// file: internal/logger/logger.go
-
 //go:build !js
 
 package logger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -23,10 +22,10 @@ type Logger struct {
 	syncer interface{ Sync() error }
 }
 
-// NewLogger creates a new Logger backed by zap with the given configuration.
-func NewLogger(cfg *config.LogConfig) (*Logger, error) {
+// New creates a new Logger backed by zap with the given configuration.
+func New(cfg *config.LogConfig) (*Logger, error) {
 	if cfg == nil {
-		return nil, fmt.Errorf("logger config is nil")
+		return nil, errors.New("logger config is nil")
 	}
 
 	var level zapcore.Level
@@ -108,17 +107,17 @@ func (l *Logger) Sync() error {
 	return l.syncer.Sync()
 }
 
-// NewNopLogger creates a logger that discards all log output. Useful for tests.
-func NewNopLogger() *Logger {
+// NewNop creates a logger that discards all log output. Useful for tests.
+func NewNop() *Logger {
 	return &Logger{
 		Logger: slog.New(slog.DiscardHandler),
 		syncer: noopSyncer{},
 	}
 }
 
-// NewBootstrapLogger creates a minimal JSON logger writing to stderr.
+// NewBootstrap creates a minimal JSON logger writing to stderr.
 // Use this in main() before the full configuration is available.
-func NewBootstrapLogger() *Logger {
+func NewBootstrap() *Logger {
 	zapLogger, err := zap.NewProduction()
 	if err != nil {
 		// zap failed to build (rare) — fall back to a plain stderr slog handler

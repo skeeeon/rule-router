@@ -1,5 +1,3 @@
-// file: internal/rule/signature.go
-
 package rule
 
 // SignatureVerification holds configuration for signature verification.

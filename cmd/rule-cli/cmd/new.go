@@ -1,4 +1,3 @@
-// file: cmd/rule-cli/cmd/new.go
 package cmd
 
 import (
@@ -56,7 +55,7 @@ through an interactive prompt.`,
 			}
 		} else {
 			// Template-based creation
-			content, err := renderer.GetTemplateContent(templateName)
+			content, err := renderer.TemplateContent(templateName)
 			if err != nil {
 				return err
 			}
@@ -81,7 +80,7 @@ through an interactive prompt.`,
 			}
 			return err
 		}
-		fmt.Printf("%s✓ Success! Rule file '%s' created.%s\n", cli.ColorGreen, output, cli.ColorReset)
+		fmt.Printf("%s✓ Success! Rule file %q created.%s\n", cli.ColorGreen, output, cli.ColorReset)
 
 		// Phase 4: Validation and Test Scaffolding
 		if err := validateRuleFile(output); err != nil {
@@ -94,7 +93,7 @@ through an interactive prompt.`,
 		}
 
 		if scaffoldTests {
-			testRunner := tester.New(logger.NewNopLogger(), false, 0)
+			testRunner := tester.New(logger.NewNop(), false, 0)
 			if err := testRunner.Scaffold(output, false); err != nil {
 				return fmt.Errorf("failed to scaffold tests: %w", err)
 			}
@@ -126,7 +125,7 @@ func listTemplates(r *cli.Renderer) error {
 }
 
 func showTemplateContent(r *cli.Renderer, templateName string) error {
-	content, err := r.GetTemplateContent(templateName)
+	content, err := r.TemplateContent(templateName)
 	if err != nil {
 		return err
 	}
@@ -149,7 +148,7 @@ func normalizeOutputPath(path string) string {
 
 func writeFileWithConfirm(path string, data []byte) error {
 	if _, err := os.Stat(path); err == nil {
-		fmt.Printf("File '%s' already exists. Overwrite? (y/N): ", path)
+		fmt.Printf("File %q already exists. Overwrite? (y/N): ", path)
 		var response string
 		fmt.Scanln(&response)
 		if strings.ToLower(strings.TrimSpace(response)) != "y" {
@@ -161,7 +160,7 @@ func writeFileWithConfirm(path string, data []byte) error {
 }
 
 func validateRuleFile(path string) error {
-	loader := rule.NewRulesLoader(logger.NewNopLogger(), nil)
+	loader := rule.NewLoader(logger.NewNop(), nil)
 	_, err := loader.LoadFromFile(path)
 	return err
 }

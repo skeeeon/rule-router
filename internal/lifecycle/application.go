@@ -1,5 +1,3 @@
-// file: internal/lifecycle/application.go
-
 // Package lifecycle provides application lifecycle management including
 // graceful shutdown and runtime reloading via SIGHUP signal.
 package lifecycle

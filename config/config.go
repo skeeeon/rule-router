@@ -1,8 +1,14 @@
-// file: config/config.go
-
+// Package config defines the unified rule-router configuration and loads it
+// from YAML via Viper, layering RR_-prefixed environment variables over the
+// file. A single Config covers every feature in the binary (router, gateway,
+// scheduler); the features block selects which of them run.
+//
+// Defaults and validation limits are exported as constants so callers can
+// reference the same values the loader applies.
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -548,7 +554,7 @@ func setDefaults(cfg *Config) {
 func validateConfig(cfg *Config) error {
 	// NATS validation
 	if len(cfg.NATS.URLs) == 0 {
-		return fmt.Errorf("at least one NATS URL must be specified")
+		return errors.New("at least one NATS URL must be specified")
 	}
 
 	// Authentication validation
@@ -566,16 +572,16 @@ func validateConfig(cfg *Config) error {
 		authCount++
 	}
 	if authCount > 1 {
-		return fmt.Errorf("only one NATS authentication method should be specified")
+		return errors.New("only one NATS authentication method should be specified")
 	}
 
 	// TLS validation
 	if cfg.NATS.TLS.Enable {
 		if cfg.NATS.TLS.CertFile != "" && cfg.NATS.TLS.KeyFile == "" {
-			return fmt.Errorf("NATS TLS key file is required when a cert file is provided")
+			return errors.New("NATS TLS key file is required when a cert file is provided")
 		}
 		if cfg.NATS.TLS.KeyFile != "" && cfg.NATS.TLS.CertFile == "" {
-			return fmt.Errorf("NATS TLS cert file is required when a key file is provided")
+			return errors.New("NATS TLS cert file is required when a key file is provided")
 		}
 	}
 
@@ -587,28 +593,28 @@ func validateConfig(cfg *Config) error {
 
 	// Consumer validation with bounds checking
 	if cfg.NATS.Consumers.WorkerCount < 1 {
-		return fmt.Errorf("worker count must be at least 1")
+		return errors.New("worker count must be at least 1")
 	}
 	if cfg.NATS.Consumers.WorkerCount > MaxWorkerCount {
 		return fmt.Errorf("worker count too high (%d), maximum is %d", cfg.NATS.Consumers.WorkerCount, MaxWorkerCount)
 	}
 	if cfg.NATS.Consumers.FetchBatchSize < 1 {
-		return fmt.Errorf("fetch batch size must be at least 1")
+		return errors.New("fetch batch size must be at least 1")
 	}
 	if cfg.NATS.Consumers.FetchBatchSize > MaxFetchBatchSize {
 		return fmt.Errorf("fetch batch size too high (%d), maximum is %d", cfg.NATS.Consumers.FetchBatchSize, MaxFetchBatchSize)
 	}
 	if cfg.NATS.Consumers.FetchTimeout <= 0 {
-		return fmt.Errorf("fetch timeout must be positive")
+		return errors.New("fetch timeout must be positive")
 	}
 	if cfg.NATS.Consumers.MaxAckPending < 1 {
-		return fmt.Errorf("max ack pending must be at least 1")
+		return errors.New("max ack pending must be at least 1")
 	}
 	if cfg.NATS.Consumers.MaxAckPending > MaxAckPending {
 		return fmt.Errorf("max ack pending too high (%d), maximum is %d", cfg.NATS.Consumers.MaxAckPending, MaxAckPending)
 	}
 	if cfg.NATS.Consumers.MaxDeliver < 1 {
-		return fmt.Errorf("max deliver must be at least 1")
+		return errors.New("max deliver must be at least 1")
 	}
 
 	validDeliverPolicies := map[string]bool{
@@ -637,47 +643,47 @@ func validateConfig(cfg *Config) error {
 	if cfg.Metrics.Enabled {
 		if cfg.Metrics.UpdateInterval != "" {
 			if _, err := time.ParseDuration(cfg.Metrics.UpdateInterval); err != nil {
-				return fmt.Errorf("invalid metrics update interval '%s': %w", cfg.Metrics.UpdateInterval, err)
+				return fmt.Errorf("invalid metrics update interval %q: %w", cfg.Metrics.UpdateInterval, err)
 			}
 		}
 	}
 
 	// Validate at least one feature is enabled
 	if !cfg.Features.Router && !cfg.Features.Gateway && !cfg.Features.Scheduler {
-		return fmt.Errorf("at least one feature must be enabled (router, gateway, or scheduler)")
+		return errors.New("at least one feature must be enabled (router, gateway, or scheduler)")
 	}
 
 	// HTTP server validation (only when gateway feature is enabled)
 	if cfg.Features.Gateway {
 		if cfg.HTTP.Server.Address == "" {
-			return fmt.Errorf("HTTP server address is required when gateway feature is enabled")
+			return errors.New("HTTP server address is required when gateway feature is enabled")
 		}
 		if cfg.HTTP.Server.ReadTimeout < 0 {
-			return fmt.Errorf("HTTP server read timeout cannot be negative")
+			return errors.New("HTTP server read timeout cannot be negative")
 		}
 		if cfg.HTTP.Server.WriteTimeout < 0 {
-			return fmt.Errorf("HTTP server write timeout cannot be negative")
+			return errors.New("HTTP server write timeout cannot be negative")
 		}
 		if cfg.HTTP.Server.InboundWorkerCount < 1 {
-			return fmt.Errorf("inbound worker count must be at least 1")
+			return errors.New("inbound worker count must be at least 1")
 		}
 		if cfg.HTTP.Server.InboundWorkerCount > MaxWorkerCount {
 			return fmt.Errorf("inbound worker count too high (%d), maximum is %d", cfg.HTTP.Server.InboundWorkerCount, MaxWorkerCount)
 		}
 		if cfg.HTTP.Server.InboundQueueSize < 1 {
-			return fmt.Errorf("inbound queue size must be at least 1")
+			return errors.New("inbound queue size must be at least 1")
 		}
 		if cfg.HTTP.Server.InboundQueueSize > MaxInboundQueueSize {
 			return fmt.Errorf("inbound queue size too high (%d), maximum is %d", cfg.HTTP.Server.InboundQueueSize, MaxInboundQueueSize)
 		}
 		if cfg.HTTP.Client.Timeout < 0 {
-			return fmt.Errorf("HTTP client timeout cannot be negative")
+			return errors.New("HTTP client timeout cannot be negative")
 		}
 		if cfg.HTTP.Client.MaxIdleConns < 0 {
-			return fmt.Errorf("HTTP client max idle connections cannot be negative")
+			return errors.New("HTTP client max idle connections cannot be negative")
 		}
 		if cfg.HTTP.Client.MaxIdleConnsPerHost < 0 {
-			return fmt.Errorf("HTTP client max idle connections per host cannot be negative")
+			return errors.New("HTTP client max idle connections per host cannot be negative")
 		}
 	}
 
@@ -686,7 +692,7 @@ func validateConfig(cfg *Config) error {
 		seen := make(map[string]bool, len(cfg.KV.Buckets))
 		for _, bucket := range cfg.KV.Buckets {
 			if bucket.Name == "" {
-				return fmt.Errorf("KV bucket name cannot be empty")
+				return errors.New("KV bucket name cannot be empty")
 			}
 			if seen[bucket.Name] {
 				return fmt.Errorf("duplicate KV bucket name: %q", bucket.Name)
@@ -698,13 +704,13 @@ func validateConfig(cfg *Config) error {
 	// KV rules validation
 	if cfg.KV.Rules.Enabled {
 		if cfg.KV.Rules.Bucket == "" {
-			return fmt.Errorf("KV rules bucket name cannot be empty when KV rules are enabled")
+			return errors.New("KV rules bucket name cannot be empty when KV rules are enabled")
 		}
 	}
 
 	// ForEach validation
 	if cfg.ForEach.MaxIterations < 0 {
-		return fmt.Errorf("forEach maxIterations cannot be negative (use 0 for unlimited)")
+		return errors.New("forEach maxIterations cannot be negative (use 0 for unlimited)")
 	}
 	if cfg.ForEach.MaxIterations > MaxForEachIterations {
 		return fmt.Errorf("forEach maxIterations too high (%d), maximum is %d", cfg.ForEach.MaxIterations, MaxForEachIterations)
@@ -717,12 +723,12 @@ func validateConfig(cfg *Config) error {
 // to be specified as plain strings (converted to KVBucketConfig with default filter)
 // or as objects with name and optional keyFilter.
 func kvBucketDecodeHook() mapstructure.DecodeHookFuncType {
-	return func(from reflect.Type, to reflect.Type, data interface{}) (interface{}, error) {
+	return func(from reflect.Type, to reflect.Type, data any) (any, error) {
 		if to != reflect.TypeOf(KVBucketConfig{}) {
 			return data, nil
 		}
 		if from.Kind() == reflect.String {
-			return map[string]interface{}{
+			return map[string]any{
 				"name":      data,
 				"keyFilter": ">",
 			}, nil

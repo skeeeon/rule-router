@@ -1,5 +1,3 @@
-// file: internal/rule/index.go
-
 package rule
 
 import (
@@ -10,9 +8,9 @@ import (
 	"rule-router/internal/logger"
 )
 
-// RuleIndex provides efficient rule lookup for NATS subjects
+// Index provides efficient rule lookup for NATS subjects
 // Supports both exact matches (O(1)) and wildcard patterns (O(n))
-type RuleIndex struct {
+type Index struct {
 	exactMatches map[string][]*Rule // exact subject -> rules
 	patternRules []*PatternRule     // rules with wildcards
 	stats        IndexStats
@@ -34,9 +32,9 @@ type IndexStats struct {
 	lastUpdated   time.Time
 }
 
-// NewRuleIndex creates a new rule index
-func NewRuleIndex(log *logger.Logger) *RuleIndex {
-	return &RuleIndex{
+// NewIndex creates a new rule index
+func NewIndex(log *logger.Logger) *Index {
+	return &Index{
 		exactMatches: make(map[string][]*Rule),
 		patternRules: make([]*PatternRule, 0),
 		logger:       log,
@@ -45,7 +43,7 @@ func NewRuleIndex(log *logger.Logger) *RuleIndex {
 
 // Add indexes a NATS-triggered rule for efficient lookup
 // HTTP-triggered rules are ignored (they're stored separately in Processor)
-func (idx *RuleIndex) Add(rule *Rule) {
+func (idx *Index) Add(rule *Rule) {
 	if rule == nil {
 		idx.logger.Error("attempted to add nil rule to index")
 		return
@@ -101,7 +99,7 @@ func (idx *RuleIndex) Add(rule *Rule) {
 
 // FindAllMatching returns all rules that match the given NATS subject
 // First checks exact matches (O(1)), then pattern matches (O(n))
-func (idx *RuleIndex) FindAllMatching(subject string) []*Rule {
+func (idx *Index) FindAllMatching(subject string) []*Rule {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
@@ -147,7 +145,7 @@ func (idx *RuleIndex) FindAllMatching(subject string) []*Rule {
 
 // FindAllMatchingTokenized returns all rules matching the given NATS subject.
 // Uses pre-split tokens to avoid redundant strings.Split in pattern matchers.
-func (idx *RuleIndex) FindAllMatchingTokenized(subject string, tokens []string) []*Rule {
+func (idx *Index) FindAllMatchingTokenized(subject string, tokens []string) []*Rule {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
@@ -191,8 +189,8 @@ func (idx *RuleIndex) FindAllMatchingTokenized(subject string, tokens []string) 
 	return allMatches
 }
 
-// GetSubjects returns all unique NATS subjects (both exact and patterns)
-func (idx *RuleIndex) GetSubjects() []string {
+// Subjects returns all unique NATS subjects (both exact and patterns)
+func (idx *Index) Subjects() []string {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
@@ -217,10 +215,10 @@ func (idx *RuleIndex) GetSubjects() []string {
 	return subjects
 }
 
-// GetSubscriptionSubjects returns subjects that should be used for JetStream subscriptions
+// SubscriptionSubjects returns subjects that should be used for JetStream subscriptions
 // Converts wildcard patterns to NATS subscription format
-func (idx *RuleIndex) GetSubscriptionSubjects() []string {
-	subjects := idx.GetSubjects()
+func (idx *Index) SubscriptionSubjects() []string {
+	subjects := idx.Subjects()
 
 	idx.logger.Info("returning subscription subjects",
 		"count", len(subjects),
@@ -230,7 +228,7 @@ func (idx *RuleIndex) GetSubscriptionSubjects() []string {
 }
 
 // Clear removes all indexed rules
-func (idx *RuleIndex) Clear() {
+func (idx *Index) Clear() {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
@@ -241,8 +239,8 @@ func (idx *RuleIndex) Clear() {
 	idx.logger.Info("index cleared")
 }
 
-// GetRuleCounts returns the number of exact and pattern rules
-func (idx *RuleIndex) GetRuleCounts() (exactCount, patternCount int) {
+// RuleCounts returns the number of exact and pattern rules
+func (idx *Index) RuleCounts() (exactCount, patternCount int) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
@@ -251,8 +249,8 @@ func (idx *RuleIndex) GetRuleCounts() (exactCount, patternCount int) {
 	return
 }
 
-// GetStats returns index statistics
-func (idx *RuleIndex) GetStats() IndexStats {
+// Stats returns index statistics
+func (idx *Index) Stats() IndexStats {
 	return IndexStats{
 		exactLookups:  atomic.LoadUint64(&idx.stats.exactLookups),
 		patternChecks: atomic.LoadUint64(&idx.stats.patternChecks),

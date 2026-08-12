@@ -1,5 +1,3 @@
-// file: internal/tester/types.go
-
 package tester
 
 import (
@@ -8,9 +6,9 @@ import (
 	"rule-router/internal/rule"
 )
 
-// TestConfig holds optional test-specific configurations.
+// Config holds optional test-specific configurations.
 // It defines the mock environment for a test run.
-type TestConfig struct {
+type Config struct {
 	MockTrigger   MockTrigger          `json:"mockTrigger"`
 	MockTime      string               `json:"mockTime,omitempty"`
 	Headers       map[string]string    `json:"headers,omitempty"`
@@ -48,8 +46,8 @@ type ExpectedOutput struct {
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
-// TestResult represents the outcome of a single test case.
-type TestResult struct {
+// Result represents the outcome of a single test case.
+type Result struct {
 	File       string `json:"file"`
 	Passed     bool   `json:"passed"`
 	Error      string `json:"error,omitempty"`
@@ -57,30 +55,30 @@ type TestResult struct {
 	DurationMs int64  `json:"duration_ms"`
 }
 
-// TestSummary aggregates all test results for a batch run.
-type TestSummary struct {
-	Total      int          `json:"total"`
-	Passed     int          `json:"passed"`
-	Failed     int          `json:"failed"`
-	DurationMs int64        `json:"duration_ms"`
-	Results    []TestResult `json:"results"`
+// Summary aggregates all test results for a batch run.
+type Summary struct {
+	Total      int      `json:"total"`
+	Passed     int      `json:"passed"`
+	Failed     int      `json:"failed"`
+	DurationMs int64    `json:"duration_ms"`
+	Results    []Result `json:"results"`
 }
 
-// TestGroup represents a single rule file (or a specific rule within a multi-rule file)
+// Group represents a single rule file (or a specific rule within a multi-rule file)
 // and all its associated test cases.
-type TestGroup struct {
-	RulePath   string
-	TestDir    string
-	TestFiles  []string
-	KVData     map[string]map[string]interface{}
-	TestConfig *TestConfig
-	RuleIndex  int // -1 = flat/legacy mode (all rules), >= 0 = specific rule in multi-rule file
+type Group struct {
+	RulePath  string
+	TestDir   string
+	TestFiles []string
+	KVData    map[string]map[string]any
+	Config    *Config
+	Index     int // -1 = flat/legacy mode (all rules), >= 0 = specific rule in multi-rule file
 }
 
-// TestJob is used for parallel execution of test cases.
-type TestJob struct {
+// Job is used for parallel execution of test cases.
+type Job struct {
 	Processor *rule.Processor
 	TestFile  string
-	Config    *TestConfig
+	Config    *Config
 	Verbose   bool
 }

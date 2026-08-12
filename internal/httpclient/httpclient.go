@@ -1,5 +1,9 @@
-// file: internal/httpclient/httpclient.go
-
+// Package httpclient executes the outbound half of a rule: it performs the HTTP
+// request an evaluated action describes, with per-action retry and backoff, and
+// optionally publishes the response body back to NATS.
+//
+// It is shared by every feature that can run an HTTP action, so retry policy and
+// response handling do not vary by trigger type.
 package httpclient
 
 import (
@@ -35,35 +39,35 @@ const (
 )
 
 // ResponsePublisher publishes a NATS message. Implemented by *broker.NATSBroker.
-// Used by HTTPExecutor to publish HTTP response bodies to NATS when an action's
+// Used by Executor to publish HTTP response bodies to NATS when an action's
 // PublishResponse is set. The interface keeps httpclient decoupled from broker.
 type ResponsePublisher interface {
 	Publish(ctx context.Context, action *rule.NATSAction) error
 }
 
-// HTTPExecutor handles HTTP request execution with retry logic.
+// Executor handles HTTP request execution with retry logic.
 // Used by both the http-gateway and rule-scheduler to execute HTTP actions.
-type HTTPExecutor struct {
+type Executor struct {
 	client    *http.Client
 	logger    *logger.Logger
 	metrics   *metrics.Metrics  // may be nil
 	publisher ResponsePublisher // may be nil; required for PublishResponse to take effect
 }
 
-// NewHTTPExecutor creates a new HTTP executor from config. The publisher is
+// NewExecutor creates a new HTTP executor from config. The publisher is
 // optional — when nil, actions with PublishResponse set will execute the HTTP
 // request normally but skip the response publish (with a warning).
-func NewHTTPExecutor(
+func NewExecutor(
 	cfg *config.HTTPClientConfig,
 	log *logger.Logger,
 	m *metrics.Metrics,
 	publisher ResponsePublisher,
-) *HTTPExecutor {
+) *Executor {
 	log = log.With("component", "http-client")
 	if cfg.TLS.InsecureSkipVerify {
 		log.Warn("TLS certificate verification is disabled for outbound HTTP requests — connections are vulnerable to MITM attacks (httpclient.tls.insecureSkipVerify=true)")
 	}
-	return &HTTPExecutor{
+	return &Executor{
 		client: &http.Client{
 			Timeout: cfg.Timeout,
 			Transport: &http.Transport{
@@ -87,7 +91,7 @@ func NewHTTPExecutor(
 // action.Retry.MaxAttempts. This avoids silently double-writing on POST/PATCH
 // when a failed request actually reached the server. Callers who know their
 // endpoint is idempotent opt in per-rule.
-func (e *HTTPExecutor) ExecuteHTTPAction(ctx context.Context, action *rule.HTTPAction) error {
+func (e *Executor) ExecuteHTTPAction(ctx context.Context, action *rule.HTTPAction) error {
 	maxAttempts := 1
 	initialDelay := retryInitialDelay
 	maxDelay := retryMaxDelay
@@ -150,7 +154,7 @@ func (e *HTTPExecutor) ExecuteHTTPAction(ctx context.Context, action *rule.HTTPA
 }
 
 // makeHTTPRequest makes a single HTTP request
-func (e *HTTPExecutor) makeHTTPRequest(ctx context.Context, action *rule.HTTPAction) error {
+func (e *Executor) makeHTTPRequest(ctx context.Context, action *rule.HTTPAction) error {
 	start := time.Now()
 
 	// Prepare payload

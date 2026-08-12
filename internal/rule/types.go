@@ -1,5 +1,3 @@
-// file: internal/rule/types.go
-
 package rule
 
 import (
@@ -357,9 +355,9 @@ type Conditions struct {
 //   - Booleans remain booleans
 //   - Type coercion is performed automatically when needed
 type Condition struct {
-	Field    string      `json:"field" yaml:"field"`                     // Template: "{temperature}" or "{@time.hour}"
-	Operator string      `json:"operator" yaml:"operator"`               // eq, gt, contains, etc.
-	Value    interface{} `json:"value,omitempty" yaml:"value,omitempty"` // Literal or template: 30 or "{@kv.config:max_temp}"
+	Field    string `json:"field" yaml:"field"`                     // Template: "{temperature}" or "{@time.hour}"
+	Operator string `json:"operator" yaml:"operator"`               // eq, gt, contains, etc.
+	Value    any    `json:"value,omitempty" yaml:"value,omitempty"` // Literal or template: 30 or "{@kv.config:max_temp}"
 
 	// For array operators (any/all/none) - nested conditions to evaluate against array elements
 	Conditions *Conditions `json:"conditions,omitempty" yaml:"conditions,omitempty"`
@@ -397,17 +395,17 @@ func NewSubjectContext(subject string) *SubjectContext {
 	}
 }
 
-// GetToken safely retrieves a token by index, returns empty string if out of bounds
-func (sc *SubjectContext) GetToken(index int) string {
+// Token safely retrieves a token by index, returns empty string if out of bounds
+func (sc *SubjectContext) Token(index int) string {
 	if index < 0 || index >= len(sc.Tokens) {
 		return ""
 	}
 	return sc.Tokens[index]
 }
 
-// GetField retrieves a subject field for template/condition processing
+// Field retrieves a subject field for template/condition processing
 // Supports: "@subject", "@subject.0", "@subject.1", "@subject.count"
-func (sc *SubjectContext) GetField(fieldName string) (interface{}, bool) {
+func (sc *SubjectContext) Field(fieldName string) (any, bool) {
 	switch fieldName {
 	case "@subject":
 		return sc.Full, true
@@ -418,7 +416,7 @@ func (sc *SubjectContext) GetField(fieldName string) (interface{}, bool) {
 		if strings.HasPrefix(fieldName, "@subject.") {
 			indexStr := fieldName[9:] // Remove "@subject."
 			if index, err := strconv.Atoi(indexStr); err == nil {
-				if token := sc.GetToken(index); token != "" {
+				if token := sc.Token(index); token != "" {
 					return token, true
 				}
 			}
@@ -452,17 +450,17 @@ func NewHTTPRequestContext(path, method string) *HTTPRequestContext {
 	}
 }
 
-// GetToken safely retrieves a path token by index
-func (hc *HTTPRequestContext) GetToken(index int) string {
+// Token safely retrieves a path token by index
+func (hc *HTTPRequestContext) Token(index int) string {
 	if index < 0 || index >= len(hc.PathTokens) {
 		return ""
 	}
 	return hc.PathTokens[index]
 }
 
-// GetField retrieves an HTTP field for template/condition processing
+// Field retrieves an HTTP field for template/condition processing
 // Supports: "@path", "@path.0", "@path.1", "@path.count", "@method"
-func (hc *HTTPRequestContext) GetField(fieldName string) (interface{}, bool) {
+func (hc *HTTPRequestContext) Field(fieldName string) (any, bool) {
 	switch fieldName {
 	case "@path":
 		return hc.Path, true
@@ -475,7 +473,7 @@ func (hc *HTTPRequestContext) GetField(fieldName string) (interface{}, bool) {
 		if strings.HasPrefix(fieldName, "@path.") {
 			indexStr := fieldName[6:] // Remove "@path."
 			if index, err := strconv.Atoi(indexStr); err == nil {
-				if token := hc.GetToken(index); token != "" {
+				if token := hc.Token(index); token != "" {
 					return token, true
 				}
 			}

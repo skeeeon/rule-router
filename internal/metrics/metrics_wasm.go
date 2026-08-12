@@ -1,4 +1,3 @@
-// file: internal/metrics/metrics_wasm.go
 // Stub metrics for WASM builds — no prometheus dependency.
 
 //go:build js && wasm
@@ -38,4 +37,4 @@ func (m *Metrics) IncHTTPInboundRequestsTotal(path, method, status string)      
 func (m *Metrics) ObserveHTTPRequestDuration(path, method string, seconds float64) {}
 func (m *Metrics) IncHTTPOutboundRequestsTotal(statusCode string)                  {}
 func (m *Metrics) ObserveHTTPOutboundDuration(statusCode string, seconds float64)  {}
-func (m *Metrics) GetStats() (received, errors uint64)                             { return 0, 0 }
+func (m *Metrics) Stats() (received, errors uint64)                                { return 0, 0 }

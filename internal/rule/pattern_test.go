@@ -331,9 +331,9 @@ func TestValidatePattern(t *testing.T) {
 
 			if tt.wantErr {
 				if err == nil {
-					t.Errorf("ValidatePattern() expected error containing '%s', got nil", tt.errMsg)
+					t.Errorf("ValidatePattern() expected error containing %q, got nil", tt.errMsg)
 				} else if !strings.Contains(err.Error(), tt.errMsg) {
-					t.Errorf("ValidatePattern() error = %v, want error containing '%s'", err, tt.errMsg)
+					t.Errorf("ValidatePattern() error = %v, want error containing %q", err, tt.errMsg)
 				}
 			} else {
 				if err != nil {
@@ -542,7 +542,7 @@ func BenchmarkNewPatternMatcher(b *testing.B) {
 }
 
 // BenchmarkPatternMatcher_MatchTokens_Exact benchmarks the exact-match fast
-// path on MatchTokens (the path RuleIndex uses). This is the path whose
+// path on MatchTokens (the path Index uses). This is the path whose
 // implementation switched from strings.Join+compare to slice equality.
 func BenchmarkPatternMatcher_MatchTokens_Exact(b *testing.B) {
 	matcher, _ := NewPatternMatcher("sensors.temperature.room1")

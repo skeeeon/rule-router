@@ -1,5 +1,3 @@
-// file: internal/gateway/server_test.go
-
 package gateway
 
 import (
@@ -28,8 +26,8 @@ func ghSign(secret, body string) string {
 // touch them.
 func newHMACTestServer(t *testing.T, secret string) *InboundServer {
 	t.Helper()
-	log := logger.NewNopLogger()
-	proc := rule.NewProcessor(log, nil, nil, nil)
+	log := logger.NewNop()
+	proc := rule.NewProcessor(log)
 	r := rule.Rule{
 		Trigger: rule.Trigger{HTTP: &rule.HTTPTrigger{
 			Path:   "/webhooks/github/push",
@@ -41,7 +39,7 @@ func newHMACTestServer(t *testing.T, secret string) *InboundServer {
 	if err := proc.LoadRules([]rule.Rule{r}); err != nil {
 		t.Fatalf("LoadRules: %v", err)
 	}
-	return NewInboundServer(log, nil, proc, nil, nil, &ServerConfig{})
+	return NewInboundServer(log, nil, proc, nil, nil, &Config{})
 }
 
 func TestWebhookHandler_HMACGate(t *testing.T) {

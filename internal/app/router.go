@@ -1,5 +1,3 @@
-// file: internal/app/router.go
-
 package app
 
 import (
@@ -53,7 +51,7 @@ func NewRouterApp(base *BaseApp, cfg *config.Config) (*RouterApp, error) {
 		if err := app.setupSubscriptions(); err != nil {
 			return nil, fmt.Errorf("failed to setup subscriptions: %w", err)
 		}
-		app.responder.Rebuild(app.processor.GetAllRules())
+		app.responder.Rebuild(app.processor.AllRules())
 	} else {
 		// KV mode: JetStream subscriptions are managed by base.RuleKVManager.
 		// Register a callback so core subscriptions track core-rule changes.
@@ -76,16 +74,16 @@ func (app *RouterApp) Run(ctx context.Context) error {
 		if err := app.base.RuleKVManager.WaitReady(ctx); err != nil {
 			return err
 		}
-		app.responder.Rebuild(app.base.RuleKVManager.GetCoreRules())
+		app.responder.Rebuild(app.base.RuleKVManager.CoreRules())
 	}
 
 	// Get subscription count
-	subMgr := app.base.Broker.GetSubscriptionManager()
-	subCount := subMgr.GetSubscriptionCount()
+	subMgr := app.base.Broker.SubscriptionManager()
+	subCount := subMgr.SubscriptionCount()
 
 	// Log configuration summary for transparency
-	allRules := app.processor.GetAllRules()
-	natsSubjects := app.processor.GetSubjects()
+	allRules := app.processor.AllRules()
+	natsSubjects := app.processor.Subjects()
 	app.logger.Info("configuration summary",
 		"totalRules", len(allRules),
 		"natsSubjects", len(natsSubjects),
@@ -143,18 +141,18 @@ func (app *RouterApp) setupSubscriptions() error {
 	for _, subject := range subjects {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("timeout during subscription setup for subject '%s'", subject)
+			return fmt.Errorf("timeout during subscription setup for subject %q", subject)
 		default:
 		}
 
 		app.logger.Debug("setting up subscription for subject", "subject", subject)
 
 		if err := app.base.Broker.CreateConsumerForSubject(subject); err != nil {
-			return fmt.Errorf("failed to create consumer for subject '%s': %w", subject, err)
+			return fmt.Errorf("failed to create consumer for subject %q: %w", subject, err)
 		}
 
 		if err := app.base.Broker.AddSubscription(subject); err != nil {
-			return fmt.Errorf("failed to add subscription for subject '%s': %w", subject, err)
+			return fmt.Errorf("failed to add subscription for subject %q: %w", subject, err)
 		}
 
 		app.logger.Info("subscription configured", "subject", subject)
@@ -174,7 +172,7 @@ func (app *RouterApp) setupSubscriptions() error {
 func (app *RouterApp) jetStreamSubjects() []string {
 	needsJetStream := make(map[string]bool) // subject has at least one JetStream-mode rule
 	coreOnly := make(map[string]bool)       // subject has at least one core-transport rule
-	for _, r := range app.processor.GetAllRules() {
+	for _, r := range app.processor.AllRules() {
 		if r.Trigger.NATS == nil {
 			continue
 		}
@@ -186,7 +184,7 @@ func (app *RouterApp) jetStreamSubjects() []string {
 	}
 
 	var subjects []string
-	for _, s := range app.processor.GetSubjects() {
+	for _, s := range app.processor.Subjects() {
 		if coreOnly[s] && !needsJetStream[s] {
 			app.logger.Info("subject served by core-NATS responder (reply:true or mode:core), skipping JetStream", "subject", s)
 			continue

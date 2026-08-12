@@ -1,5 +1,3 @@
-// file: internal/logger/fields.go
-
 package logger
 
 // Standard field key constants for structured logging.

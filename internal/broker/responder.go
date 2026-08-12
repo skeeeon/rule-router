@@ -1,5 +1,3 @@
-// file: internal/broker/responder.go
-
 package broker
 
 import (
@@ -105,9 +103,9 @@ func (r *Responder) Rebuild(rules []*rule.Rule) {
 			err error
 		)
 		if queue != "" {
-			sub, err = r.broker.GetNATSConn().QueueSubscribe(subject, queue, handler)
+			sub, err = r.broker.Conn().QueueSubscribe(subject, queue, handler)
 		} else {
-			sub, err = r.broker.GetNATSConn().Subscribe(subject, handler)
+			sub, err = r.broker.Conn().Subscribe(subject, handler)
 		}
 		if err != nil {
 			r.logger.Error("failed to subscribe core subject", "subject", subject, "queue", queue, "error", err)
@@ -214,7 +212,7 @@ func (r *Responder) makeHandler(triggerSubject string) nats.MsgHandler {
 				}
 
 			case a.HTTP != nil:
-				exec := r.broker.GetHTTPExecutor()
+				exec := r.broker.HTTPExecutor()
 				if exec == nil {
 					r.logger.Warn("HTTP action skipped - gateway feature not enabled",
 						"url", a.HTTP.URL,
@@ -313,7 +311,7 @@ func (r *Responder) executeSideEffect(ctx context.Context, action *rule.Action) 
 		}
 
 	case action.HTTP != nil:
-		exec := r.broker.GetHTTPExecutor()
+		exec := r.broker.HTTPExecutor()
 		if exec == nil {
 			r.logger.Warn("deferred HTTP action skipped - gateway feature not enabled",
 				"url", action.HTTP.URL,

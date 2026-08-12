@@ -1,5 +1,3 @@
-// file: internal/rule/respond_test.go
-
 package rule
 
 import (
@@ -192,7 +190,7 @@ func TestValidateTriggerActionCompatibility(t *testing.T) {
 		},
 	}
 
-	loader := NewRulesLoader(logger.NewNopLogger(), nil)
+	loader := NewLoader(logger.NewNop(), nil)
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			_, err := loader.ParseAndValidateYAML([]byte(c.yaml), "test")

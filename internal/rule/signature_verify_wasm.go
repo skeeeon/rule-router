@@ -1,4 +1,3 @@
-// file: internal/rule/signature_verify_wasm.go
 // No-op signature verification for WASM builds (nkeys not available).
 
 //go:build js && wasm

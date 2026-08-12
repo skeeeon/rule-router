@@ -10,11 +10,11 @@ func TestTimeContext_AllFields(t *testing.T) {
 	// Friday, March 15, 2024 at 14:30:45 UTC
 	fixedTime := time.Date(2024, 3, 15, 14, 30, 45, 0, time.UTC)
 	provider := NewMockTimeProvider(fixedTime)
-	ctx := provider.GetCurrentContext()
+	ctx := provider.CurrentContext()
 
 	tests := []struct {
 		field string
-		want  interface{}
+		want  any
 	}{
 		// Time fields
 		{"@time.hour", 14},
@@ -37,12 +37,12 @@ func TestTimeContext_AllFields(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.field, func(t *testing.T) {
-			got, exists := ctx.GetField(tt.field)
+			got, exists := ctx.Field(tt.field)
 			if !exists {
-				t.Fatalf("GetField(%s) field not found", tt.field)
+				t.Fatalf("Field(%s) field not found", tt.field)
 			}
 			if got != tt.want {
-				t.Errorf("GetField(%s) = %v (%T), want %v (%T)",
+				t.Errorf("Field(%s) = %v (%T), want %v (%T)",
 					tt.field, got, got, tt.want, tt.want)
 			}
 		})
@@ -98,10 +98,10 @@ func TestTimeContext_BusinessHours(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := NewMockTimeProvider(tt.time)
-			ctx := provider.GetCurrentContext()
+			ctx := provider.CurrentContext()
 
-			hour, _ := ctx.GetField("@time.hour")
-			dayNum, _ := ctx.GetField("@day.number")
+			hour, _ := ctx.Field("@time.hour")
+			dayNum, _ := ctx.Field("@day.number")
 
 			// Business hours: Monday-Friday (1-5), 9am-5pm (9-16)
 			gotBusinessHour := dayNum.(int) >= 1 && dayNum.(int) <= 5 &&
@@ -164,19 +164,19 @@ func TestTimeContext_DayTransitions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := NewMockTimeProvider(tt.time)
-			ctx := provider.GetCurrentContext()
+			ctx := provider.CurrentContext()
 
-			hour, _ := ctx.GetField("@time.hour")
+			hour, _ := ctx.Field("@time.hour")
 			if hour != tt.wantHour {
 				t.Errorf("hour = %v, want %v", hour, tt.wantHour)
 			}
 
-			dayName, _ := ctx.GetField("@day.name")
+			dayName, _ := ctx.Field("@day.name")
 			if dayName != tt.wantDay {
 				t.Errorf("day.name = %v, want %v", dayName, tt.wantDay)
 			}
 
-			month, _ := ctx.GetField("@date.month")
+			month, _ := ctx.Field("@date.month")
 			if month != tt.wantMonth {
 				t.Errorf("month = %v, want %v", month, tt.wantMonth)
 			}
@@ -189,9 +189,9 @@ func TestTimeContext_SundayHandling(t *testing.T) {
 	// Sunday in Go's time.Weekday is 0, but we map it to 7
 	sundayTime := time.Date(2024, 3, 17, 12, 0, 0, 0, time.UTC) // Sunday
 	provider := NewMockTimeProvider(sundayTime)
-	ctx := provider.GetCurrentContext()
+	ctx := provider.CurrentContext()
 
-	dayNum, exists := ctx.GetField("@day.number")
+	dayNum, exists := ctx.Field("@day.number")
 	if !exists {
 		t.Fatal("@day.number not found")
 	}
@@ -201,7 +201,7 @@ func TestTimeContext_SundayHandling(t *testing.T) {
 			dayNum, sundayTime.Weekday())
 	}
 
-	dayName, _ := ctx.GetField("@day.name")
+	dayName, _ := ctx.Field("@day.name")
 	if dayName != "sunday" {
 		t.Errorf("Sunday day.name = %v, want sunday", dayName)
 	}
@@ -212,19 +212,19 @@ func TestTimeContext_LeapYear(t *testing.T) {
 	// 2024 is a leap year - Feb 29 exists
 	leapDay := time.Date(2024, 2, 29, 12, 0, 0, 0, time.UTC)
 	provider := NewMockTimeProvider(leapDay)
-	ctx := provider.GetCurrentContext()
+	ctx := provider.CurrentContext()
 
-	day, _ := ctx.GetField("@date.day")
+	day, _ := ctx.Field("@date.day")
 	if day != 29 {
 		t.Errorf("Leap day = %v, want 29", day)
 	}
 
-	month, _ := ctx.GetField("@date.month")
+	month, _ := ctx.Field("@date.month")
 	if month != 2 {
 		t.Errorf("Leap month = %v, want 2 (February)", month)
 	}
 
-	iso, _ := ctx.GetField("@date.iso")
+	iso, _ := ctx.Field("@date.iso")
 	if iso != "2024-02-29" {
 		t.Errorf("Leap day ISO = %v, want 2024-02-29", iso)
 	}
@@ -233,7 +233,7 @@ func TestTimeContext_LeapYear(t *testing.T) {
 // TestTimeContext_InvalidField tests handling of unknown fields
 func TestTimeContext_InvalidField(t *testing.T) {
 	provider := NewSystemTimeProvider()
-	ctx := provider.GetCurrentContext()
+	ctx := provider.CurrentContext()
 
 	invalidFields := []string{
 		"@time.second", // Not exposed
@@ -246,9 +246,9 @@ func TestTimeContext_InvalidField(t *testing.T) {
 
 	for _, field := range invalidFields {
 		t.Run(field, func(t *testing.T) {
-			_, exists := ctx.GetField(field)
+			_, exists := ctx.Field(field)
 			if exists {
-				t.Errorf("GetField(%s) should not exist", field)
+				t.Errorf("Field(%s) should not exist", field)
 			}
 		})
 	}
@@ -257,9 +257,9 @@ func TestTimeContext_InvalidField(t *testing.T) {
 // TestTimeContext_GetAllFieldNames tests field enumeration
 func TestTimeContext_GetAllFieldNames(t *testing.T) {
 	provider := NewSystemTimeProvider()
-	ctx := provider.GetCurrentContext()
+	ctx := provider.CurrentContext()
 
-	fieldNames := ctx.GetAllFieldNames()
+	fieldNames := ctx.FieldNames()
 
 	expectedFields := []string{
 		"@time.hour",
@@ -282,13 +282,13 @@ func TestTimeContext_GetAllFieldNames(t *testing.T) {
 
 	for _, expected := range expectedFields {
 		if !fieldMap[expected] {
-			t.Errorf("Expected field %s not found in GetAllFieldNames()", expected)
+			t.Errorf("Expected field %s not found in FieldNames()", expected)
 		}
 	}
 
 	// Verify we have the right count (no extra fields)
 	if len(fieldNames) != len(expectedFields) {
-		t.Errorf("GetAllFieldNames() returned %d fields, expected %d",
+		t.Errorf("FieldNames() returned %d fields, expected %d",
 			len(fieldNames), len(expectedFields))
 	}
 }
@@ -324,14 +324,14 @@ func TestTimeContext_ISOFormats(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := NewMockTimeProvider(tt.time)
-			ctx := provider.GetCurrentContext()
+			ctx := provider.CurrentContext()
 
-			iso, _ := ctx.GetField("@timestamp.iso")
+			iso, _ := ctx.Field("@timestamp.iso")
 			if iso != tt.wantISO {
 				t.Errorf("timestamp.iso = %v, want %v", iso, tt.wantISO)
 			}
 
-			date, _ := ctx.GetField("@date.iso")
+			date, _ := ctx.Field("@date.iso")
 			if date != tt.wantDate {
 				t.Errorf("date.iso = %v, want %v", date, tt.wantDate)
 			}
@@ -362,14 +362,14 @@ func TestTimeContext_DayNames(t *testing.T) {
 		t.Run(tt.wantName, func(t *testing.T) {
 			testTime := baseTime.AddDate(0, 0, tt.dayOffset)
 			provider := NewMockTimeProvider(testTime)
-			ctx := provider.GetCurrentContext()
+			ctx := provider.CurrentContext()
 
-			dayName, _ := ctx.GetField("@day.name")
+			dayName, _ := ctx.Field("@day.name")
 			if dayName != tt.wantName {
 				t.Errorf("day.name = %v, want %v", dayName, tt.wantName)
 			}
 
-			dayNum, _ := ctx.GetField("@day.number")
+			dayNum, _ := ctx.Field("@day.number")
 			if dayNum != tt.wantNum {
 				t.Errorf("day.number = %v, want %v", dayNum, tt.wantNum)
 			}
@@ -382,8 +382,8 @@ func TestSystemTimeProvider(t *testing.T) {
 	provider := NewSystemTimeProvider()
 
 	// Get context twice - they should both work
-	ctx1 := provider.GetCurrentContext()
-	ctx2 := provider.GetCurrentContext()
+	ctx1 := provider.CurrentContext()
+	ctx2 := provider.CurrentContext()
 
 	// Verify all expected fields exist in both contexts
 	expectedFields := []string{
@@ -394,16 +394,16 @@ func TestSystemTimeProvider(t *testing.T) {
 	}
 
 	for _, field := range expectedFields {
-		if _, exists := ctx1.GetField(field); !exists {
+		if _, exists := ctx1.Field(field); !exists {
 			t.Errorf("ctx1 missing field: %s", field)
 		}
-		if _, exists := ctx2.GetField(field); !exists {
+		if _, exists := ctx2.Field(field); !exists {
 			t.Errorf("ctx2 missing field: %s", field)
 		}
 	}
 
 	// Verify timestamps are reasonable (not zero, not far in future)
-	ts1, _ := ctx1.GetField("@timestamp.unix")
+	ts1, _ := ctx1.Field("@timestamp.unix")
 	unix1 := ts1.(int64)
 
 	// Timestamp should be after 2024-01-01 (1704067200) and before 2030-01-01 (1893456000)
@@ -412,7 +412,7 @@ func TestSystemTimeProvider(t *testing.T) {
 	}
 
 	// Verify ISO format is parseable
-	iso1, _ := ctx1.GetField("@timestamp.iso")
+	iso1, _ := ctx1.Field("@timestamp.iso")
 	_, err := time.Parse(time.RFC3339, iso1.(string))
 	if err != nil {
 		t.Errorf("Invalid ISO timestamp format: %v, error: %v", iso1, err)
@@ -425,11 +425,11 @@ func TestMockTimeProvider(t *testing.T) {
 	mock := NewMockTimeProvider(fixedTime)
 
 	// Multiple calls should return same time
-	ctx1 := mock.GetCurrentContext()
-	ctx2 := mock.GetCurrentContext()
+	ctx1 := mock.CurrentContext()
+	ctx2 := mock.CurrentContext()
 
-	ts1, _ := ctx1.GetField("@timestamp.unix")
-	ts2, _ := ctx2.GetField("@timestamp.unix")
+	ts1, _ := ctx1.Field("@timestamp.unix")
+	ts2, _ := ctx2.Field("@timestamp.unix")
 
 	if ts1 != ts2 {
 		t.Errorf("Mock time changing: ts1=%v, ts2=%v", ts1, ts2)
@@ -438,14 +438,14 @@ func TestMockTimeProvider(t *testing.T) {
 	// SetTime should update the time
 	newTime := time.Date(2024, 3, 16, 10, 0, 0, 0, time.UTC)
 	mock.SetTime(newTime)
-	ctx3 := mock.GetCurrentContext()
+	ctx3 := mock.CurrentContext()
 
-	hour3, _ := ctx3.GetField("@time.hour")
+	hour3, _ := ctx3.Field("@time.hour")
 	if hour3 != 10 {
 		t.Errorf("After SetTime, hour = %v, want 10", hour3)
 	}
 
-	day3, _ := ctx3.GetField("@date.day")
+	day3, _ := ctx3.Field("@date.day")
 	if day3 != 16 {
 		t.Errorf("After SetTime, day = %v, want 16", day3)
 	}
@@ -454,18 +454,18 @@ func TestMockTimeProvider(t *testing.T) {
 // BenchmarkTimeContext_GetField benchmarks field lookup performance
 func BenchmarkTimeContext_GetField(b *testing.B) {
 	provider := NewSystemTimeProvider()
-	ctx := provider.GetCurrentContext()
+	ctx := provider.CurrentContext()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ctx.GetField("@time.hour")
+		ctx.Field("@time.hour")
 	}
 }
 
 // BenchmarkTimeContext_MultipleFields benchmarks multiple field lookups
 func BenchmarkTimeContext_MultipleFields(b *testing.B) {
 	provider := NewSystemTimeProvider()
-	ctx := provider.GetCurrentContext()
+	ctx := provider.CurrentContext()
 
 	fields := []string{
 		"@time.hour",
@@ -478,7 +478,7 @@ func BenchmarkTimeContext_MultipleFields(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, field := range fields {
-			ctx.GetField(field)
+			ctx.Field(field)
 		}
 	}
 }
@@ -489,17 +489,17 @@ func BenchmarkTimeContext_Creation(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		provider.GetCurrentContext()
+		provider.CurrentContext()
 	}
 }
 
 // BenchmarkTimeContext_GetAllFieldNames benchmarks field enumeration
 func BenchmarkTimeContext_GetAllFieldNames(b *testing.B) {
 	provider := NewSystemTimeProvider()
-	ctx := provider.GetCurrentContext()
+	ctx := provider.CurrentContext()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ctx.GetAllFieldNames()
+		ctx.FieldNames()
 	}
 }

@@ -1,5 +1,3 @@
-// file: internal/rule/throttle.go
-
 package rule
 
 import (

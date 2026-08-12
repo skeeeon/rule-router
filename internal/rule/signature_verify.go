@@ -1,4 +1,3 @@
-// file: internal/rule/signature_verify.go
 // NKey signature verification — requires nats-io/nkeys (excluded from WASM builds).
 
 //go:build !js

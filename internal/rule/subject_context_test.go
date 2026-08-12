@@ -1,5 +1,3 @@
-// file: internal/rule/subject_context_test.go
-
 package rule
 
 import (
@@ -13,7 +11,7 @@ func TestSubjectContext_BasicFields(t *testing.T) {
 
 	tests := []struct {
 		field string
-		want  interface{}
+		want  any
 	}{
 		{"@subject", "sensors.temperature.room1"},
 		{"@subject.count", 3},
@@ -24,12 +22,12 @@ func TestSubjectContext_BasicFields(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.field, func(t *testing.T) {
-			got, exists := ctx.GetField(tt.field)
+			got, exists := ctx.Field(tt.field)
 			if !exists {
-				t.Fatalf("GetField(%s) field not found", tt.field)
+				t.Fatalf("Field(%s) field not found", tt.field)
 			}
 			if got != tt.want {
-				t.Errorf("GetField(%s) = %v, want %v", tt.field, got, tt.want)
+				t.Errorf("Field(%s) = %v, want %v", tt.field, got, tt.want)
 			}
 		})
 	}
@@ -84,9 +82,9 @@ func TestSubjectContext_TokenIndexing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := NewSubjectContext(tt.subject)
-			got := ctx.GetToken(tt.index)
+			got := ctx.Token(tt.index)
 			if got != tt.want {
-				t.Errorf("GetToken(%d) = %q, want %q", tt.index, got, tt.want)
+				t.Errorf("Token(%d) = %q, want %q", tt.index, got, tt.want)
 			}
 		})
 	}
@@ -105,7 +103,7 @@ func TestSubjectContext_LongSubject(t *testing.T) {
 
 	// Test all indices work
 	for i := 0; i < 15; i++ {
-		got := ctx.GetToken(i)
+		got := ctx.Token(i)
 		if got != tokens[i] {
 			t.Errorf("Token[%d] = %q, want %q", i, got, tokens[i])
 		}
@@ -150,7 +148,7 @@ func TestSubjectContext_SpecialCharacters(t *testing.T) {
 			}
 
 			for i, want := range tt.tokens {
-				got := ctx.GetToken(i)
+				got := ctx.Token(i)
 				if got != want {
 					t.Errorf("Token[%d] = %q, want %q", i, got, want)
 				}
@@ -173,9 +171,9 @@ func TestSubjectContext_InvalidFields(t *testing.T) {
 
 	for _, field := range invalidFields {
 		t.Run(field, func(t *testing.T) {
-			_, exists := ctx.GetField(field)
+			_, exists := ctx.Field(field)
 			if exists {
-				t.Errorf("GetField(%s) should not exist", field)
+				t.Errorf("Field(%s) should not exist", field)
 			}
 		})
 	}
@@ -223,7 +221,7 @@ func TestSubjectContext_WildcardUseCase(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := NewSubjectContext(tt.actualSubj)
-			got := ctx.GetToken(tt.extractToken)
+			got := ctx.Token(tt.extractToken)
 			if got != tt.wantValue {
 				t.Errorf("Token[%d] = %q, want %q (subject: %s)",
 					tt.extractToken, got, tt.wantValue, tt.actualSubj)
@@ -239,7 +237,7 @@ func TestSubjectContext_TemplateUsage(t *testing.T) {
 		name    string
 		subject string
 		field   string
-		want    interface{}
+		want    any
 	}{
 		{
 			name:    "route by device type",
@@ -270,12 +268,12 @@ func TestSubjectContext_TemplateUsage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := NewSubjectContext(tt.subject)
-			got, exists := ctx.GetField(tt.field)
+			got, exists := ctx.Field(tt.field)
 			if !exists {
-				t.Fatalf("GetField(%s) not found", tt.field)
+				t.Fatalf("Field(%s) not found", tt.field)
 			}
 			if got != tt.want {
-				t.Errorf("GetField(%s) = %v, want %v", tt.field, got, tt.want)
+				t.Errorf("Field(%s) = %v, want %v", tt.field, got, tt.want)
 			}
 		})
 	}
@@ -297,7 +295,7 @@ func BenchmarkSubjectContext_GetToken(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ctx.GetToken(1)
+		ctx.Token(1)
 	}
 }
 
@@ -307,7 +305,7 @@ func BenchmarkSubjectContext_GetField(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ctx.GetField("@subject.1")
+		ctx.Field("@subject.1")
 	}
 }
 
@@ -324,7 +322,7 @@ func BenchmarkSubjectContext_MultipleFields(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, field := range fields {
-			ctx.GetField(field)
+			ctx.Field(field)
 		}
 	}
 }
@@ -336,6 +334,6 @@ func BenchmarkSubjectContext_LongSubject(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		ctx := NewSubjectContext(subject)
-		_ = ctx.GetToken(7)
+		_ = ctx.Token(7)
 	}
 }

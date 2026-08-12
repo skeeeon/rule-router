@@ -1,8 +1,7 @@
-// file: internal/rule/loader.go
-
 package rule
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,15 +22,15 @@ var envVarPattern = regexp.MustCompile(`\$\{([A-Za-z0-9_]+)\}`)
 // kvFieldPattern matches KV field references in templates: {@kv.bucket.key} or {@kv.bucket.key:path}
 var kvFieldPattern = regexp.MustCompile(`\{@kv\.(.+?)\}`)
 
-// RulesLoader handles loading and validating rule definitions from YAML files
-type RulesLoader struct {
+// Loader handles loading and validating rule definitions from YAML files
+type Loader struct {
 	logger              *logger.Logger
 	configuredKVBuckets []string
 }
 
-// NewRulesLoader creates a new rules loader
-func NewRulesLoader(log *logger.Logger, kvBuckets []string) *RulesLoader {
-	return &RulesLoader{
+// NewLoader creates a new rules loader
+func NewLoader(log *logger.Logger, kvBuckets []string) *Loader {
+	return &Loader{
 		logger:              log,
 		configuredKVBuckets: kvBuckets,
 	}
@@ -39,7 +38,7 @@ func NewRulesLoader(log *logger.Logger, kvBuckets []string) *RulesLoader {
 
 // LoadFromDirectory loads all .yaml and .yml files from a directory, recursively,
 // while skipping any directories with a "_test" suffix.
-func (l *RulesLoader) LoadFromDirectory(dirPath string) ([]Rule, error) {
+func (l *Loader) LoadFromDirectory(dirPath string) ([]Rule, error) {
 	l.logger.Info("loading rules from directory", "path", dirPath)
 
 	info, err := os.Stat(dirPath)
@@ -97,7 +96,7 @@ func (l *RulesLoader) LoadFromDirectory(dirPath string) ([]Rule, error) {
 }
 
 // LoadFromFile loads rules from a single YAML file
-func (l *RulesLoader) LoadFromFile(filePath string) ([]Rule, error) {
+func (l *Loader) LoadFromFile(filePath string) ([]Rule, error) {
 	l.logger.Debug("loading rules from file", "path", filePath)
 
 	data, err := os.ReadFile(filePath)
@@ -111,7 +110,7 @@ func (l *RulesLoader) LoadFromFile(filePath string) ([]Rule, error) {
 // ParseAndValidateYAML parses YAML bytes into rules, expands env vars, and validates.
 // source is used for error messages (e.g. KV key name or file path).
 // This is the shared parsing pipeline used by both file-based and KV-based rule loading.
-func (l *RulesLoader) ParseAndValidateYAML(data []byte, source string) ([]Rule, error) {
+func (l *Loader) ParseAndValidateYAML(data []byte, source string) ([]Rule, error) {
 	var rules []Rule
 	if err := yaml.Unmarshal(data, &rules); err != nil {
 		return nil, fmt.Errorf("failed to parse YAML: %w", err)
@@ -160,7 +159,7 @@ func (l *RulesLoader) ParseAndValidateYAML(data []byte, source string) ([]Rule, 
 // than a silent precedence rule, since which one wins would be a coin flip to
 // the reader. Called once per rule before env expansion and validation, so
 // everything downstream only has to know about Throttle.
-func (l *RulesLoader) normalizeThrottle(rule *Rule, filePath string, ruleIndex int) error {
+func (l *Loader) normalizeThrottle(rule *Rule, filePath string, ruleIndex int) error {
 	fold := func(throttle, debounce **ThrottleConfig, location string) error {
 		if *debounce == nil {
 			return nil
@@ -202,7 +201,7 @@ func (l *RulesLoader) normalizeThrottle(rule *Rule, filePath string, ruleIndex i
 
 // expandEnvironmentVariables expands ${VAR_NAME} placeholders in a rule
 // This happens at load time, before validation, for static configuration
-func (l *RulesLoader) expandEnvironmentVariables(rule *Rule, filePath string, ruleIndex int) error {
+func (l *Loader) expandEnvironmentVariables(rule *Rule, filePath string, ruleIndex int) error {
 	l.logger.Debug("expanding environment variables in rule",
 		"file", filePath,
 		"ruleIndex", ruleIndex)
@@ -222,7 +221,7 @@ func (l *RulesLoader) expandEnvironmentVariables(rule *Rule, filePath string, ru
 }
 
 // expandTriggerEnvVars expands env vars in trigger throttle fields
-func (l *RulesLoader) expandTriggerEnvVars(trigger *Trigger, filePath string, ruleIndex int) {
+func (l *Loader) expandTriggerEnvVars(trigger *Trigger, filePath string, ruleIndex int) {
 	if trigger.NATS != nil {
 		l.expandThrottleEnvVars(trigger.NATS.Throttle, "trigger.nats.throttle", filePath, ruleIndex)
 	}
@@ -241,7 +240,7 @@ func (l *RulesLoader) expandTriggerEnvVars(trigger *Trigger, filePath string, ru
 }
 
 // expandConditionsEnvVars recursively expands env vars in condition fields and values
-func (l *RulesLoader) expandConditionsEnvVars(conds *Conditions, filePath string, ruleIndex int) {
+func (l *Loader) expandConditionsEnvVars(conds *Conditions, filePath string, ruleIndex int) {
 	if conds == nil {
 		return
 	}
@@ -271,15 +270,15 @@ func (l *RulesLoader) expandConditionsEnvVars(conds *Conditions, filePath string
 }
 
 // expandEnvVarsInValue expands env vars in a condition value (handles strings, arrays, other types)
-func (l *RulesLoader) expandEnvVarsInValue(value interface{}, location, filePath string, ruleIndex int) interface{} {
+func (l *Loader) expandEnvVarsInValue(value any, location, filePath string, ruleIndex int) any {
 	switch v := value.(type) {
 	case string:
 		// Most common case: value: "${EXPECTED_STATUS}"
 		return l.expandEnvVarsInString(v, location, filePath, ruleIndex)
 
-	case []interface{}:
+	case []any:
 		// Array values: value: ["${VAL1}", "${VAL2}"]
-		result := make([]interface{}, len(v))
+		result := make([]any, len(v))
 		for j, item := range v {
 			if str, ok := item.(string); ok {
 				result[j] = l.expandEnvVarsInString(str, fmt.Sprintf("%s[%d]", location, j), filePath, ruleIndex)
@@ -296,7 +295,7 @@ func (l *RulesLoader) expandEnvVarsInValue(value interface{}, location, filePath
 }
 
 // expandActionEnvVars expands env vars in action fields
-func (l *RulesLoader) expandActionEnvVars(action *Action, filePath string, ruleIndex int) {
+func (l *Loader) expandActionEnvVars(action *Action, filePath string, ruleIndex int) {
 	if action.NATS != nil {
 		natsAction := action.NATS
 
@@ -355,7 +354,7 @@ func (l *RulesLoader) expandActionEnvVars(action *Action, filePath string, ruleI
 
 // expandThrottleEnvVars expands ${VAR} placeholders in a throttle block.
 // No-op when the block is absent.
-func (l *RulesLoader) expandThrottleEnvVars(cfg *ThrottleConfig, location, filePath string, ruleIndex int) {
+func (l *Loader) expandThrottleEnvVars(cfg *ThrottleConfig, location, filePath string, ruleIndex int) {
 	if cfg == nil {
 		return
 	}
@@ -366,7 +365,7 @@ func (l *RulesLoader) expandThrottleEnvVars(cfg *ThrottleConfig, location, fileP
 // expandEnvVarsInString expands ${VAR_NAME} placeholders in a string
 // Returns the expanded string with environment variables substituted
 // Missing variables are replaced with empty string and logged as warnings
-func (l *RulesLoader) expandEnvVarsInString(input, location, filePath string, ruleIndex int) string {
+func (l *Loader) expandEnvVarsInString(input, location, filePath string, ruleIndex int) string {
 	// Fast path: no expansion needed
 	if input == "" || !strings.Contains(input, "${") {
 		return input
@@ -403,7 +402,7 @@ func (l *RulesLoader) expandEnvVarsInString(input, location, filePath string, ru
 }
 
 // validateRule validates a complete rule with new trigger/action format
-func (l *RulesLoader) validateRule(rule *Rule, filePath string, ruleIndex int) error {
+func (l *Loader) validateRule(rule *Rule, filePath string, ruleIndex int) error {
 	if err := l.validateTrigger(&rule.Trigger, filePath, ruleIndex); err != nil {
 		return err
 	}
@@ -430,34 +429,34 @@ func (l *RulesLoader) validateRule(rule *Rule, filePath string, ruleIndex int) e
 //   - a NATS trigger with reply:true requires a respond action (no reply otherwise)
 //   - a NATS request action is only honored on HTTP triggers (the HTTP↔NATS bridge);
 //     mid-pipeline NATS enrichment is not supported yet
-func (l *RulesLoader) validateTriggerActionCompatibility(trigger *Trigger, action *Action) error {
+func (l *Loader) validateTriggerActionCompatibility(trigger *Trigger, action *Action) error {
 	natsReply := trigger.NATS != nil && trigger.NATS.Reply
 
 	if action.Respond != nil {
 		if trigger.HTTP == nil && !natsReply {
-			return fmt.Errorf("respond action requires an HTTP trigger or a NATS trigger with 'reply: true'")
+			return errors.New("respond action requires an HTTP trigger or a NATS trigger with 'reply: true'")
 		}
 	}
 
 	if natsReply && action.Respond == nil {
-		return fmt.Errorf("NATS trigger with 'reply: true' requires a respond action")
+		return errors.New("NATS trigger with 'reply: true' requires a respond action")
 	}
 
 	if action.NATS != nil && action.NATS.Request && trigger.HTTP == nil {
-		return fmt.Errorf("'request: true' on a NATS action is only supported on HTTP triggers (the HTTP↔NATS bridge)")
+		return errors.New("'request: true' on a NATS action is only supported on HTTP triggers (the HTTP↔NATS bridge)")
 	}
 
 	return nil
 }
 
 // validateTrigger ensures exactly one trigger type is specified
-func (l *RulesLoader) validateTrigger(trigger *Trigger, filePath string, ruleIndex int) error {
+func (l *Loader) validateTrigger(trigger *Trigger, filePath string, ruleIndex int) error {
 	triggerCount := 0
 
 	if trigger.NATS != nil {
 		triggerCount++
 		if trigger.NATS.Subject == "" {
-			return fmt.Errorf("NATS trigger subject cannot be empty")
+			return errors.New("NATS trigger subject cannot be empty")
 		}
 		if err := l.validateWildcardPattern(trigger.NATS.Subject); err != nil {
 			return fmt.Errorf("invalid NATS subject pattern: %w", err)
@@ -469,10 +468,10 @@ func (l *RulesLoader) validateTrigger(trigger *Trigger, filePath string, ruleInd
 			return err
 		}
 		if trigger.NATS.Reply && trigger.NATS.Mode == ModeJetStream {
-			return fmt.Errorf("NATS trigger with 'reply: true' uses core request/reply transport and cannot set 'mode: jetstream'")
+			return errors.New("NATS trigger with 'reply: true' uses core request/reply transport and cannot set 'mode: jetstream'")
 		}
 		if trigger.NATS.Queue != "" && !trigger.NATS.IsCore() {
-			return fmt.Errorf("NATS trigger 'queue' requires a core subscription — set 'reply: true' or 'mode: core'")
+			return errors.New("NATS trigger 'queue' requires a core subscription — set 'reply: true' or 'mode: core'")
 		}
 	}
 
@@ -508,32 +507,32 @@ func (l *RulesLoader) validateTrigger(trigger *Trigger, filePath string, ruleInd
 	}
 
 	if triggerCount == 0 {
-		return fmt.Errorf("rule must have a NATS, HTTP, or schedule trigger")
+		return errors.New("rule must have a NATS, HTTP, or schedule trigger")
 	}
 
 	if triggerCount > 1 {
-		return fmt.Errorf("rule must have exactly one trigger type")
+		return errors.New("rule must have exactly one trigger type")
 	}
 
 	return nil
 }
 
 // validateScheduleTrigger validates a schedule trigger configuration
-func (l *RulesLoader) validateScheduleTrigger(schedule *ScheduleTrigger) error {
+func (l *Loader) validateScheduleTrigger(schedule *ScheduleTrigger) error {
 	if schedule.Cron == "" {
-		return fmt.Errorf("schedule trigger cron expression cannot be empty")
+		return errors.New("schedule trigger cron expression cannot be empty")
 	}
 
 	// Validate cron expression is parseable (standard 5-field)
 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 	if _, err := parser.Parse(schedule.Cron); err != nil {
-		return fmt.Errorf("invalid cron expression '%s': %w", schedule.Cron, err)
+		return fmt.Errorf("invalid cron expression %q: %w", schedule.Cron, err)
 	}
 
 	// Validate timezone if provided
 	if schedule.Timezone != "" {
 		if _, err := time.LoadLocation(schedule.Timezone); err != nil {
-			return fmt.Errorf("invalid timezone '%s': %w", schedule.Timezone, err)
+			return fmt.Errorf("invalid timezone %q: %w", schedule.Timezone, err)
 		}
 	}
 
@@ -541,7 +540,7 @@ func (l *RulesLoader) validateScheduleTrigger(schedule *ScheduleTrigger) error {
 }
 
 // validateAction ensures exactly one action type is specified
-func (l *RulesLoader) validateAction(action *Action, filePath string, ruleIndex int) error {
+func (l *Loader) validateAction(action *Action, filePath string, ruleIndex int) error {
 	natsCount := 0
 	httpCount := 0
 	respondCount := 0
@@ -569,7 +568,7 @@ func (l *RulesLoader) validateAction(action *Action, filePath string, ruleIndex 
 
 	total := natsCount + httpCount + respondCount
 	if total == 0 {
-		return fmt.Errorf("rule must have a NATS, HTTP, or respond action")
+		return errors.New("rule must have a NATS, HTTP, or respond action")
 	}
 
 	if total > 1 {
@@ -582,9 +581,9 @@ func (l *RulesLoader) validateAction(action *Action, filePath string, ruleIndex 
 // validateRespondAction validates a respond action configuration. A respond
 // writes the evaluated payload back to the caller (HTTP response or NATS reply),
 // so it has no subject/URL/forEach — only payload, headers, and an HTTP status.
-func (l *RulesLoader) validateRespondAction(action *RespondAction) error {
+func (l *Loader) validateRespondAction(action *RespondAction) error {
 	if action.Passthrough && action.Payload != "" {
-		return fmt.Errorf("cannot specify both 'payload' and 'passthrough: true' - choose one")
+		return errors.New("cannot specify both 'payload' and 'passthrough: true' - choose one")
 	}
 
 	if action.StatusCode != 0 && (action.StatusCode < 100 || action.StatusCode > 599) {
@@ -598,10 +597,10 @@ func (l *RulesLoader) validateRespondAction(action *RespondAction) error {
 	if action.Headers != nil {
 		for key, value := range action.Headers {
 			if key == "" {
-				return fmt.Errorf("header name cannot be empty")
+				return errors.New("header name cannot be empty")
 			}
 			if err := l.validateKVFieldsInTemplate(value); err != nil {
-				return fmt.Errorf("invalid template in header '%s': %w", key, err)
+				return fmt.Errorf("invalid template in header %q: %w", key, err)
 			}
 		}
 	}
@@ -618,9 +617,9 @@ func validateNATSMode(mode, where string) error {
 }
 
 // validateNATSAction validates a NATS action configuration
-func (l *RulesLoader) validateNATSAction(action *NATSAction) error {
+func (l *Loader) validateNATSAction(action *NATSAction) error {
 	if action.Subject == "" {
-		return fmt.Errorf("NATS action subject cannot be empty")
+		return errors.New("NATS action subject cannot be empty")
 	}
 
 	if err := validateNATSMode(action.Mode, "action"); err != nil {
@@ -628,7 +627,7 @@ func (l *RulesLoader) validateNATSAction(action *NATSAction) error {
 	}
 
 	if action.Passthrough && action.Payload != "" {
-		return fmt.Errorf("cannot specify both 'payload' and 'passthrough: true' - choose one")
+		return errors.New("cannot specify both 'payload' and 'passthrough: true' - choose one")
 	}
 
 	// Validate forEach configuration
@@ -654,10 +653,10 @@ func (l *RulesLoader) validateNATSAction(action *NATSAction) error {
 	if action.Headers != nil {
 		for key, value := range action.Headers {
 			if key == "" {
-				return fmt.Errorf("header name cannot be empty")
+				return errors.New("header name cannot be empty")
 			}
 			if err := l.validateKVFieldsInTemplate(value); err != nil {
-				return fmt.Errorf("invalid template in header '%s': %w", key, err)
+				return fmt.Errorf("invalid template in header %q: %w", key, err)
 			}
 		}
 	}
@@ -670,15 +669,15 @@ func (l *RulesLoader) validateNATSAction(action *NATSAction) error {
 	// cannot coexist with the synchronous HTTP↔NATS bridge — there would be
 	// nothing to return by the time it fires.
 	if action.Request && action.Throttle.IsTrailing() {
-		return fmt.Errorf("action.nats: 'request: true' returns the reply to the caller synchronously and cannot use throttle mode 'trailing'")
+		return errors.New("action.nats: 'request: true' returns the reply to the caller synchronously and cannot use throttle mode 'trailing'")
 	}
 
 	if action.Timeout != "" {
 		if !action.Request {
-			return fmt.Errorf("'timeout' is only valid with 'request: true'")
+			return errors.New("'timeout' is only valid with 'request: true'")
 		}
 		if _, err := time.ParseDuration(action.Timeout); err != nil {
-			return fmt.Errorf("invalid request timeout '%s': %w", action.Timeout, err)
+			return fmt.Errorf("invalid request timeout %q: %w", action.Timeout, err)
 		}
 	}
 
@@ -686,9 +685,9 @@ func (l *RulesLoader) validateNATSAction(action *NATSAction) error {
 }
 
 // validateHTTPAction validates an HTTP action configuration
-func (l *RulesLoader) validateHTTPAction(action *HTTPAction) error {
+func (l *Loader) validateHTTPAction(action *HTTPAction) error {
 	if action.URL == "" {
-		return fmt.Errorf("HTTP action URL cannot be empty")
+		return errors.New("HTTP action URL cannot be empty")
 	}
 
 	if !strings.Contains(action.URL, "{") && !strings.HasPrefix(action.URL, "http://") && !strings.HasPrefix(action.URL, "https://") {
@@ -696,7 +695,7 @@ func (l *RulesLoader) validateHTTPAction(action *HTTPAction) error {
 	}
 
 	if action.Method == "" {
-		return fmt.Errorf("HTTP action method cannot be empty")
+		return errors.New("HTTP action method cannot be empty")
 	}
 
 	validMethods := map[string]bool{
@@ -710,7 +709,7 @@ func (l *RulesLoader) validateHTTPAction(action *HTTPAction) error {
 	action.Method = method
 
 	if action.Passthrough && action.Payload != "" {
-		return fmt.Errorf("cannot specify both 'payload' and 'passthrough: true' - choose one")
+		return errors.New("cannot specify both 'payload' and 'passthrough: true' - choose one")
 	}
 
 	// Validate forEach configuration
@@ -731,10 +730,10 @@ func (l *RulesLoader) validateHTTPAction(action *HTTPAction) error {
 	if action.Headers != nil {
 		for key, value := range action.Headers {
 			if key == "" {
-				return fmt.Errorf("header name cannot be empty")
+				return errors.New("header name cannot be empty")
 			}
 			if err := l.validateKVFieldsInTemplate(value); err != nil {
-				return fmt.Errorf("invalid template in header '%s': %w", key, err)
+				return fmt.Errorf("invalid template in header %q: %w", key, err)
 			}
 		}
 	}
@@ -745,12 +744,12 @@ func (l *RulesLoader) validateHTTPAction(action *HTTPAction) error {
 		}
 		if action.Retry.InitialDelay != "" {
 			if _, err := time.ParseDuration(action.Retry.InitialDelay); err != nil {
-				return fmt.Errorf("invalid retry initialDelay '%s': %w", action.Retry.InitialDelay, err)
+				return fmt.Errorf("invalid retry initialDelay %q: %w", action.Retry.InitialDelay, err)
 			}
 		}
 		if action.Retry.MaxDelay != "" {
 			if _, err := time.ParseDuration(action.Retry.MaxDelay); err != nil {
-				return fmt.Errorf("invalid retry maxDelay '%s': %w", action.Retry.MaxDelay, err)
+				return fmt.Errorf("invalid retry maxDelay %q: %w", action.Retry.MaxDelay, err)
 			}
 		}
 	}
@@ -761,7 +760,7 @@ func (l *RulesLoader) validateHTTPAction(action *HTTPAction) error {
 
 	if action.PublishResponse != nil {
 		if action.PublishResponse.Subject == "" {
-			return fmt.Errorf("publishResponse.subject cannot be empty")
+			return errors.New("publishResponse.subject cannot be empty")
 		}
 		if err := l.validateKVFieldsInTemplate(action.PublishResponse.Subject); err != nil {
 			return fmt.Errorf("invalid KV field in publishResponse.subject: %w", err)
@@ -776,7 +775,7 @@ func (l *RulesLoader) validateHTTPAction(action *HTTPAction) error {
 }
 
 // validateForEachConfig validates forEach field configuration
-func (l *RulesLoader) validateForEachConfig(forEachField string, filter *Conditions) error {
+func (l *Loader) validateForEachConfig(forEachField string, filter *Conditions) error {
 	// CRITICAL: Validate template syntax for forEach fields
 	if !IsTemplate(forEachField) {
 		return fmt.Errorf("forEach field must use template syntax {field}, got: %s", forEachField)
@@ -817,7 +816,7 @@ func (l *RulesLoader) validateForEachConfig(forEachField string, filter *Conditi
 // validateThrottleConfig validates a throttle configuration block.
 // allowTrailing is false for triggers: trailing mode defers execution, which a
 // trigger throttle cannot do — its entire purpose is to skip evaluation.
-func (l *RulesLoader) validateThrottleConfig(cfg *ThrottleConfig, location string, allowTrailing bool) error {
+func (l *Loader) validateThrottleConfig(cfg *ThrottleConfig, location string, allowTrailing bool) error {
 	if cfg == nil {
 		return nil
 	}
@@ -828,10 +827,10 @@ func (l *RulesLoader) validateThrottleConfig(cfg *ThrottleConfig, location strin
 
 	window, err := time.ParseDuration(cfg.Window)
 	if err != nil {
-		return fmt.Errorf("%s: invalid throttle window '%s': %w", location, cfg.Window, err)
+		return fmt.Errorf("%s: invalid throttle window %q: %w", location, cfg.Window, err)
 	}
 	if window <= 0 {
-		return fmt.Errorf("%s: throttle window must be positive, got '%s'", location, cfg.Window)
+		return fmt.Errorf("%s: throttle window must be positive, got %q", location, cfg.Window)
 	}
 
 	switch cfg.Mode {
@@ -842,7 +841,7 @@ func (l *RulesLoader) validateThrottleConfig(cfg *ThrottleConfig, location strin
 			return fmt.Errorf("%s: mode 'trailing' is only valid on actions — a trigger throttle exists to skip evaluation, which it cannot do while holding a message. Move the throttle block to the action", location)
 		}
 	default:
-		return fmt.Errorf("%s: invalid throttle mode '%s' (must be '%s' or '%s')", location, cfg.Mode, ThrottleLeading, ThrottleTrailing)
+		return fmt.Errorf("%s: invalid throttle mode %q (must be %q or %q)", location, cfg.Mode, ThrottleLeading, ThrottleTrailing)
 	}
 
 	if cfg.Key != "" {
@@ -861,20 +860,20 @@ func (l *RulesLoader) validateThrottleConfig(cfg *ThrottleConfig, location strin
 // an unset ${ENV} (which os.Getenv leaves empty, including in the browser
 // tester) or a missing secret fails closed at the gateway gate (401) rather
 // than refusing to load the rule.
-func (l *RulesLoader) validateHMACConfig(cfg *HMACConfig) error {
+func (l *Loader) validateHMACConfig(cfg *HMACConfig) error {
 	if cfg == nil {
 		return nil
 	}
 
 	if cfg.Header == "" {
-		return fmt.Errorf("trigger.http.hmac.header cannot be empty")
+		return errors.New("trigger.http.hmac.header cannot be empty")
 	}
 
 	if _, ok := hmacHash(cfg.Algorithm); !ok {
-		return fmt.Errorf("trigger.http.hmac.algorithm '%s' is not supported (use 'sha256' or 'sha1')", cfg.Algorithm)
+		return fmt.Errorf("trigger.http.hmac.algorithm %q is not supported (use 'sha256' or 'sha1')", cfg.Algorithm)
 	}
 	if _, ok, _ := hmacDecode(cfg.Encoding, ""); !ok {
-		return fmt.Errorf("trigger.http.hmac.encoding '%s' is not supported (use 'hex' or 'base64')", cfg.Encoding)
+		return fmt.Errorf("trigger.http.hmac.encoding %q is not supported (use 'hex' or 'base64')", cfg.Encoding)
 	}
 
 	// A KV-referenced secret must be a well-formed, static {@kv.bucket.key}.
@@ -888,26 +887,26 @@ func (l *RulesLoader) validateHMACConfig(cfg *HMACConfig) error {
 }
 
 // validateWildcardPattern validates NATS wildcard pattern syntax
-func (l *RulesLoader) validateWildcardPattern(subject string) error {
+func (l *Loader) validateWildcardPattern(subject string) error {
 	if err := ValidatePattern(subject); err != nil {
 		return err
 	}
 
 	if strings.Contains(subject, "**") {
-		return fmt.Errorf("double wildcards '**' are not valid, use '>' for multi-level wildcards")
+		return errors.New("double wildcards '**' are not valid, use '>' for multi-level wildcards")
 	}
 
 	if strings.Contains(subject, "..") {
-		return fmt.Errorf("empty tokens ('..') are not allowed in patterns")
+		return errors.New("empty tokens ('..') are not allowed in patterns")
 	}
 
 	return nil
 }
 
 // validateConditions recursively validates condition groups
-func (l *RulesLoader) validateConditions(conditions *Conditions) error {
+func (l *Loader) validateConditions(conditions *Conditions) error {
 	if conditions == nil {
-		return fmt.Errorf("conditions cannot be nil")
+		return errors.New("conditions cannot be nil")
 	}
 
 	if conditions.Operator != "and" && conditions.Operator != "or" {
@@ -935,17 +934,17 @@ func (l *RulesLoader) validateConditions(conditions *Conditions) error {
 
 		// Validate operator
 		if !l.isValidOperator(condition.Operator) {
-			return fmt.Errorf("invalid condition operator '%s' at index %d", condition.Operator, i)
+			return fmt.Errorf("invalid condition operator %q at index %d", condition.Operator, i)
 		}
 
 		// Validate array operators require nested conditions
 		if condition.Operator == "any" || condition.Operator == "all" || condition.Operator == "none" {
 			if condition.Conditions == nil {
-				return fmt.Errorf("array operator '%s' requires nested conditions at index %d", condition.Operator, i)
+				return fmt.Errorf("array operator %q requires nested conditions at index %d", condition.Operator, i)
 			}
 
 			if err := l.validateConditions(condition.Conditions); err != nil {
-				return fmt.Errorf("invalid nested conditions for array operator '%s' at index %d: %w",
+				return fmt.Errorf("invalid nested conditions for array operator %q at index %d: %w",
 					condition.Operator, i, err)
 			}
 		}
@@ -953,19 +952,19 @@ func (l *RulesLoader) validateConditions(conditions *Conditions) error {
 		// Validate system fields (these are already templates, so just validate their content)
 		if strings.HasPrefix(varName, "@subject") {
 			if err := l.validateSubjectField(varName); err != nil {
-				return fmt.Errorf("invalid subject field '%s' at index %d: %w", condition.Field, i, err)
+				return fmt.Errorf("invalid subject field %q at index %d: %w", condition.Field, i, err)
 			}
 		}
 
 		if strings.HasPrefix(varName, "@path") {
 			if err := l.validatePathField(varName); err != nil {
-				return fmt.Errorf("invalid path field '%s' at index %d: %w", condition.Field, i, err)
+				return fmt.Errorf("invalid path field %q at index %d: %w", condition.Field, i, err)
 			}
 		}
 
 		if strings.HasPrefix(varName, "@kv") {
 			if err := l.validateKVFieldWithVariables(varName); err != nil {
-				return fmt.Errorf("invalid KV field '%s' at index %d: %w", condition.Field, i, err)
+				return fmt.Errorf("invalid KV field %q at index %d: %w", condition.Field, i, err)
 			}
 		}
 	}
@@ -980,7 +979,7 @@ func (l *RulesLoader) validateConditions(conditions *Conditions) error {
 }
 
 // validateSubjectField validates subject field references
-func (l *RulesLoader) validateSubjectField(field string) error {
+func (l *Loader) validateSubjectField(field string) error {
 	validFields := map[string]bool{
 		"@subject":       true,
 		"@subject.count": true,
@@ -995,14 +994,14 @@ func (l *RulesLoader) validateSubjectField(field string) error {
 		if _, err := strconv.Atoi(indexStr); err == nil {
 			return nil
 		}
-		return fmt.Errorf("invalid subject field format (expected @subject.N where N is a non-negative integer)")
+		return errors.New("invalid subject field format (expected @subject.N where N is a non-negative integer)")
 	}
 
-	return fmt.Errorf("invalid subject field (must be @subject, @subject.count, or @subject.N)")
+	return errors.New("invalid subject field (must be @subject, @subject.count, or @subject.N)")
 }
 
 // validatePathField validates HTTP path field references
-func (l *RulesLoader) validatePathField(field string) error {
+func (l *Loader) validatePathField(field string) error {
 	validFields := map[string]bool{
 		"@path":       true,
 		"@path.count": true,
@@ -1017,14 +1016,14 @@ func (l *RulesLoader) validatePathField(field string) error {
 		if _, err := strconv.Atoi(indexStr); err == nil {
 			return nil
 		}
-		return fmt.Errorf("invalid path field format (expected @path.N where N is a non-negative integer)")
+		return errors.New("invalid path field format (expected @path.N where N is a non-negative integer)")
 	}
 
-	return fmt.Errorf("invalid path field (must be @path, @path.count, or @path.N)")
+	return errors.New("invalid path field (must be @path, @path.count, or @path.N)")
 }
 
 // validateKVFieldsInTemplate extracts and validates all KV field references
-func (l *RulesLoader) validateKVFieldsInTemplate(template string) error {
+func (l *Loader) validateKVFieldsInTemplate(template string) error {
 	if template == "" {
 		return nil
 	}
@@ -1049,7 +1048,7 @@ func (l *RulesLoader) validateKVFieldsInTemplate(template string) error {
 }
 
 // extractKVFieldsFromTemplate finds all KV field references
-func (l *RulesLoader) extractKVFieldsFromTemplate(template string) []string {
+func (l *Loader) extractKVFieldsFromTemplate(template string) []string {
 	var fields []string
 	matches := kvFieldPattern.FindAllStringSubmatch(template, -1)
 	for _, match := range matches {
@@ -1061,7 +1060,7 @@ func (l *RulesLoader) extractKVFieldsFromTemplate(template string) []string {
 }
 
 // validateKVFieldWithVariables validates KV fields with optional colon delimiter syntax
-func (l *RulesLoader) validateKVFieldWithVariables(field string) error {
+func (l *Loader) validateKVFieldWithVariables(field string) error {
 	l.logger.Debug("validating KV field with optional path", "field", field)
 
 	if !strings.HasPrefix(field, "@kv.") {
@@ -1114,7 +1113,7 @@ func (l *RulesLoader) validateKVFieldWithVariables(field string) error {
 }
 
 // extractBucketFromKVField extracts the bucket name
-func (l *RulesLoader) extractBucketFromKVField(field string) string {
+func (l *Loader) extractBucketFromKVField(field string) string {
 	if !strings.HasPrefix(field, "@kv.") {
 		return ""
 	}
@@ -1129,7 +1128,7 @@ func (l *RulesLoader) extractBucketFromKVField(field string) string {
 }
 
 // isBucketConfigured checks if a bucket is configured
-func (l *RulesLoader) isBucketConfigured(bucket string) bool {
+func (l *Loader) isBucketConfigured(bucket string) bool {
 	if len(l.configuredKVBuckets) == 0 {
 		return true
 	}
@@ -1142,6 +1141,6 @@ func (l *RulesLoader) isBucketConfigured(bucket string) bool {
 }
 
 // isValidOperator checks if an operator is valid
-func (l *RulesLoader) isValidOperator(op string) bool {
+func (l *Loader) isValidOperator(op string) bool {
 	return IsValidOperator(op)
 }

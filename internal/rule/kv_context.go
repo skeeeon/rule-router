@@ -1,5 +1,3 @@
-// file: internal/rule/kv_context.go
-
 //go:build !js
 
 package rule
@@ -93,11 +91,11 @@ func NewKVContext(stores KVStores, logger *logger.Logger, localCache *LocalKVCac
 	return kvCtx
 }
 
-// GetField retrieves a value from KV store (cache first, then NATS KV fallback)
+// Field retrieves a value from KV store (cache first, then NATS KV fallback)
 // Supports format: "@kv.bucket_name.key_name[:json.path.to.field]"
 // The colon (:) delimiter is now optional.
 // Returns the value and whether it was found successfully
-func (kv *KVContext) GetField(field string) (interface{}, bool) {
+func (kv *KVContext) Field(field string) (any, bool) {
 	// Use the renamed and updated parser
 	bucket, key, jsonPath, err := kv.parseKVField(field)
 	if err != nil {
@@ -141,9 +139,9 @@ func (kv *KVContext) GetField(field string) (interface{}, bool) {
 	return kv.getFromNATSKV(bucket, key, jsonPath)
 }
 
-// GetFieldWithContext retrieves a value with variable substitution support
+// FieldWithContext retrieves a value with variable substitution support
 // Now properly handles missing variables by returning empty strings
-func (kv *KVContext) GetFieldWithContext(field string, msgData map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext) (interface{}, bool) {
+func (kv *KVContext) FieldWithContext(field string, msgData map[string]any, timeCtx *TimeContext, subjectCtx *SubjectContext) (any, bool) {
 	// First resolve any variables in the field specification
 	resolvedField, hasUnresolvedVars, err := kv.resolveVariablesEnhanced(field, msgData, timeCtx, subjectCtx)
 	if err != nil {
@@ -162,7 +160,7 @@ func (kv *KVContext) GetFieldWithContext(field string, msgData map[string]interf
 	kv.logger.Debug("resolved KV field variables", "original", field, "resolved", resolvedField)
 
 	// Now do the actual KV lookup (cache first, then NATS KV fallback)
-	value, found := kv.GetField(resolvedField)
+	value, found := kv.Field(resolvedField)
 
 	// If KV lookup fails, return empty string (not nil)
 	if !found {
@@ -176,7 +174,7 @@ func (kv *KVContext) GetFieldWithContext(field string, msgData map[string]interf
 }
 
 // getFromNATSKV performs direct NATS KV lookup (fallback when cache misses)
-func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (interface{}, bool) {
+func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (any, bool) {
 	// Check if the bucket exists in our configured stores
 	store, exists := kv.stores[bucket]
 	if !exists {
@@ -218,7 +216,7 @@ func (kv *KVContext) getFromNATSKV(bucket, key string, jsonPath []string) (inter
 	rawValue := entry.Value()
 
 	// Parse as JSON and traverse the path using shared traverser
-	var jsonObj interface{}
+	var jsonObj any
 	if err := json.Unmarshal(rawValue, &jsonObj); err != nil {
 		kv.logger.Warn("failed to parse JSON from KV value",
 			"bucket", bucket,
@@ -364,7 +362,7 @@ func (kv *KVContext) parseKVFieldUncached(field string) (bucket, key string, jso
 }
 
 // resolveVariablesEnhanced replaces {variable} placeholders with better error handling
-func (kv *KVContext) resolveVariablesEnhanced(field string, msgData map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext) (string, bool, error) {
+func (kv *KVContext) resolveVariablesEnhanced(field string, msgData map[string]any, timeCtx *TimeContext, subjectCtx *SubjectContext) (string, bool, error) {
 	if !strings.Contains(field, "{") {
 		// No variables to resolve
 		return field, false, nil
@@ -396,7 +394,7 @@ func (kv *KVContext) resolveVariablesEnhanced(field string, msgData map[string]i
 }
 
 // resolveVariable resolves a single variable from available contexts
-func (kv *KVContext) resolveVariable(varName string, msgData map[string]interface{}, timeCtx *TimeContext, subjectCtx *SubjectContext) (interface{}, bool) {
+func (kv *KVContext) resolveVariable(varName string, msgData map[string]any, timeCtx *TimeContext, subjectCtx *SubjectContext) (any, bool) {
 	// Check if it's a system field (time, subject)
 	if strings.HasPrefix(varName, "@") {
 		// System field resolution
@@ -404,13 +402,13 @@ func (kv *KVContext) resolveVariable(varName string, msgData map[string]interfac
 			if subjectCtx == nil {
 				return nil, false
 			}
-			return subjectCtx.GetField(varName)
+			return subjectCtx.Field(varName)
 		}
 		if strings.HasPrefix(varName, "@time") || strings.HasPrefix(varName, "@date") || strings.HasPrefix(varName, "@timestamp") {
 			if timeCtx == nil {
 				return nil, false
 			}
-			return timeCtx.GetField(varName)
+			return timeCtx.Field(varName)
 		}
 		return nil, false
 	}
@@ -425,7 +423,7 @@ func (kv *KVContext) resolveVariable(varName string, msgData map[string]interfac
 }
 
 // convertToString with better handling of edge cases
-func (kv *KVContext) convertToString(value interface{}) string {
+func (kv *KVContext) convertToString(value any) string {
 	switch v := value.(type) {
 	case string:
 		return v
@@ -460,8 +458,8 @@ func (kv *KVContext) getBucketNames() []string {
 	return names
 }
 
-// GetAllBuckets returns the names of all configured KV buckets
-func (kv *KVContext) GetAllBuckets() []string {
+// Buckets returns the names of all configured KV buckets
+func (kv *KVContext) Buckets() []string {
 	return kv.getBucketNames()
 }
 
@@ -471,9 +469,9 @@ func (kv *KVContext) HasBucket(bucketName string) bool {
 	return exists
 }
 
-// GetStats returns basic statistics about the KV context
-func (kv *KVContext) GetStats() map[string]interface{} {
-	stats := map[string]interface{}{
+// Stats returns basic statistics about the KV context
+func (kv *KVContext) Stats() map[string]any {
+	stats := map[string]any{
 		"bucket_count":         len(kv.stores),
 		"bucket_names":         kv.getBucketNames(),
 		"initialized":          true,
@@ -485,7 +483,7 @@ func (kv *KVContext) GetStats() map[string]interface{} {
 
 	// Add local cache stats if available
 	if kv.localCache != nil {
-		stats["local_cache"] = kv.localCache.GetStats()
+		stats["local_cache"] = kv.localCache.Stats()
 	} else {
 		stats["local_cache"] = "disabled"
 	}

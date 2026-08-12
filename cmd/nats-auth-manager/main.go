@@ -1,5 +1,7 @@
-// file: cmd/nats-auth-manager/main.go
-
+// Command nats-auth-manager keeps API tokens fresh in a NATS KV bucket. It
+// authenticates against the configured OAuth2 or custom-HTTP providers, writes
+// each token to KV, and refreshes it before expiry so rules can reference the
+// token as an ordinary KV value.
 package main
 
 import (
@@ -40,7 +42,7 @@ var version = "dev"
 
 func main() {
 	if err := run(); err != nil {
-		logger.NewBootstrapLogger().Fatal("application error", "error", err)
+		logger.NewBootstrap().Fatal("application error", "error", err)
 	}
 }
 
@@ -62,7 +64,7 @@ func run() error {
 	}
 
 	// Initialize logger
-	appLogger, err := logger.NewLogger(&cfg.Logging)
+	appLogger, err := logger.New(&cfg.Logging)
 	if err != nil {
 		return fmt.Errorf("failed to initialize logger: %w", err)
 	}
@@ -170,7 +172,7 @@ func createProviders(configs []authmgr.ProviderConfig, log *logger.Logger) ([]pr
 			// silently turn a bad duration into zero.
 			refreshBefore, err := time.ParseDuration(cfg.RefreshBefore)
 			if err != nil {
-				return nil, fmt.Errorf("provider '%s': invalid refreshBefore: %w", cfg.ID, err)
+				return nil, fmt.Errorf("provider %q: invalid refreshBefore: %w", cfg.ID, err)
 			}
 			p = providers.NewOAuth2Provider(
 				cfg.KVKey,
@@ -184,7 +186,7 @@ func createProviders(configs []authmgr.ProviderConfig, log *logger.Logger) ([]pr
 		case "custom-http":
 			refreshEvery, err := time.ParseDuration(cfg.RefreshEvery)
 			if err != nil {
-				return nil, fmt.Errorf("provider '%s': invalid refreshEvery: %w", cfg.ID, err)
+				return nil, fmt.Errorf("provider %q: invalid refreshEvery: %w", cfg.ID, err)
 			}
 			p = providers.NewCustomHTTPProvider(
 				cfg.KVKey,

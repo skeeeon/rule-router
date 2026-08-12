@@ -1,5 +1,19 @@
-// file: internal/rule/processor.go
-
+// Package rule implements the rule engine: it loads YAML rule definitions,
+// indexes them by trigger, and evaluates incoming messages against them.
+//
+// The entry point is Processor. Each Process method returns an Outcome holding
+// the actions to run now and the actions a trailing throttle is holding; the
+// package never performs a side effect itself, so executing an Outcome is
+// always the caller's job. Loader parses and validates rules, Index maps NATS
+// subjects and HTTP paths to them, and Evaluator resolves conditions.
+//
+// Templates resolve message fields ({field}, {data.device.id}), subject tokens
+// ({@subject.0}), KV lookups ({@kv.bucket.key}), and system functions
+// ({@timestamp()}, {@uuid7()}). Values keep their JSON types so numeric
+// comparisons stay numeric.
+//
+// Processor is safe for concurrent use. KV-loaded rules are swapped atomically
+// by ReplaceKVRuleSet, so a reload is invisible to in-flight evaluation.
 package rule
 
 import (
@@ -22,7 +36,7 @@ const (
 )
 
 type Processor struct {
-	index            *RuleIndex
+	index            *Index
 	allRules         []*Rule
 	scheduleRules    []*Rule
 	httpExactPaths   map[string][]*Rule // file-loaded HTTP rules keyed by exact path
@@ -85,12 +99,12 @@ type ForEachResult struct {
 type ElementError struct {
 	Index     int
 	ErrorType string
-	Error     error
+	Err       error
 }
 
 // forEachArrayData holds the extracted array and metadata for forEach processing
 type forEachArrayData struct {
-	items     []interface{}
+	items     []any
 	fieldPath string
 }
 
@@ -142,7 +156,7 @@ func (p *Processor) extractForEachArray(forEachTemplate string, precomputedPath 
 
 	// Resolve the array value — system fields (@kv, etc.) go through ResolveValue,
 	// regular message fields use direct path traversal.
-	var arrayValue interface{}
+	var arrayValue any
 	if strings.HasPrefix(fieldPath, "@") {
 		resolved, found := context.ResolveValue(fieldPath)
 		if !found {
@@ -156,7 +170,7 @@ func (p *Processor) extractForEachArray(forEachTemplate string, precomputedPath 
 			var err error
 			arrayPath, err = SplitPathRespectingBraces(fieldPath)
 			if err != nil {
-				return nil, fmt.Errorf("invalid forEach path '%s': %w", fieldPath, err)
+				return nil, fmt.Errorf("invalid forEach path %q: %w", fieldPath, err)
 			}
 		}
 		var traverseErr error
@@ -166,7 +180,7 @@ func (p *Processor) extractForEachArray(forEachTemplate string, precomputedPath 
 		}
 	}
 
-	arrayItems, ok := arrayValue.([]interface{})
+	arrayItems, ok := arrayValue.([]any)
 	if !ok {
 		return nil, fmt.Errorf("forEach field is not an array: %s (type: %T)", forEachTemplate, arrayValue)
 	}
@@ -188,46 +202,92 @@ func (p *Processor) extractForEachArray(forEachTemplate string, precomputedPath 
 	}, nil
 }
 
-// NewProcessor creates a new processor with optional signature verification
-func NewProcessor(log *logger.Logger, metrics *metrics.Metrics, kvCtx *KVContext, sigVerification *SignatureVerification) *Processor {
+// An Option configures a Processor at construction.
+//
+// These are options rather than setters because a Processor becomes shared
+// across worker goroutines the moment it starts serving, so everything it needs
+// has to be in place before that. Most callers need none of them: a bare
+// NewProcessor(log) evaluates rules with no KV, metrics, or signature checking.
+type Option func(*Processor)
+
+// WithMetrics attaches a metrics sink. A nil sink is accepted and disables
+// instrumentation, which is what the CLI and the browser tester use.
+func WithMetrics(m *metrics.Metrics) Option {
+	return func(p *Processor) { p.metrics = m }
+}
+
+// WithKVContext gives rules access to NATS KV lookups ({@kv.bucket.key}).
+// Without it those templates resolve to nothing.
+func WithKVContext(kv *KVContext) Option {
+	return func(p *Processor) { p.kvContext = kv }
+}
+
+// WithSignatureVerification enables nkey payload signature checking on inbound
+// messages.
+func WithSignatureVerification(sv *SignatureVerification) Option {
+	return func(p *Processor) { p.sigVerification = sv }
+}
+
+// WithMaxForEachIterations bounds how many elements a forEach action may expand,
+// guarding against runaway fan-out. Zero means unlimited; the default is
+// DefaultMaxForEachIterations.
+func WithMaxForEachIterations(n int) Option {
+	return func(p *Processor) { p.maxForEachIters = n }
+}
+
+// WithTimeProvider replaces the system clock backing {@time.*} and {@date.*}.
+// Intended for tests that need a fixed instant.
+func WithTimeProvider(tp TimeProvider) Option {
+	return func(p *Processor) { p.timeProvider = tp }
+}
+
+// NewProcessor creates a Processor. See Option for KV, metrics, signature
+// verification, and forEach limits.
+func NewProcessor(log *logger.Logger, opts ...Option) *Processor {
 	p := &Processor{
-		index:            NewRuleIndex(log),
+		index:            NewIndex(log),
 		allRules:         make([]*Rule, 0),
 		httpExactPaths:   make(map[string][]*Rule),
 		httpPatternRules: make([]*HTTPPatternRule, 0),
 		timeProvider:     NewSystemTimeProvider(),
-		kvContext:        kvCtx,
 		logger:           log.With("component", "processor"),
-		metrics:          metrics,
 		evaluator:        NewEvaluator(log),
 		templater:        NewTemplateEngine(log),
-		sigVerification:  sigVerification,
 		maxForEachIters:  DefaultMaxForEachIterations,
 		throttle:         NewThrottleManager(),
 	}
 
-	if kvCtx != nil {
-		p.logger.Info("initializing processor with KV support", "buckets", kvCtx.GetAllBuckets())
+	for _, opt := range opts {
+		opt(p)
+	}
+
+	if p.kvContext != nil {
+		p.logger.Info("initializing processor with KV support", "buckets", p.kvContext.Buckets())
 	} else {
 		p.logger.Info("initializing processor without KV support")
 	}
 
-	if sigVerification != nil && sigVerification.Enabled {
+	if p.sigVerification != nil && p.sigVerification.Enabled {
 		p.logger.Info("initializing processor with signature verification enabled",
-			"pubKeyHeader", sigVerification.PublicKeyHeader,
-			"sigHeader", sigVerification.SignatureHeader)
+			"pubKeyHeader", p.sigVerification.PublicKeyHeader,
+			"sigHeader", p.sigVerification.SignatureHeader)
 	}
+
+	p.logger.Debug("forEach iteration limit configured", "maxIterations", p.maxForEachIters)
 
 	return p
 }
 
-// SetMaxForEachIterations sets the maximum allowed forEach iterations
-func (p *Processor) SetMaxForEachIterations(max int) {
-	p.maxForEachIters = max
-	p.logger.Info("forEach iteration limit configured", "maxIterations", max)
-}
-
-// LoadRules loads rules and indexes them by trigger type
+// LoadRules loads rules and indexes them by trigger type.
+//
+// It fails if any rule declares an HTTP path pattern that will not compile.
+// Rules that came through Loader were already checked by ValidatePathPattern,
+// so in practice this only catches rules built programmatically — the CLI, the
+// browser tester, tests — where silently dropping one would hide the mistake.
+//
+// On failure the Processor is left partially indexed and must be discarded.
+// That costs nothing today: every caller loads into a Processor it just built,
+// and rule reloads go through a fresh app (SIGHUP) or ReplaceKVRuleSet (KV).
 func (p *Processor) LoadRules(rules []Rule) error {
 	p.logger.Info("loading rules into processor", "ruleCount", len(rules))
 
@@ -278,19 +338,16 @@ func (p *Processor) LoadRules(rules []Rule) error {
 			if PathContainsWildcards(path) {
 				matcher, err := NewPathMatcher(path)
 				if err != nil {
-					p.logger.Error("failed to compile HTTP path pattern, skipping rule",
-						"path", path,
-						"error", err)
-				} else {
-					p.httpPatternRules = append(p.httpPatternRules, &HTTPPatternRule{
-						Rule:    rule,
-						Matcher: matcher,
-					})
-					httpPatternCount++
-					p.logger.Debug("indexed HTTP wildcard rule",
-						"pattern", path,
-						"method", rule.Trigger.HTTP.Method)
+					return fmt.Errorf("rule %d: invalid HTTP path pattern %q: %w", i, path, err)
 				}
+				p.httpPatternRules = append(p.httpPatternRules, &HTTPPatternRule{
+					Rule:    rule,
+					Matcher: matcher,
+				})
+				httpPatternCount++
+				p.logger.Debug("indexed HTTP wildcard rule",
+					"pattern", path,
+					"method", rule.Trigger.HTTP.Method)
 			} else {
 				p.httpExactPaths[path] = append(p.httpExactPaths[path], rule)
 				p.logger.Debug("indexed HTTP rule",
@@ -324,15 +381,15 @@ func (p *Processor) LoadRules(rules []Rule) error {
 	return nil
 }
 
-// GetSubjects returns all NATS subjects for subscription setup
-func (p *Processor) GetSubjects() []string {
-	return p.index.GetSubscriptionSubjects()
+// Subjects returns all NATS subjects for subscription setup
+func (p *Processor) Subjects() []string {
+	return p.index.SubscriptionSubjects()
 }
 
-// GetHTTPPaths returns all configured HTTP paths and patterns for diagnostic
+// HTTPPaths returns all configured HTTP paths and patterns for diagnostic
 // logging. Pattern strings (e.g. "/webhooks/*/events") are returned as-is,
 // not expanded.
-func (p *Processor) GetHTTPPaths() []string {
+func (p *Processor) HTTPPaths() []string {
 	pathSet := make(map[string]bool)
 	for path := range p.httpExactPaths {
 		pathSet[path] = true
@@ -421,8 +478,8 @@ func (p *Processor) loadKVRuleSet() *KVRuleSet {
 	return set
 }
 
-// GetAllRules returns all loaded rules (NATS, HTTP, and schedule)
-func (p *Processor) GetAllRules() []*Rule {
+// AllRules returns all loaded rules (NATS, HTTP, and schedule)
+func (p *Processor) AllRules() []*Rule {
 	return p.allRules
 }
 
@@ -451,9 +508,9 @@ func filterNATSRules(rules []*Rule, filter NATSTriggerFilter) []*Rule {
 	return filtered
 }
 
-// GetScheduleRules returns all schedule-triggered rules.
+// ScheduleRules returns all schedule-triggered rules.
 // Returns KV-loaded schedule rules when set (even if empty); falls back to file-loaded rules.
-func (p *Processor) GetScheduleRules() []*Rule {
+func (p *Processor) ScheduleRules() []*Rule {
 	if set := p.loadKVRuleSet(); set != nil {
 		return set.Schedule
 	}
@@ -550,7 +607,7 @@ func (p *Processor) ProcessForSubscription(triggerSubject, messageSubject string
 		headers,
 		NewSubjectContext(messageSubject),
 		nil,
-		p.timeProvider.GetCurrentContext(),
+		p.timeProvider.CurrentContext(),
 		p.kvContext,
 		p.sigVerification,
 		p.logger,
@@ -577,7 +634,7 @@ func (p *Processor) ProcessSchedule(rule *Rule) (Outcome, error) {
 		nil, // no headers
 		nil, // no subject context
 		nil, // no HTTP context
-		p.timeProvider.GetCurrentContext(),
+		p.timeProvider.CurrentContext(),
 		p.kvContext,
 		nil, // no signature verification
 		p.logger,
@@ -617,7 +674,7 @@ func (p *Processor) processNATSFiltered(subject string, payload []byte, headers 
 		headers,
 		subjectCtx,
 		nil,
-		p.timeProvider.GetCurrentContext(),
+		p.timeProvider.CurrentContext(),
 		p.kvContext,
 		p.sigVerification,
 		p.logger,
@@ -648,7 +705,7 @@ func (p *Processor) ProcessHTTP(path, method string, payload []byte, headers map
 		headers,
 		nil,
 		NewHTTPRequestContext(path, method),
-		p.timeProvider.GetCurrentContext(),
+		p.timeProvider.CurrentContext(),
 		p.kvContext,
 		p.sigVerification,
 		p.logger,
@@ -767,7 +824,7 @@ func (p *Processor) resolveHMACSecret(secret string) ([]byte, bool) {
 			return nil, false
 		}
 		field := secret[1 : len(secret)-1] // strip surrounding { }
-		val, found := p.kvContext.GetFieldWithContext(field, map[string]interface{}{}, nil, nil)
+		val, found := p.kvContext.FieldWithContext(field, map[string]any{}, nil, nil)
 		if !found {
 			return nil, false
 		}
@@ -784,7 +841,7 @@ func (p *Processor) resolveHMACSecret(secret string) ([]byte, bool) {
 }
 
 // secretToString coerces a KV-resolved value to its string form for use as a secret.
-func secretToString(v interface{}) string {
+func secretToString(v any) string {
 	switch s := v.(type) {
 	case string:
 		return s
@@ -1006,7 +1063,7 @@ func (p *Processor) processAction(action *Action, context *EvaluationContext) ([
 		}
 		results = append(results, respondActions...)
 	} else {
-		return nil, fmt.Errorf("action has no NATS, HTTP, or respond configuration")
+		return nil, errors.New("action has no NATS, HTTP, or respond configuration")
 	}
 
 	return results, nil
@@ -1115,14 +1172,14 @@ func (p *Processor) processNATSAction(action *NATSAction, context *EvaluationCon
 //   - String arrays: ["dev-1", "dev-2"] → [{"@value": "dev-1"}, {"@value": "dev-2"}]
 //   - Number arrays: [100, 200, 300] → [{"@value": 100}, {"@value": 200}, {"@value": 300}]
 //   - Mixed arrays: [{"id": 1}, "text", 42] → handles each appropriately
-func ensureObject(item interface{}) map[string]interface{} {
-	if itemMap, ok := item.(map[string]interface{}); ok {
+func ensureObject(item any) map[string]any {
+	if itemMap, ok := item.(map[string]any); ok {
 		// Already an object - return as-is
 		return itemMap
 	}
 
 	// Primitive - wrap it in @value
-	return map[string]interface{}{"@value": item}
+	return map[string]any{"@value": item}
 }
 
 // processNATSActionWithForEach processes a NATS action with forEach iteration
@@ -1357,7 +1414,7 @@ func (p *Processor) logElementError(result *ForEachResult, index int, errorType 
 		"field", field, "index", index, "errorType", errorType, "error", err)
 	result.FailedElements++
 	result.Errors = append(result.Errors, ElementError{
-		Index: index, ErrorType: errorType, Error: err,
+		Index: index, ErrorType: errorType, Err: err,
 	})
 }
 
@@ -1371,7 +1428,7 @@ func (p *Processor) templateHeaders(headers map[string]string, context *Evaluati
 	for key, valueTemplate := range headers {
 		processedValue, err := p.templater.Execute(valueTemplate, context)
 		if err != nil {
-			return nil, fmt.Errorf("failed to template header '%s': %w", key, err)
+			return nil, fmt.Errorf("failed to template header %q: %w", key, err)
 		}
 		result[key] = processedValue
 	}
@@ -1381,7 +1438,7 @@ func (p *Processor) templateHeaders(headers map[string]string, context *Evaluati
 
 // safeMarshal marshals a value to JSON with error handling (no panic)
 // Replaced mustMarshal to handle errors gracefully
-func safeMarshal(v interface{}) ([]byte, error) {
+func safeMarshal(v any) ([]byte, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal value: %w", err)
@@ -1393,14 +1450,14 @@ func safeMarshal(v interface{}) ([]byte, error) {
 // Overlay values overwrite base values. Nested objects are merged recursively.
 // Arrays in the overlay replace arrays in the base wholesale.
 // The base map is never mutated.
-func deepMerge(base, overlay map[string]interface{}) map[string]interface{} {
-	result := make(map[string]interface{}, len(base)+len(overlay))
+func deepMerge(base, overlay map[string]any) map[string]any {
+	result := make(map[string]any, len(base)+len(overlay))
 	for k, v := range base {
 		result[k] = v
 	}
 	for k, v := range overlay {
-		if overlayMap, ok := v.(map[string]interface{}); ok {
-			if baseMap, ok := result[k].(map[string]interface{}); ok {
+		if overlayMap, ok := v.(map[string]any); ok {
+			if baseMap, ok := result[k].(map[string]any); ok {
 				result[k] = deepMerge(baseMap, overlayMap)
 				continue
 			}
@@ -1412,12 +1469,12 @@ func deepMerge(base, overlay map[string]interface{}) map[string]interface{} {
 
 // applyMerge templates the overlay payload, parses it as a JSON object, deep-merges
 // it onto base, and returns the resulting JSON bytes.
-func (p *Processor) applyMerge(payloadTemplate string, base map[string]interface{}, context *EvaluationContext) ([]byte, error) {
+func (p *Processor) applyMerge(payloadTemplate string, base map[string]any, context *EvaluationContext) ([]byte, error) {
 	overlayStr, err := p.templater.Execute(payloadTemplate, context)
 	if err != nil {
 		return nil, fmt.Errorf("merge: failed to template overlay: %w", err)
 	}
-	var overlayData map[string]interface{}
+	var overlayData map[string]any
 	if err := json.Unmarshal([]byte(overlayStr), &overlayData); err != nil {
 		return nil, fmt.Errorf("merge: overlay is not a valid JSON object: %w", err)
 	}
@@ -1431,13 +1488,8 @@ func (p *Processor) ProcessWithSubject(subject string, payload []byte, headers m
 	return p.ProcessNATS(subject, payload, headers)
 }
 
-// SetTimeProvider allows injecting a mock time provider for testing
-func (p *Processor) SetTimeProvider(provider TimeProvider) {
-	p.timeProvider = provider
-}
-
-// GetStats returns processor statistics
-func (p *Processor) GetStats() ProcessorStats {
+// Stats returns processor statistics
+func (p *Processor) Stats() ProcessorStats {
 	return ProcessorStats{
 		Processed: atomic.LoadUint64(&p.stats.Processed),
 		Matched:   atomic.LoadUint64(&p.stats.Matched),

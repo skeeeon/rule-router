@@ -1,4 +1,3 @@
-// file: cmd/rule-cli/cmd/scaffold.go
 package cmd
 
 import (
@@ -18,7 +17,7 @@ and creates array-based examples to accelerate test development.`,
 		rulePath := args[0]
 		noOverwrite, _ := cmd.Flags().GetBool("no-overwrite")
 
-		log := logger.NewNopLogger()
+		log := logger.NewNop()
 		testRunner := tester.New(log, false, 0)
 
 		return testRunner.Scaffold(rulePath, noOverwrite)

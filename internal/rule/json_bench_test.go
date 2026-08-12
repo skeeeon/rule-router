@@ -145,7 +145,7 @@ var arrayMessageJSON = []byte(`{
 
 // BenchmarkUnmarshal_Small_StdLib benchmarks standard library with small messages
 func BenchmarkUnmarshal_Small_StdLib(b *testing.B) {
-	var result map[string]interface{}
+	var result map[string]any
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		json.Unmarshal(smallMessageJSON, &result)
@@ -154,7 +154,7 @@ func BenchmarkUnmarshal_Small_StdLib(b *testing.B) {
 
 // BenchmarkUnmarshal_Small_GoccyJSON benchmarks goccy/go-json with small messages
 func BenchmarkUnmarshal_Small_GoccyJSON(b *testing.B) {
-	var result map[string]interface{}
+	var result map[string]any
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		goccyjson.Unmarshal(smallMessageJSON, &result)
@@ -163,7 +163,7 @@ func BenchmarkUnmarshal_Small_GoccyJSON(b *testing.B) {
 
 // BenchmarkUnmarshal_Medium_StdLib benchmarks standard library with medium messages
 func BenchmarkUnmarshal_Medium_StdLib(b *testing.B) {
-	var result map[string]interface{}
+	var result map[string]any
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		json.Unmarshal(mediumMessageJSON, &result)
@@ -172,7 +172,7 @@ func BenchmarkUnmarshal_Medium_StdLib(b *testing.B) {
 
 // BenchmarkUnmarshal_Medium_GoccyJSON benchmarks goccy/go-json with medium messages
 func BenchmarkUnmarshal_Medium_GoccyJSON(b *testing.B) {
-	var result map[string]interface{}
+	var result map[string]any
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		goccyjson.Unmarshal(mediumMessageJSON, &result)
@@ -181,7 +181,7 @@ func BenchmarkUnmarshal_Medium_GoccyJSON(b *testing.B) {
 
 // BenchmarkUnmarshal_Large_StdLib benchmarks standard library with large messages
 func BenchmarkUnmarshal_Large_StdLib(b *testing.B) {
-	var result map[string]interface{}
+	var result map[string]any
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		json.Unmarshal(largeMessageJSON, &result)
@@ -190,7 +190,7 @@ func BenchmarkUnmarshal_Large_StdLib(b *testing.B) {
 
 // BenchmarkUnmarshal_Large_GoccyJSON benchmarks goccy/go-json with large messages
 func BenchmarkUnmarshal_Large_GoccyJSON(b *testing.B) {
-	var result map[string]interface{}
+	var result map[string]any
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		goccyjson.Unmarshal(largeMessageJSON, &result)
@@ -199,7 +199,7 @@ func BenchmarkUnmarshal_Large_GoccyJSON(b *testing.B) {
 
 // BenchmarkUnmarshal_Array_StdLib benchmarks standard library with array-heavy messages
 func BenchmarkUnmarshal_Array_StdLib(b *testing.B) {
-	var result map[string]interface{}
+	var result map[string]any
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		json.Unmarshal(arrayMessageJSON, &result)
@@ -208,7 +208,7 @@ func BenchmarkUnmarshal_Array_StdLib(b *testing.B) {
 
 // BenchmarkUnmarshal_Array_GoccyJSON benchmarks goccy/go-json with array-heavy messages
 func BenchmarkUnmarshal_Array_GoccyJSON(b *testing.B) {
-	var result map[string]interface{}
+	var result map[string]any
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		goccyjson.Unmarshal(arrayMessageJSON, &result)
@@ -221,7 +221,7 @@ func BenchmarkUnmarshal_Array_GoccyJSON(b *testing.B) {
 
 // BenchmarkMarshal_Small_StdLib benchmarks standard library marshaling
 func BenchmarkMarshal_Small_StdLib(b *testing.B) {
-	data := map[string]interface{}{
+	data := map[string]any{
 		"device_id":   "sensor001",
 		"temperature": 25.5,
 		"humidity":    65,
@@ -235,7 +235,7 @@ func BenchmarkMarshal_Small_StdLib(b *testing.B) {
 
 // BenchmarkMarshal_Small_GoccyJSON benchmarks goccy/go-json marshaling
 func BenchmarkMarshal_Small_GoccyJSON(b *testing.B) {
-	data := map[string]interface{}{
+	data := map[string]any{
 		"device_id":   "sensor001",
 		"temperature": 25.5,
 		"humidity":    65,
@@ -249,18 +249,18 @@ func BenchmarkMarshal_Small_GoccyJSON(b *testing.B) {
 
 // BenchmarkMarshal_Medium_StdLib benchmarks standard library with nested structures
 func BenchmarkMarshal_Medium_StdLib(b *testing.B) {
-	data := map[string]interface{}{
-		"device": map[string]interface{}{
+	data := map[string]any{
+		"device": map[string]any{
 			"id":   "sensor001",
 			"type": "temperature",
-			"location": map[string]interface{}{
+			"location": map[string]any{
 				"building": "main",
 				"floor":    3,
 				"room":     "server-room",
 			},
 		},
-		"data": map[string]interface{}{
-			"reading": map[string]interface{}{
+		"data": map[string]any{
+			"reading": map[string]any{
 				"value":    25.5,
 				"unit":     "celsius",
 				"accuracy": 0.1,
@@ -275,18 +275,18 @@ func BenchmarkMarshal_Medium_StdLib(b *testing.B) {
 
 // BenchmarkMarshal_Medium_GoccyJSON benchmarks goccy/go-json with nested structures
 func BenchmarkMarshal_Medium_GoccyJSON(b *testing.B) {
-	data := map[string]interface{}{
-		"device": map[string]interface{}{
+	data := map[string]any{
+		"device": map[string]any{
 			"id":   "sensor001",
 			"type": "temperature",
-			"location": map[string]interface{}{
+			"location": map[string]any{
 				"building": "main",
 				"floor":    3,
 				"room":     "server-room",
 			},
 		},
-		"data": map[string]interface{}{
-			"reading": map[string]interface{}{
+		"data": map[string]any{
+			"reading": map[string]any{
 				"value":    25.5,
 				"unit":     "celsius",
 				"accuracy": 0.1,
@@ -305,13 +305,13 @@ func BenchmarkMarshal_Medium_GoccyJSON(b *testing.B) {
 
 // BenchmarkNestedAccess_TwoLevel benchmarks accessing nested fields
 func BenchmarkNestedAccess_TwoLevel(b *testing.B) {
-	var data map[string]interface{}
+	var data map[string]any
 	goccyjson.Unmarshal(mediumMessageJSON, &data)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Simulate accessing device.id
-		if device, ok := data["device"].(map[string]interface{}); ok {
+		if device, ok := data["device"].(map[string]any); ok {
 			_ = device["id"]
 		}
 	}
@@ -319,14 +319,14 @@ func BenchmarkNestedAccess_TwoLevel(b *testing.B) {
 
 // BenchmarkNestedAccess_ThreeLevel benchmarks deep nested field access
 func BenchmarkNestedAccess_ThreeLevel(b *testing.B) {
-	var data map[string]interface{}
+	var data map[string]any
 	goccyjson.Unmarshal(mediumMessageJSON, &data)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Simulate accessing device.location.building
-		if device, ok := data["device"].(map[string]interface{}); ok {
-			if location, ok := device["location"].(map[string]interface{}); ok {
+		if device, ok := data["device"].(map[string]any); ok {
+			if location, ok := device["location"].(map[string]any); ok {
 				_ = location["building"]
 			}
 		}
@@ -335,16 +335,16 @@ func BenchmarkNestedAccess_ThreeLevel(b *testing.B) {
 
 // BenchmarkNestedAccess_FourLevel benchmarks very deep nested access
 func BenchmarkNestedAccess_FourLevel(b *testing.B) {
-	var data map[string]interface{}
+	var data map[string]any
 	goccyjson.Unmarshal(largeMessageJSON, &data)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Simulate accessing order.customer.profile.preferences.notifications
-		if order, ok := data["order"].(map[string]interface{}); ok {
-			if customer, ok := order["customer"].(map[string]interface{}); ok {
-				if profile, ok := customer["profile"].(map[string]interface{}); ok {
-					if prefs, ok := profile["preferences"].(map[string]interface{}); ok {
+		if order, ok := data["order"].(map[string]any); ok {
+			if customer, ok := order["customer"].(map[string]any); ok {
+				if profile, ok := customer["profile"].(map[string]any); ok {
+					if prefs, ok := profile["preferences"].(map[string]any); ok {
 						_ = prefs["notifications"]
 					}
 				}
@@ -358,7 +358,7 @@ func BenchmarkNestedAccess_FourLevel(b *testing.B) {
 // ========================================
 
 // Helper to create a context for benchmark tests.
-func newBenchmarkContext(data map[string]interface{}, subject string) *EvaluationContext {
+func newBenchmarkContext(data map[string]any, subject string) *EvaluationContext {
 	payload, err := goccyjson.Marshal(data)
 	if err != nil {
 		panic(fmt.Sprintf("failed to marshal benchmark data: %v", err))
@@ -369,10 +369,10 @@ func newBenchmarkContext(data map[string]interface{}, subject string) *Evaluatio
 		nil, // headers
 		NewSubjectContext(subject),
 		nil, // httpCtx
-		NewSystemTimeProvider().GetCurrentContext(),
+		NewSystemTimeProvider().CurrentContext(),
 		nil, // kvCtx
 		nil, // sigVerification
-		logger.NewNopLogger(),
+		logger.NewNop(),
 	)
 	if err != nil {
 		panic(fmt.Sprintf("failed to create benchmark context: %v", err))
@@ -382,9 +382,9 @@ func newBenchmarkContext(data map[string]interface{}, subject string) *Evaluatio
 
 // BenchmarkFullPipeline_Small simulates complete message processing
 func BenchmarkFullPipeline_Small(b *testing.B) {
-	engine := NewTemplateEngine(logger.NewNopLogger())
+	engine := NewTemplateEngine(logger.NewNop())
 	template := `{"alert": "Temperature {temperature}°C", "device": "{device_id}"}`
-	var data map[string]interface{}
+	var data map[string]any
 	goccyjson.Unmarshal(smallMessageJSON, &data)
 	context := newBenchmarkContext(data, "sensors.temperature")
 
@@ -396,9 +396,9 @@ func BenchmarkFullPipeline_Small(b *testing.B) {
 
 // BenchmarkFullPipeline_Medium simulates medium complexity processing
 func BenchmarkFullPipeline_Medium(b *testing.B) {
-	engine := NewTemplateEngine(logger.NewNopLogger())
+	engine := NewTemplateEngine(logger.NewNop())
 	template := `{"device": "{device.id}", "location": "{device.location.building}", "reading": "{data.reading.value}"}`
-	var data map[string]interface{}
+	var data map[string]any
 	goccyjson.Unmarshal(mediumMessageJSON, &data)
 	context := newBenchmarkContext(data, "sensors.temperature.room1")
 
@@ -410,9 +410,9 @@ func BenchmarkFullPipeline_Medium(b *testing.B) {
 
 // BenchmarkFullPipeline_Large simulates complex message processing
 func BenchmarkFullPipeline_Large(b *testing.B) {
-	engine := NewTemplateEngine(logger.NewNopLogger())
+	engine := NewTemplateEngine(logger.NewNop())
 	template := `{"order_id": "{order.id}", "customer": "{order.customer.profile.name}", "total": "{order.totals.total}"}`
-	var data map[string]interface{}
+	var data map[string]any
 	goccyjson.Unmarshal(largeMessageJSON, &data)
 	context := newBenchmarkContext(data, "orders.created")
 
@@ -442,7 +442,7 @@ func TestJSONMemoryAllocation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Test multiple unmarshals to see allocation patterns
 			for i := 0; i < 100; i++ {
-				var result map[string]interface{}
+				var result map[string]any
 				if err := goccyjson.Unmarshal(tt.payload, &result); err != nil {
 					t.Fatalf("Unmarshal failed: %v", err)
 				}
@@ -468,8 +468,8 @@ func TestJSONCorrectness(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var stdResult map[string]interface{}
-			var goccyResult map[string]interface{}
+			var stdResult map[string]any
+			var goccyResult map[string]any
 
 			// Unmarshal with both libraries
 			if err := json.Unmarshal(tt.payload, &stdResult); err != nil {
@@ -488,7 +488,7 @@ func TestJSONCorrectness(t *testing.T) {
 				t.Error("Goccy produced empty result")
 			}
 
-			// Note: Deep equality comparison is complex for map[string]interface{}
+			// Note: Deep equality comparison is complex for map[string]any
 			// This is a basic sanity check
 			if len(stdResult) != len(goccyResult) {
 				t.Errorf("Different number of top-level keys: std=%d, goccy=%d",
@@ -505,7 +505,7 @@ func TestJSONCorrectness(t *testing.T) {
 // BenchmarkUnmarshal_Invalid tests error handling performance
 func BenchmarkUnmarshal_Invalid_StdLib(b *testing.B) {
 	invalidJSON := []byte(`{"invalid": json}`)
-	var result map[string]interface{}
+	var result map[string]any
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -516,7 +516,7 @@ func BenchmarkUnmarshal_Invalid_StdLib(b *testing.B) {
 // BenchmarkUnmarshal_Invalid_GoccyJSON tests goccy error handling
 func BenchmarkUnmarshal_Invalid_GoccyJSON(b *testing.B) {
 	invalidJSON := []byte(`{"invalid": json}`)
-	var result map[string]interface{}
+	var result map[string]any
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -530,13 +530,13 @@ func BenchmarkUnmarshal_Invalid_GoccyJSON(b *testing.B) {
 
 // BenchmarkRealWorld_IoTSensorBurst simulates IoT sensor burst
 func BenchmarkRealWorld_IoTSensorBurst(b *testing.B) {
-	engine := NewTemplateEngine(logger.NewNopLogger())
+	engine := NewTemplateEngine(logger.NewNop())
 	template := `{"alert": "Temperature {temperature}°C from {device_id}"}`
 
 	// Pre-unmarshal and create contexts outside the loop
 	messages := make([]*EvaluationContext, 100)
 	for i := 0; i < 100; i++ {
-		var data map[string]interface{}
+		var data map[string]any
 		goccyjson.Unmarshal(smallMessageJSON, &data)
 		messages[i] = newBenchmarkContext(data, "sensors.temperature.room1")
 	}
@@ -551,7 +551,7 @@ func BenchmarkRealWorld_IoTSensorBurst(b *testing.B) {
 
 // BenchmarkRealWorld_MixedWorkload simulates mixed message sizes
 func BenchmarkRealWorld_MixedWorkload(b *testing.B) {
-	engine := NewTemplateEngine(logger.NewNopLogger())
+	engine := NewTemplateEngine(logger.NewNop())
 	template := `{"processed": true, "timestamp": "{@timestamp()}"}`
 
 	// Pre-unmarshal and create contexts outside the loop
@@ -566,7 +566,7 @@ func BenchmarkRealWorld_MixedWorkload(b *testing.B) {
 		} else {
 			payload, subject = largeMessageJSON, "orders.created"
 		}
-		var data map[string]interface{}
+		var data map[string]any
 		goccyjson.Unmarshal(payload, &data)
 		contexts[i] = newBenchmarkContext(data, subject)
 	}

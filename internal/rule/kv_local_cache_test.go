@@ -44,7 +44,7 @@ func TestLocalKVCache_Metrics(t *testing.T) {
 		t.Fatalf("NewMetrics: %v", err)
 	}
 
-	cache := NewLocalKVCache(logger.NewNopLogger())
+	cache := NewLocalKVCache(logger.NewNop())
 	cache.SetMetrics(m)
 
 	// Populate two entries → size gauge reflects entry count.
@@ -90,7 +90,7 @@ func TestLocalKVCache_Metrics(t *testing.T) {
 
 // TestLocalKVCache_BasicOperations tests Get, Set, Delete operations
 func TestLocalKVCache_BasicOperations(t *testing.T) {
-	cache := NewLocalKVCache(logger.NewNopLogger())
+	cache := NewLocalKVCache(logger.NewNop())
 
 	t.Run("set and get string value", func(t *testing.T) {
 		cache.Set("bucket1", "key1", "value1")
@@ -115,7 +115,7 @@ func TestLocalKVCache_BasicOperations(t *testing.T) {
 	})
 
 	t.Run("set and get complex object", func(t *testing.T) {
-		obj := map[string]interface{}{
+		obj := map[string]any{
 			"field1": "value1",
 			"field2": 123,
 		}
@@ -124,9 +124,9 @@ func TestLocalKVCache_BasicOperations(t *testing.T) {
 		if !exists {
 			t.Fatal("expected key to exist")
 		}
-		gotMap, ok := got.(map[string]interface{})
+		gotMap, ok := got.(map[string]any)
 		if !ok {
-			t.Fatal("expected map[string]interface{}")
+			t.Fatal("expected map[string]any")
 		}
 		if gotMap["field1"] != "value1" {
 			t.Errorf("field1 = %v, want value1", gotMap["field1"])
@@ -164,7 +164,7 @@ func TestLocalKVCache_BasicOperations(t *testing.T) {
 
 // TestLocalKVCache_EnableDisable tests cache enable/disable functionality
 func TestLocalKVCache_EnableDisable(t *testing.T) {
-	cache := NewLocalKVCache(logger.NewNopLogger())
+	cache := NewLocalKVCache(logger.NewNop())
 
 	t.Run("initially enabled", func(t *testing.T) {
 		if !cache.IsEnabled() {
@@ -213,7 +213,7 @@ func TestLocalKVCache_EnableDisable(t *testing.T) {
 
 // TestLocalKVCache_MultipleBuckets tests operations across multiple buckets
 func TestLocalKVCache_MultipleBuckets(t *testing.T) {
-	cache := NewLocalKVCache(logger.NewNopLogger())
+	cache := NewLocalKVCache(logger.NewNop())
 
 	buckets := []string{"bucket1", "bucket2", "bucket3"}
 	for _, bucket := range buckets {
@@ -251,10 +251,10 @@ func TestLocalKVCache_MultipleBuckets(t *testing.T) {
 
 // TestLocalKVCache_GetStats tests statistics collection
 func TestLocalKVCache_GetStats(t *testing.T) {
-	cache := NewLocalKVCache(logger.NewNopLogger())
+	cache := NewLocalKVCache(logger.NewNop())
 
 	t.Run("empty cache stats", func(t *testing.T) {
-		stats := cache.GetStats()
+		stats := cache.Stats()
 		if stats["enabled"] != true {
 			t.Error("expected enabled to be true")
 		}
@@ -271,7 +271,7 @@ func TestLocalKVCache_GetStats(t *testing.T) {
 		cache.Set("bucket1", "key2", "value2")
 		cache.Set("bucket2", "key1", "value1")
 
-		stats := cache.GetStats()
+		stats := cache.Stats()
 		if stats["total_keys"] != 3 {
 			t.Errorf("total_keys = %v, want 3", stats["total_keys"])
 		}
@@ -293,7 +293,7 @@ func TestLocalKVCache_GetStats(t *testing.T) {
 
 	t.Run("stats when disabled", func(t *testing.T) {
 		cache.SetEnabled(false)
-		stats := cache.GetStats()
+		stats := cache.Stats()
 		if stats["enabled"] != false {
 			t.Error("expected enabled to be false")
 		}
@@ -306,13 +306,13 @@ func TestLocalKVCache_GetStats(t *testing.T) {
 
 // TestLocalKVCache_GetAllKeys tests key enumeration
 func TestLocalKVCache_GetAllKeys(t *testing.T) {
-	cache := NewLocalKVCache(logger.NewNopLogger())
+	cache := NewLocalKVCache(logger.NewNop())
 
 	cache.Set("bucket1", "key1", "value1")
 	cache.Set("bucket1", "key2", "value2")
 	cache.Set("bucket1", "key3", "value3")
 
-	keys := cache.GetAllKeys("bucket1")
+	keys := cache.Keys("bucket1")
 	if len(keys) != 3 {
 		t.Errorf("got %d keys, want 3", len(keys))
 	}
@@ -329,7 +329,7 @@ func TestLocalKVCache_GetAllKeys(t *testing.T) {
 	}
 
 	// Empty bucket should return empty slice
-	emptyKeys := cache.GetAllKeys("nonexistent")
+	emptyKeys := cache.Keys("nonexistent")
 	if len(emptyKeys) != 0 {
 		t.Errorf("expected empty slice for nonexistent bucket, got %d keys", len(emptyKeys))
 	}
@@ -337,14 +337,14 @@ func TestLocalKVCache_GetAllKeys(t *testing.T) {
 
 // TestLocalKVCache_GetAllBuckets tests bucket enumeration
 func TestLocalKVCache_GetAllBuckets(t *testing.T) {
-	cache := NewLocalKVCache(logger.NewNopLogger())
+	cache := NewLocalKVCache(logger.NewNop())
 
 	buckets := []string{"bucket1", "bucket2", "bucket3"}
 	for _, bucket := range buckets {
 		cache.Set(bucket, "key1", "value1")
 	}
 
-	allBuckets := cache.GetAllBuckets()
+	allBuckets := cache.Buckets()
 	if len(allBuckets) != 3 {
 		t.Errorf("got %d buckets, want 3", len(allBuckets))
 	}
@@ -362,7 +362,7 @@ func TestLocalKVCache_GetAllBuckets(t *testing.T) {
 
 // TestLocalKVCache_Clear tests cache clearing
 func TestLocalKVCache_Clear(t *testing.T) {
-	cache := NewLocalKVCache(logger.NewNopLogger())
+	cache := NewLocalKVCache(logger.NewNop())
 
 	// Add data
 	cache.Set("bucket1", "key1", "value1")
@@ -383,7 +383,7 @@ func TestLocalKVCache_Clear(t *testing.T) {
 		t.Error("expected data to be cleared")
 	}
 
-	stats := cache.GetStats()
+	stats := cache.Stats()
 	if stats["total_keys"] != 0 {
 		t.Errorf("total_keys = %v, want 0 after clear", stats["total_keys"])
 	}
@@ -391,7 +391,7 @@ func TestLocalKVCache_Clear(t *testing.T) {
 
 // TestLocalKVCache_NilValues tests handling of nil values
 func TestLocalKVCache_NilValues(t *testing.T) {
-	cache := NewLocalKVCache(logger.NewNopLogger())
+	cache := NewLocalKVCache(logger.NewNop())
 
 	t.Run("set and get nil value", func(t *testing.T) {
 		cache.Set("bucket1", "key1", nil)
@@ -420,7 +420,7 @@ func TestLocalKVCache_NilValues(t *testing.T) {
 
 // TestLocalKVCache_ConcurrentAccess tests thread safety
 func TestLocalKVCache_ConcurrentAccess(t *testing.T) {
-	cache := NewLocalKVCache(logger.NewNopLogger())
+	cache := NewLocalKVCache(logger.NewNop())
 
 	var wg sync.WaitGroup
 	concurrency := 100
@@ -492,7 +492,7 @@ func TestLocalKVCache_ConcurrentAccess(t *testing.T) {
 
 // BenchmarkLocalKVCache_Get benchmarks cache read performance
 func BenchmarkLocalKVCache_Get(b *testing.B) {
-	cache := NewLocalKVCache(logger.NewNopLogger())
+	cache := NewLocalKVCache(logger.NewNop())
 	cache.Set("benchmark", "key", "value")
 
 	b.ResetTimer()
@@ -503,7 +503,7 @@ func BenchmarkLocalKVCache_Get(b *testing.B) {
 
 // BenchmarkLocalKVCache_Set benchmarks cache write performance
 func BenchmarkLocalKVCache_Set(b *testing.B) {
-	cache := NewLocalKVCache(logger.NewNopLogger())
+	cache := NewLocalKVCache(logger.NewNop())
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -513,13 +513,13 @@ func BenchmarkLocalKVCache_Set(b *testing.B) {
 
 // BenchmarkLocalKVCache_GetComplex benchmarks complex object retrieval
 func BenchmarkLocalKVCache_GetComplex(b *testing.B) {
-	cache := NewLocalKVCache(logger.NewNopLogger())
-	complexObj := map[string]interface{}{
+	cache := NewLocalKVCache(logger.NewNop())
+	complexObj := map[string]any{
 		"field1": "value1",
 		"field2": 12345,
-		"field3": map[string]interface{}{
+		"field3": map[string]any{
 			"nested1": "nested-value",
-			"nested2": []interface{}{1, 2, 3, 4, 5},
+			"nested2": []any{1, 2, 3, 4, 5},
 		},
 	}
 	cache.Set("benchmark", "complex", complexObj)
@@ -532,7 +532,7 @@ func BenchmarkLocalKVCache_GetComplex(b *testing.B) {
 
 // BenchmarkLocalKVCache_GetStats benchmarks statistics collection
 func BenchmarkLocalKVCache_GetStats(b *testing.B) {
-	cache := NewLocalKVCache(logger.NewNopLogger())
+	cache := NewLocalKVCache(logger.NewNop())
 
 	// Add some data
 	for i := 0; i < 100; i++ {
@@ -543,13 +543,13 @@ func BenchmarkLocalKVCache_GetStats(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		cache.GetStats()
+		cache.Stats()
 	}
 }
 
 // BenchmarkLocalKVCache_ConcurrentReads benchmarks parallel read performance
 func BenchmarkLocalKVCache_ConcurrentReads(b *testing.B) {
-	cache := NewLocalKVCache(logger.NewNopLogger())
+	cache := NewLocalKVCache(logger.NewNop())
 	cache.Set("benchmark", "key", "value")
 
 	b.ResetTimer()
@@ -562,7 +562,7 @@ func BenchmarkLocalKVCache_ConcurrentReads(b *testing.B) {
 
 // BenchmarkLocalKVCache_ConcurrentWrites benchmarks parallel write performance
 func BenchmarkLocalKVCache_ConcurrentWrites(b *testing.B) {
-	cache := NewLocalKVCache(logger.NewNopLogger())
+	cache := NewLocalKVCache(logger.NewNop())
 
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
@@ -576,7 +576,7 @@ func BenchmarkLocalKVCache_ConcurrentWrites(b *testing.B) {
 
 // BenchmarkLocalKVCache_MixedOperations benchmarks realistic workload
 func BenchmarkLocalKVCache_MixedOperations(b *testing.B) {
-	cache := NewLocalKVCache(logger.NewNopLogger())
+	cache := NewLocalKVCache(logger.NewNop())
 
 	// Pre-populate
 	for i := 0; i < 100; i++ {

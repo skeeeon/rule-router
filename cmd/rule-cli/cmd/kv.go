@@ -1,5 +1,3 @@
-// file: cmd/rule-cli/cmd/kv.go
-
 package cmd
 
 import (
@@ -69,8 +67,8 @@ func runKVPush(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create a rules loader for validation
-	log := logger.NewBootstrapLogger()
-	rulesLoader := rule.NewRulesLoader(log, []string{})
+	log := logger.NewBootstrap()
+	rulesLoader := rule.NewLoader(log, []string{})
 
 	// Validate all files first
 	type fileToPush struct {

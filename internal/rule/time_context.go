@@ -10,13 +10,13 @@ import (
 // TimeContext holds current time information and pre-computed fields
 type TimeContext struct {
 	timestamp time.Time
-	fields    map[string]interface{}
+	fields    map[string]any
 }
 
 // TimeProvider interface for creating time contexts (enables mocking)
 type TimeProvider interface {
-	GetCurrentContext() *TimeContext
-	GetContextAt(time.Time) *TimeContext
+	CurrentContext() *TimeContext
+	ContextAt(time.Time) *TimeContext
 }
 
 // SystemTimeProvider uses system time
@@ -27,16 +27,16 @@ func NewSystemTimeProvider() *SystemTimeProvider {
 	return &SystemTimeProvider{}
 }
 
-// GetCurrentContext returns time context for current moment
-func (p *SystemTimeProvider) GetCurrentContext() *TimeContext {
-	return p.GetContextAt(time.Now())
+// CurrentContext returns time context for current moment
+func (p *SystemTimeProvider) CurrentContext() *TimeContext {
+	return p.ContextAt(time.Now())
 }
 
-// GetContextAt returns time context for specific time (useful for testing)
-func (p *SystemTimeProvider) GetContextAt(t time.Time) *TimeContext {
+// ContextAt returns time context for specific time (useful for testing)
+func (p *SystemTimeProvider) ContextAt(t time.Time) *TimeContext {
 	ctx := &TimeContext{
 		timestamp: t,
-		fields:    make(map[string]interface{}),
+		fields:    make(map[string]any),
 	}
 
 	// Pre-compute all time fields for efficient lookup
@@ -57,14 +57,14 @@ func (p *SystemTimeProvider) GetContextAt(t time.Time) *TimeContext {
 	return ctx
 }
 
-// GetField safely retrieves a time field value
-func (tc *TimeContext) GetField(fieldName string) (interface{}, bool) {
+// Field safely retrieves a time field value
+func (tc *TimeContext) Field(fieldName string) (any, bool) {
 	value, exists := tc.fields[fieldName]
 	return value, exists
 }
 
-// GetAllFieldNames returns list of all available time field names
-func (tc *TimeContext) GetAllFieldNames() []string {
+// FieldNames returns list of all available time field names
+func (tc *TimeContext) FieldNames() []string {
 	names := make([]string, 0, len(tc.fields))
 	for name := range tc.fields {
 		names = append(names, name)
@@ -82,14 +82,14 @@ func NewMockTimeProvider(fixedTime time.Time) *MockTimeProvider {
 	return &MockTimeProvider{fixedTime: fixedTime}
 }
 
-// GetCurrentContext returns context for the fixed time
-func (m *MockTimeProvider) GetCurrentContext() *TimeContext {
-	return m.GetContextAt(m.fixedTime)
+// CurrentContext returns context for the fixed time
+func (m *MockTimeProvider) CurrentContext() *TimeContext {
+	return m.ContextAt(m.fixedTime)
 }
 
-// GetContextAt returns context for specified time
-func (m *MockTimeProvider) GetContextAt(t time.Time) *TimeContext {
-	return NewSystemTimeProvider().GetContextAt(t)
+// ContextAt returns context for specified time
+func (m *MockTimeProvider) ContextAt(t time.Time) *TimeContext {
+	return NewSystemTimeProvider().ContextAt(t)
 }
 
 // SetTime updates the fixed time

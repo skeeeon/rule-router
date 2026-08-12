@@ -1,4 +1,3 @@
-// file: internal/cli/prompt.go
 package cli
 
 import (

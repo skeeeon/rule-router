@@ -1,8 +1,7 @@
-// file: internal/rule/processor_http_wildcard_test.go
-
 package rule
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -60,6 +59,25 @@ func BenchmarkProcessHTTP_MixedExactAndWildcard(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		processor.ProcessHTTP("/webhooks/github", "POST", body, nil)
+	}
+}
+
+// TestLoadRules_InvalidPathPattern pins that a rule whose HTTP path will not
+// compile fails the load instead of being silently dropped.
+func TestLoadRules_InvalidPathPattern(t *testing.T) {
+	processor := newTestProcessor()
+
+	// ">" is only legal as the final segment, so this reaches LoadRules as a
+	// wildcard path that NewPathMatcher rejects.
+	err := processor.LoadRules([]Rule{
+		httpRule("/webhooks/*/events", "POST", "good"),
+		httpRule("/api/>/broken", "POST", "bad"),
+	})
+	if err == nil {
+		t.Fatal("LoadRules(invalid path pattern) = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "/api/>/broken") {
+		t.Errorf("error should name the offending path, got %q", err)
 	}
 }
 

@@ -1,5 +1,3 @@
-// file: internal/deferred/coalescer_test.go
-
 package deferred
 
 import (
@@ -16,7 +14,7 @@ import (
 
 func testLogger(t *testing.T) *logger.Logger {
 	t.Helper()
-	log, err := logger.NewLogger(&config.LogConfig{Level: "error", OutputPath: "stdout", Encoding: "console"})
+	log, err := logger.New(&config.LogConfig{Level: "error", OutputPath: "stdout", Encoding: "console"})
 	if err != nil {
 		t.Fatalf("failed to create logger: %v", err)
 	}
@@ -229,16 +227,15 @@ func TestCoalescer_StopFlushesPending(t *testing.T) {
 	}
 }
 
-// TestCoalescer_SubmitAfterStopIsRefused verifies a stopped coalescer reports
-// the drop instead of silently holding work that will never fire.
+// TestCoalescer_SubmitAfterStopIsRefused verifies a stopped coalescer drops the
+// batch outright instead of holding work that will never fire.
 func TestCoalescer_SubmitAfterStopIsRefused(t *testing.T) {
 	rec := newRecorder()
 	c := New("test", rec.exec, time.Second, testLogger(t), nil)
 	c.Stop(context.Background())
 
-	if c.Submit(natsBatch("k", time.Second, "late")) {
-		t.Error("expected Submit after Stop to report false")
-	}
+	c.Submit(natsBatch("k", time.Second, "late"))
+
 	if got := rec.subjects(); len(got) != 0 {
 		t.Errorf("expected no execution after Stop, got %v", got)
 	}
@@ -284,9 +281,8 @@ func TestCoalescer_EmptyBatchIsNoop(t *testing.T) {
 	c := New("test", rec.exec, time.Second, testLogger(t), nil)
 	defer c.Stop(context.Background())
 
-	if !c.Submit(rule.DeferredBatch{Key: "k", Window: time.Second}) {
-		t.Error("expected an empty batch to be accepted as a no-op")
-	}
+	c.Submit(rule.DeferredBatch{Key: "k", Window: time.Second})
+
 	if p := c.Pending(); p != 0 {
 		t.Errorf("expected an empty batch not to arm a window, got %d pending", p)
 	}

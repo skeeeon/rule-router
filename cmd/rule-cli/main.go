@@ -1,4 +1,6 @@
-// file: cmd/rule-cli/main.go
+// Command rule-cli scaffolds, authors, lints, and tests rule-router rules, and
+// moves them between the filesystem and a NATS KV bucket. Rule checks run
+// through the real rule engine, so what it reports is what the daemon would do.
 package main
 
 import (

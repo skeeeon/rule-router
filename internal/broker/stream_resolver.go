@@ -1,5 +1,3 @@
-// file: internal/broker/stream_resolver.go
-
 package broker
 
 import (
@@ -87,7 +85,7 @@ func (sr *StreamResolver) Discover(ctx context.Context) error {
 
 	if len(newStreams) == 0 {
 		sr.logger.Warn("no JetStream streams found - rules will fail to initialize")
-		return fmt.Errorf("no JetStream streams found - please create streams before starting rule-router")
+		return errors.New("no JetStream streams found - please create streams before starting rule-router")
 	}
 
 	sr.mu.Lock()
@@ -235,7 +233,7 @@ func (sr *StreamResolver) FindStreamForSubject(subject string) (string, error) {
 	sr.mu.RUnlock()
 
 	if !discovered {
-		return "", fmt.Errorf("streams not discovered - call Discover() first")
+		return "", errors.New("streams not discovered - call Discover() first")
 	}
 
 	sr.logger.Debug("finding optimal stream for subject", "subject", subject)
@@ -296,7 +294,7 @@ func (sr *StreamResolver) FindStreamForSubject(subject string) (string, error) {
 	if len(matches) == 0 {
 		// No stream found
 		availableFilters := sr.getAllSubjectFilters()
-		return "", fmt.Errorf("%w for subject '%s' - available stream filters: %v",
+		return "", fmt.Errorf("%w for subject %q - available stream filters: %v",
 			ErrNoStreamFound, subject, availableFilters)
 	}
 
@@ -616,15 +614,15 @@ func (sr *StreamResolver) getAllSubjectFilters() []string {
 	return filters
 }
 
-// GetStreams returns all discovered streams (useful for debugging/logging)
-func (sr *StreamResolver) GetStreams() []StreamInfo {
+// Streams returns all discovered streams (useful for debugging/logging)
+func (sr *StreamResolver) Streams() []StreamInfo {
 	sr.mu.RLock()
 	defer sr.mu.RUnlock()
 	return sr.streams
 }
 
-// GetStreamCount returns the number of discovered streams
-func (sr *StreamResolver) GetStreamCount() int {
+// StreamCount returns the number of discovered streams
+func (sr *StreamResolver) StreamCount() int {
 	sr.mu.RLock()
 	defer sr.mu.RUnlock()
 	return len(sr.streams)
@@ -638,7 +636,7 @@ func (sr *StreamResolver) ValidateSubjects(subjects []string) error {
 	sr.mu.RUnlock()
 
 	if !discovered {
-		return fmt.Errorf("streams not discovered - call Discover() first")
+		return errors.New("streams not discovered - call Discover() first")
 	}
 
 	var unmappedSubjects []string
@@ -695,7 +693,7 @@ func (sr *StreamResolver) ValidateRulesHaveStreams(rules []rule.Rule) []error {
 	sr.mu.RUnlock()
 
 	if !discovered {
-		return []error{fmt.Errorf("streams not discovered — call Discover() first")}
+		return []error{errors.New("streams not discovered — call Discover() first")}
 	}
 
 	var errs []error

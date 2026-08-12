@@ -1,5 +1,3 @@
-// file: internal/metrics/metrics.go
-
 //go:build !js
 
 package metrics
@@ -359,8 +357,8 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 	return m, nil
 }
 
-// GetRegistry returns the Prometheus registry (needed for HTTP handler)
-func (m *Metrics) GetRegistry() *prometheus.Registry {
+// Registry returns the Prometheus registry (needed for HTTP handler)
+func (m *Metrics) Registry() *prometheus.Registry {
 	return m.registry
 }
 
@@ -517,8 +515,8 @@ func (m *Metrics) ObserveHTTPOutboundDuration(statusCode string, seconds float64
 	m.httpOutboundDuration.WithLabelValues(statusCode).Observe(seconds)
 }
 
-// GetStats returns current statistics
-func (m *Metrics) GetStats() (received, errors uint64) {
+// Stats returns current statistics
+func (m *Metrics) Stats() (received, errors uint64) {
 	return atomic.LoadUint64(&m.stats.messagesReceived),
 		atomic.LoadUint64(&m.stats.messagesError)
 }

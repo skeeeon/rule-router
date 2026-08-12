@@ -1,5 +1,15 @@
-// file: internal/gateway/server.go
-
+// Package gateway bridges HTTP and NATS in the inbound direction: it serves
+// webhooks and turns them into rule evaluations.
+//
+// InboundServer routes every path through one catch-all handler that asks the
+// Processor which rules match, so exact paths and wildcard patterns behave the
+// same whether the rules came from disk or from KV. Requests are handled
+// fire-and-forget on a bounded worker pool unless a matching rule produces a
+// synchronous response (a respond action, or a NATS action with request:true),
+// in which case the handler answers inline.
+//
+// An hmac block on an HTTP trigger is enforced here as a fail-closed gate over
+// the raw body, before any rule fires.
 package gateway
 
 import (
@@ -66,7 +76,7 @@ type InboundServer struct {
 	publisher  NATSPublisher
 	natsConn   *nats.Conn
 	httpServer *http.Server
-	serverCfg  *ServerConfig
+	serverCfg  *Config
 
 	// Worker pool components
 	workQueue chan webhookJob // Buffered channel acting as a job queue
@@ -77,9 +87,9 @@ type InboundServer struct {
 	coalescer *deferred.Coalescer
 }
 
-// ServerConfig contains HTTP server configuration.
+// Config contains HTTP server configuration.
 // Added worker pool configuration fields.
-type ServerConfig struct {
+type Config struct {
 	Address             string
 	ReadTimeout         time.Duration
 	WriteTimeout        time.Duration
@@ -113,7 +123,7 @@ func NewInboundServer(
 	processor *rule.Processor,
 	publisher NATSPublisher,
 	nc *nats.Conn,
-	serverCfg *ServerConfig,
+	serverCfg *Config,
 ) *InboundServer {
 	logger = logger.With("component", "gateway")
 
@@ -173,7 +183,7 @@ func (s *InboundServer) Start(ctx context.Context) error {
 	// Static, wildcard, file-loaded, and KV-loaded rules all flow through here.
 	mux.HandleFunc("/", s.webhookHandler)
 
-	for _, path := range s.processor.GetHTTPPaths() {
+	for _, path := range s.processor.HTTPPaths() {
 		s.logger.Info("registered HTTP rule path", "path", path)
 	}
 

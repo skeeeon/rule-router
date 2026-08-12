@@ -1,5 +1,3 @@
-// file: internal/authmgr/providers/custom_http_test.go
-
 package providers
 
 import (
@@ -13,7 +11,7 @@ func TestExtractJSONPath(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		data    interface{}
+		data    any
 		path    string
 		want    string
 		wantErr bool
@@ -21,28 +19,28 @@ func TestExtractJSONPath(t *testing.T) {
 		// Simple paths
 		{
 			name:    "simple string field",
-			data:    map[string]interface{}{"token": "abc123"},
+			data:    map[string]any{"token": "abc123"},
 			path:    "token",
 			want:    "abc123",
 			wantErr: false,
 		},
 		{
 			name:    "simple number field",
-			data:    map[string]interface{}{"count": float64(42)},
+			data:    map[string]any{"count": float64(42)},
 			path:    "count",
 			want:    "42",
 			wantErr: false,
 		},
 		{
 			name:    "simple boolean field",
-			data:    map[string]interface{}{"active": true},
+			data:    map[string]any{"active": true},
 			path:    "active",
 			want:    "true",
 			wantErr: false,
 		},
 		{
 			name:    "boolean false field",
-			data:    map[string]interface{}{"active": false},
+			data:    map[string]any{"active": false},
 			path:    "active",
 			want:    "false",
 			wantErr: false,
@@ -51,8 +49,8 @@ func TestExtractJSONPath(t *testing.T) {
 		// Nested paths
 		{
 			name: "nested string field",
-			data: map[string]interface{}{
-				"data": map[string]interface{}{
+			data: map[string]any{
+				"data": map[string]any{
 					"access_token": "xyz789",
 				},
 			},
@@ -62,10 +60,10 @@ func TestExtractJSONPath(t *testing.T) {
 		},
 		{
 			name: "deeply nested field",
-			data: map[string]interface{}{
-				"response": map[string]interface{}{
-					"auth": map[string]interface{}{
-						"credentials": map[string]interface{}{
+			data: map[string]any{
+				"response": map[string]any{
+					"auth": map[string]any{
+						"credentials": map[string]any{
 							"token": "deep_token",
 						},
 					},
@@ -79,14 +77,14 @@ func TestExtractJSONPath(t *testing.T) {
 		// Float formatting
 		{
 			name:    "float with decimals truncated",
-			data:    map[string]interface{}{"value": float64(123.999)},
+			data:    map[string]any{"value": float64(123.999)},
 			path:    "value",
 			want:    "124", // %.0f rounds
 			wantErr: false,
 		},
 		{
 			name:    "large number",
-			data:    map[string]interface{}{"id": float64(9999999999)},
+			data:    map[string]any{"id": float64(9999999999)},
 			path:    "id",
 			want:    "9999999999",
 			wantErr: false,
@@ -95,22 +93,22 @@ func TestExtractJSONPath(t *testing.T) {
 		// Error cases
 		{
 			name:    "empty path",
-			data:    map[string]interface{}{"token": "abc"},
+			data:    map[string]any{"token": "abc"},
 			path:    "",
 			want:    "",
 			wantErr: true,
 		},
 		{
 			name:    "missing key",
-			data:    map[string]interface{}{"token": "abc"},
+			data:    map[string]any{"token": "abc"},
 			path:    "missing",
 			want:    "",
 			wantErr: true,
 		},
 		{
 			name: "missing nested key",
-			data: map[string]interface{}{
-				"data": map[string]interface{}{
+			data: map[string]any{
+				"data": map[string]any{
 					"token": "abc",
 				},
 			},
@@ -120,7 +118,7 @@ func TestExtractJSONPath(t *testing.T) {
 		},
 		{
 			name: "traverse into non-map",
-			data: map[string]interface{}{
+			data: map[string]any{
 				"data": "string_not_map",
 			},
 			path:    "data.token",
@@ -129,7 +127,7 @@ func TestExtractJSONPath(t *testing.T) {
 		},
 		{
 			name: "traverse into number",
-			data: map[string]interface{}{
+			data: map[string]any{
 				"count": float64(42),
 			},
 			path:    "count.value",
@@ -138,8 +136,8 @@ func TestExtractJSONPath(t *testing.T) {
 		},
 		{
 			name: "final value is array",
-			data: map[string]interface{}{
-				"tokens": []interface{}{"a", "b", "c"},
+			data: map[string]any{
+				"tokens": []any{"a", "b", "c"},
 			},
 			path:    "tokens",
 			want:    "",
@@ -147,9 +145,9 @@ func TestExtractJSONPath(t *testing.T) {
 		},
 		{
 			name: "final value is nested object",
-			data: map[string]interface{}{
-				"data": map[string]interface{}{
-					"nested": map[string]interface{}{
+			data: map[string]any{
+				"data": map[string]any{
+					"nested": map[string]any{
 						"value": "test",
 					},
 				},

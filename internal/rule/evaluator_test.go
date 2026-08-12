@@ -1,5 +1,3 @@
-// file: internal/rule/evaluator_test.go
-
 package rule
 
 import (
@@ -13,13 +11,13 @@ import (
 
 // Helper to create an evaluator for testing.
 func newTestEvaluator() *Evaluator {
-	return NewEvaluator(logger.NewNopLogger())
+	return NewEvaluator(logger.NewNop())
 }
 
 // Helper to create a basic evaluation context for NATS-based tests.
-func newTestContext(data map[string]interface{}, subject string) *EvaluationContext {
+func newTestContext(data map[string]any, subject string) *EvaluationContext {
 	subjectCtx := NewSubjectContext(subject)
-	timeCtx := NewSystemTimeProvider().GetCurrentContext()
+	timeCtx := NewSystemTimeProvider().CurrentContext()
 
 	payload, err := json.Marshal(data)
 	if err != nil {
@@ -34,7 +32,7 @@ func newTestContext(data map[string]interface{}, subject string) *EvaluationCont
 		timeCtx,
 		nil, // kvCtx
 		nil, // sigVerification
-		logger.NewNopLogger(),
+		logger.NewNop(),
 	)
 	if err != nil {
 		panic(fmt.Sprintf("failed to create evaluation context: %v", err))
@@ -50,25 +48,25 @@ func TestEvaluateCondition_Equality(t *testing.T) {
 	tests := []struct {
 		name      string
 		condition Condition
-		data      map[string]interface{}
+		data      map[string]any
 		want      bool
 	}{
 		{
 			name:      "string equals - match",
 			condition: Condition{Field: "{status}", Operator: "eq", Value: "active"},
-			data:      map[string]interface{}{"status": "active"},
+			data:      map[string]any{"status": "active"},
 			want:      true,
 		},
 		{
 			name:      "string not equals - match",
 			condition: Condition{Field: "{status}", Operator: "neq", Value: "error"},
-			data:      map[string]interface{}{"status": "active"},
+			data:      map[string]any{"status": "active"},
 			want:      true,
 		},
 		{
 			name:      "type coercion - string to int",
 			condition: Condition{Field: "{port}", Operator: "eq", Value: "8080"},
-			data:      map[string]interface{}{"port": 8080},
+			data:      map[string]any{"port": 8080},
 			want:      true,
 		},
 	}
@@ -91,25 +89,25 @@ func TestEvaluateCondition_Numeric(t *testing.T) {
 	tests := []struct {
 		name      string
 		condition Condition
-		data      map[string]interface{}
+		data      map[string]any
 		want      bool
 	}{
 		{
 			name:      "greater than - true",
 			condition: Condition{Field: "{temperature}", Operator: "gt", Value: 25},
-			data:      map[string]interface{}{"temperature": 30},
+			data:      map[string]any{"temperature": 30},
 			want:      true,
 		},
 		{
 			name:      "less than or equal - equal",
 			condition: Condition{Field: "{count}", Operator: "lte", Value: 10},
-			data:      map[string]interface{}{"count": 10},
+			data:      map[string]any{"count": 10},
 			want:      true,
 		},
 		{
 			name:      "string number comparison",
 			condition: Condition{Field: "{port}", Operator: "gt", Value: "8000"},
-			data:      map[string]interface{}{"port": "8080"},
+			data:      map[string]any{"port": "8080"},
 			want:      true,
 		},
 	}
@@ -132,25 +130,25 @@ func TestEvaluateCondition_Exists(t *testing.T) {
 	tests := []struct {
 		name      string
 		condition Condition
-		data      map[string]interface{}
+		data      map[string]any
 		want      bool
 	}{
 		{
 			name:      "field exists",
 			condition: Condition{Field: "{temperature}", Operator: "exists"},
-			data:      map[string]interface{}{"temperature": 25},
+			data:      map[string]any{"temperature": 25},
 			want:      true,
 		},
 		{
 			name:      "field does not exist",
 			condition: Condition{Field: "{humidity}", Operator: "exists"},
-			data:      map[string]interface{}{"temperature": 25},
+			data:      map[string]any{"temperature": 25},
 			want:      false,
 		},
 		{
 			name:      "field exists with nil value",
 			condition: Condition{Field: "{value}", Operator: "exists"},
-			data:      map[string]interface{}{"value": nil},
+			data:      map[string]any{"value": nil},
 			want:      false,
 		},
 	}
@@ -169,9 +167,9 @@ func TestEvaluateCondition_Exists(t *testing.T) {
 // TestEvaluateCondition_NestedFields tests nested field access
 func TestEvaluateCondition_NestedFields(t *testing.T) {
 	evaluator := newTestEvaluator()
-	data := map[string]interface{}{
-		"user": map[string]interface{}{
-			"profile": map[string]interface{}{
+	data := map[string]any{
+		"user": map[string]any{
+			"profile": map[string]any{
 				"email": "john@example.com",
 			},
 		},
@@ -190,7 +188,7 @@ func TestEvaluateCondition_TimeFields(t *testing.T) {
 	fixedTime := time.Date(2024, 3, 15, 14, 30, 0, 0, time.UTC)
 	timeProvider := NewMockTimeProvider(fixedTime)
 
-	context, _ := NewEvaluationContext([]byte("{}"), nil, NewSubjectContext("test.subject"), nil, timeProvider.GetCurrentContext(), nil, nil, logger.NewNopLogger())
+	context, _ := NewEvaluationContext([]byte("{}"), nil, NewSubjectContext("test.subject"), nil, timeProvider.CurrentContext(), nil, nil, logger.NewNop())
 	condition := Condition{Field: "{@time.hour}", Operator: "eq", Value: 14}
 
 	if !evaluator.evaluateCondition(&condition, context) {
@@ -201,7 +199,7 @@ func TestEvaluateCondition_TimeFields(t *testing.T) {
 // TestEvaluateCondition_SubjectFields tests subject-based conditions
 func TestEvaluateCondition_SubjectFields(t *testing.T) {
 	evaluator := newTestEvaluator()
-	context := newTestContext(map[string]interface{}{}, "sensors.temperature.room1")
+	context := newTestContext(map[string]any{}, "sensors.temperature.room1")
 	condition := Condition{Field: "{@subject.1}", Operator: "eq", Value: "temperature"}
 
 	if !evaluator.evaluateCondition(&condition, context) {
@@ -219,7 +217,7 @@ func TestEvaluateConditions_LogicalOperators(t *testing.T) {
 			{Field: "{status}", Operator: "eq", Value: "active"},
 		},
 	}
-	data := map[string]interface{}{"temperature": 25, "status": "active"}
+	data := map[string]any{"temperature": 25, "status": "active"}
 
 	context := newTestContext(data, "test.subject")
 	if !evaluator.Evaluate(&conditions, context) {
@@ -243,7 +241,7 @@ func TestEvaluateConditions_NestedGroups(t *testing.T) {
 			},
 		},
 	}
-	data := map[string]interface{}{"active": true, "temperature": 35, "humidity": 70}
+	data := map[string]any{"active": true, "temperature": 35, "humidity": 70}
 
 	context := newTestContext(data, "test.subject")
 	if !evaluator.Evaluate(&conditions, context) {
@@ -262,7 +260,7 @@ func TestEvaluator_VariableToVariableComparison(t *testing.T) {
 	tests := []struct {
 		name      string
 		condition Condition
-		data      map[string]interface{}
+		data      map[string]any
 		want      bool
 	}{
 		{
@@ -272,7 +270,7 @@ func TestEvaluator_VariableToVariableComparison(t *testing.T) {
 				Operator: "gt",
 				Value:    "{threshold}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"temperature": 105,
 				"threshold":   100,
 			},
@@ -285,7 +283,7 @@ func TestEvaluator_VariableToVariableComparison(t *testing.T) {
 				Operator: "gt",
 				Value:    "{threshold}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"temperature": 95,
 				"threshold":   100,
 			},
@@ -298,7 +296,7 @@ func TestEvaluator_VariableToVariableComparison(t *testing.T) {
 				Operator: "eq",
 				Value:    "{expected_count}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"count":          42,
 				"expected_count": 42,
 			},
@@ -311,7 +309,7 @@ func TestEvaluator_VariableToVariableComparison(t *testing.T) {
 				Operator: "eq",
 				Value:    "{expected_status}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"status":          "active",
 				"expected_status": "active",
 			},
@@ -324,7 +322,7 @@ func TestEvaluator_VariableToVariableComparison(t *testing.T) {
 				Operator: "neq",
 				Value:    "{expected_status}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"status":          "active",
 				"expected_status": "inactive",
 			},
@@ -337,7 +335,7 @@ func TestEvaluator_VariableToVariableComparison(t *testing.T) {
 				Operator: "lte",
 				Value:    "{max_value}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"current_value": 99.5,
 				"max_value":     100.0,
 			},
@@ -350,7 +348,7 @@ func TestEvaluator_VariableToVariableComparison(t *testing.T) {
 				Operator: "eq",
 				Value:    "{expected_enabled}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"enabled":          true,
 				"expected_enabled": true,
 			},
@@ -363,7 +361,7 @@ func TestEvaluator_VariableToVariableComparison(t *testing.T) {
 				Operator: "gt",
 				Value:    "{start_time}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"end_time":   1700000000,
 				"start_time": 1699000000,
 			},
@@ -376,8 +374,8 @@ func TestEvaluator_VariableToVariableComparison(t *testing.T) {
 				Operator: "gt",
 				Value:    "{sensor.threshold}",
 			},
-			data: map[string]interface{}{
-				"sensor": map[string]interface{}{
+			data: map[string]any{
+				"sensor": map[string]any{
 					"reading":   150,
 					"threshold": 100,
 				},
@@ -391,7 +389,7 @@ func TestEvaluator_VariableToVariableComparison(t *testing.T) {
 				Operator: "gt",
 				Value:    "{missing_threshold}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"temperature": 105,
 			},
 			want: false,
@@ -403,7 +401,7 @@ func TestEvaluator_VariableToVariableComparison(t *testing.T) {
 				Operator: "gt",
 				Value:    "{threshold}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"threshold": 100,
 			},
 			want: false,
@@ -415,7 +413,7 @@ func TestEvaluator_VariableToVariableComparison(t *testing.T) {
 				Operator: "gt",
 				Value:    "{missing_value}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"other": "data",
 			},
 			want: false,
@@ -427,7 +425,7 @@ func TestEvaluator_VariableToVariableComparison(t *testing.T) {
 				Operator: "gt",
 				Value:    "{number}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"string_number": "100",
 				"number":        50,
 			},
@@ -440,7 +438,7 @@ func TestEvaluator_VariableToVariableComparison(t *testing.T) {
 				Operator: "gt",
 				Value:    100,
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"temperature": 105,
 			},
 			want: true,
@@ -452,7 +450,7 @@ func TestEvaluator_VariableToVariableComparison(t *testing.T) {
 				Operator: "eq",
 				Value:    "{status}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"temperature": "active",
 				"status":      "active",
 			},
@@ -481,7 +479,7 @@ func TestEvaluator_VariableComparison_WithSystemVariables(t *testing.T) {
 	tests := []struct {
 		name      string
 		condition Condition
-		data      map[string]interface{}
+		data      map[string]any
 		want      bool
 	}{
 		{
@@ -491,7 +489,7 @@ func TestEvaluator_VariableComparison_WithSystemVariables(t *testing.T) {
 				Operator: "eq",
 				Value:    "{@time.hour}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"expected_hour": 14,
 			},
 			want: true,
@@ -503,7 +501,7 @@ func TestEvaluator_VariableComparison_WithSystemVariables(t *testing.T) {
 				Operator: "gte",
 				Value:    9,
 			},
-			data: map[string]interface{}{},
+			data: map[string]any{},
 			want: true,
 		},
 		{
@@ -513,7 +511,7 @@ func TestEvaluator_VariableComparison_WithSystemVariables(t *testing.T) {
 				Operator: "lt",
 				Value:    "{@time.minute}",
 			},
-			data: map[string]interface{}{},
+			data: map[string]any{},
 			want: true, // hour=14, minute=30, so 14 < 30
 		},
 	}
@@ -526,10 +524,10 @@ func TestEvaluator_VariableComparison_WithSystemVariables(t *testing.T) {
 				nil,
 				NewSubjectContext("test.subject"),
 				nil,
-				timeProvider.GetCurrentContext(),
+				timeProvider.CurrentContext(),
 				nil,
 				nil,
-				logger.NewNopLogger(),
+				logger.NewNop(),
 			)
 			got := evaluator.evaluateCondition(&tt.condition, context)
 			if got != tt.want {
@@ -546,7 +544,7 @@ func TestEvaluator_VariableComparison_TypePreservation(t *testing.T) {
 	tests := []struct {
 		name      string
 		condition Condition
-		data      map[string]interface{}
+		data      map[string]any
 		want      bool
 	}{
 		{
@@ -556,7 +554,7 @@ func TestEvaluator_VariableComparison_TypePreservation(t *testing.T) {
 				Operator: "gt",
 				Value:    "{threshold}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"reading":   25.5,
 				"threshold": 25.4,
 			},
@@ -569,7 +567,7 @@ func TestEvaluator_VariableComparison_TypePreservation(t *testing.T) {
 				Operator: "eq",
 				Value:    "{expected}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"count":    42,
 				"expected": 42,
 			},
@@ -582,7 +580,7 @@ func TestEvaluator_VariableComparison_TypePreservation(t *testing.T) {
 				Operator: "lt",
 				Value:    "{float_value}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"int_value":   42,
 				"float_value": 42.5,
 			},
@@ -595,7 +593,7 @@ func TestEvaluator_VariableComparison_TypePreservation(t *testing.T) {
 				Operator: "eq",
 				Value:    "{expected}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"status":   "Active",
 				"expected": "active",
 			},
@@ -608,7 +606,7 @@ func TestEvaluator_VariableComparison_TypePreservation(t *testing.T) {
 				Operator: "eq",
 				Value:    "{flag2}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"flag1": true,
 				"flag2": true,
 			},
@@ -632,8 +630,8 @@ func TestEvaluator_VariableComparison_RealWorldScenarios(t *testing.T) {
 	evaluator := newTestEvaluator()
 
 	t.Run("booking validation - end after start", func(t *testing.T) {
-		data := map[string]interface{}{
-			"booking": map[string]interface{}{
+		data := map[string]any{
+			"booking": map[string]any{
 				"start_time": 1700000000,
 				"end_time":   1700003600, // 1 hour later
 			},
@@ -650,8 +648,8 @@ func TestEvaluator_VariableComparison_RealWorldScenarios(t *testing.T) {
 	})
 
 	t.Run("temperature threshold check", func(t *testing.T) {
-		data := map[string]interface{}{
-			"sensor": map[string]interface{}{
+		data := map[string]any{
+			"sensor": map[string]any{
 				"current_temp": 85,
 				"max_temp":     80,
 			},
@@ -668,11 +666,11 @@ func TestEvaluator_VariableComparison_RealWorldScenarios(t *testing.T) {
 	})
 
 	t.Run("permission level check", func(t *testing.T) {
-		data := map[string]interface{}{
-			"user": map[string]interface{}{
+		data := map[string]any{
+			"user": map[string]any{
 				"level": 5,
 			},
-			"resource": map[string]interface{}{
+			"resource": map[string]any{
 				"required_level": 3,
 			},
 		}
@@ -688,7 +686,7 @@ func TestEvaluator_VariableComparison_RealWorldScenarios(t *testing.T) {
 	})
 
 	t.Run("rate limit check", func(t *testing.T) {
-		data := map[string]interface{}{
+		data := map[string]any{
 			"current_requests": 450,
 			"max_requests":     500,
 		}
@@ -704,7 +702,7 @@ func TestEvaluator_VariableComparison_RealWorldScenarios(t *testing.T) {
 	})
 
 	t.Run("range validation - within bounds", func(t *testing.T) {
-		data := map[string]interface{}{
+		data := map[string]any{
 			"value": 50,
 			"min":   10,
 			"max":   100,
@@ -730,7 +728,7 @@ func TestEvaluator_VariableComparison_ErrorHandling(t *testing.T) {
 	tests := []struct {
 		name      string
 		condition Condition
-		data      map[string]interface{}
+		data      map[string]any
 		want      bool
 		desc      string
 	}{
@@ -741,7 +739,7 @@ func TestEvaluator_VariableComparison_ErrorHandling(t *testing.T) {
 				Operator: "gt",
 				Value:    "{threshold}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"value":     nil,
 				"threshold": 100,
 			},
@@ -755,7 +753,7 @@ func TestEvaluator_VariableComparison_ErrorHandling(t *testing.T) {
 				Operator: "gt",
 				Value:    "{threshold}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"value":     100,
 				"threshold": nil,
 			},
@@ -769,7 +767,7 @@ func TestEvaluator_VariableComparison_ErrorHandling(t *testing.T) {
 				Operator: "gt",
 				Value:    "{number}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"text":   "hello",
 				"number": 42,
 			},
@@ -783,7 +781,7 @@ func TestEvaluator_VariableComparison_ErrorHandling(t *testing.T) {
 				Operator: "gt",
 				Value:    "{threshold}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"temperature": 100,
 				"threshold":   50,
 			},
@@ -797,7 +795,7 @@ func TestEvaluator_VariableComparison_ErrorHandling(t *testing.T) {
 				Operator: "gt",
 				Value:    "{}",
 			},
-			data: map[string]interface{}{
+			data: map[string]any{
 				"temperature": 100,
 			},
 			want: false,
@@ -826,17 +824,17 @@ func TestArrayOperator_Any(t *testing.T) {
 
 	tests := []struct {
 		name string
-		data map[string]interface{}
+		data map[string]any
 		cond Condition
 		want bool
 	}{
 		{
 			name: "any - one match",
-			data: map[string]interface{}{
-				"items": []interface{}{
-					map[string]interface{}{"status": "inactive"},
-					map[string]interface{}{"status": "active"},
-					map[string]interface{}{"status": "inactive"},
+			data: map[string]any{
+				"items": []any{
+					map[string]any{"status": "inactive"},
+					map[string]any{"status": "active"},
+					map[string]any{"status": "inactive"},
 				},
 			},
 			cond: Condition{
@@ -851,11 +849,11 @@ func TestArrayOperator_Any(t *testing.T) {
 		},
 		{
 			name: "any - multiple matches",
-			data: map[string]interface{}{
-				"items": []interface{}{
-					map[string]interface{}{"status": "active"},
-					map[string]interface{}{"status": "active"},
-					map[string]interface{}{"status": "inactive"},
+			data: map[string]any{
+				"items": []any{
+					map[string]any{"status": "active"},
+					map[string]any{"status": "active"},
+					map[string]any{"status": "inactive"},
 				},
 			},
 			cond: Condition{
@@ -870,10 +868,10 @@ func TestArrayOperator_Any(t *testing.T) {
 		},
 		{
 			name: "any - no matches",
-			data: map[string]interface{}{
-				"items": []interface{}{
-					map[string]interface{}{"status": "inactive"},
-					map[string]interface{}{"status": "inactive"},
+			data: map[string]any{
+				"items": []any{
+					map[string]any{"status": "inactive"},
+					map[string]any{"status": "inactive"},
 				},
 			},
 			cond: Condition{
@@ -888,8 +886,8 @@ func TestArrayOperator_Any(t *testing.T) {
 		},
 		{
 			name: "any - empty array",
-			data: map[string]interface{}{
-				"items": []interface{}{},
+			data: map[string]any{
+				"items": []any{},
 			},
 			cond: Condition{
 				Field:    "{items}",
@@ -903,11 +901,11 @@ func TestArrayOperator_Any(t *testing.T) {
 		},
 		{
 			name: "any - mixed array with non-objects",
-			data: map[string]interface{}{
-				"items": []interface{}{
+			data: map[string]any{
+				"items": []any{
 					"not-an-object",
 					42,
-					map[string]interface{}{"status": "active"},
+					map[string]any{"status": "active"},
 					true,
 				},
 			},
@@ -923,8 +921,8 @@ func TestArrayOperator_Any(t *testing.T) {
 		},
 		{
 			name: "any - only non-objects",
-			data: map[string]interface{}{
-				"items": []interface{}{"string", 42, true, 3.14},
+			data: map[string]any{
+				"items": []any{"string", 42, true, 3.14},
 			},
 			cond: Condition{
 				Field:    "{items}",
@@ -955,17 +953,17 @@ func TestArrayOperator_All(t *testing.T) {
 
 	tests := []struct {
 		name string
-		data map[string]interface{}
+		data map[string]any
 		cond Condition
 		want bool
 	}{
 		{
 			name: "all - all match",
-			data: map[string]interface{}{
-				"items": []interface{}{
-					map[string]interface{}{"status": "active"},
-					map[string]interface{}{"status": "active"},
-					map[string]interface{}{"status": "active"},
+			data: map[string]any{
+				"items": []any{
+					map[string]any{"status": "active"},
+					map[string]any{"status": "active"},
+					map[string]any{"status": "active"},
 				},
 			},
 			cond: Condition{
@@ -980,11 +978,11 @@ func TestArrayOperator_All(t *testing.T) {
 		},
 		{
 			name: "all - one doesn't match",
-			data: map[string]interface{}{
-				"items": []interface{}{
-					map[string]interface{}{"status": "active"},
-					map[string]interface{}{"status": "inactive"},
-					map[string]interface{}{"status": "active"},
+			data: map[string]any{
+				"items": []any{
+					map[string]any{"status": "active"},
+					map[string]any{"status": "inactive"},
+					map[string]any{"status": "active"},
 				},
 			},
 			cond: Condition{
@@ -999,8 +997,8 @@ func TestArrayOperator_All(t *testing.T) {
 		},
 		{
 			name: "all - empty array",
-			data: map[string]interface{}{
-				"items": []interface{}{},
+			data: map[string]any{
+				"items": []any{},
 			},
 			cond: Condition{
 				Field:    "{items}",
@@ -1014,11 +1012,11 @@ func TestArrayOperator_All(t *testing.T) {
 		},
 		{
 			name: "all - STRICT: mixed array fails immediately",
-			data: map[string]interface{}{
-				"items": []interface{}{
-					map[string]interface{}{"status": "active"},
+			data: map[string]any{
+				"items": []any{
+					map[string]any{"status": "active"},
 					"not-an-object", // FAILS HERE
-					map[string]interface{}{"status": "active"},
+					map[string]any{"status": "active"},
 				},
 			},
 			cond: Condition{
@@ -1033,10 +1031,10 @@ func TestArrayOperator_All(t *testing.T) {
 		},
 		{
 			name: "all - STRICT: non-object at end fails",
-			data: map[string]interface{}{
-				"items": []interface{}{
-					map[string]interface{}{"status": "active"},
-					map[string]interface{}{"status": "active"},
+			data: map[string]any{
+				"items": []any{
+					map[string]any{"status": "active"},
+					map[string]any{"status": "active"},
 					42, // FAILS HERE
 				},
 			},
@@ -1052,8 +1050,8 @@ func TestArrayOperator_All(t *testing.T) {
 		},
 		{
 			name: "all - STRICT: only non-objects",
-			data: map[string]interface{}{
-				"items": []interface{}{"string", 42, true},
+			data: map[string]any{
+				"items": []any{"string", 42, true},
 			},
 			cond: Condition{
 				Field:    "{items}",
@@ -1084,16 +1082,16 @@ func TestArrayOperator_None(t *testing.T) {
 
 	tests := []struct {
 		name string
-		data map[string]interface{}
+		data map[string]any
 		cond Condition
 		want bool
 	}{
 		{
 			name: "none - no matches",
-			data: map[string]interface{}{
-				"items": []interface{}{
-					map[string]interface{}{"status": "inactive"},
-					map[string]interface{}{"status": "inactive"},
+			data: map[string]any{
+				"items": []any{
+					map[string]any{"status": "inactive"},
+					map[string]any{"status": "inactive"},
 				},
 			},
 			cond: Condition{
@@ -1108,10 +1106,10 @@ func TestArrayOperator_None(t *testing.T) {
 		},
 		{
 			name: "none - one match",
-			data: map[string]interface{}{
-				"items": []interface{}{
-					map[string]interface{}{"status": "inactive"},
-					map[string]interface{}{"status": "active"},
+			data: map[string]any{
+				"items": []any{
+					map[string]any{"status": "inactive"},
+					map[string]any{"status": "active"},
 				},
 			},
 			cond: Condition{
@@ -1126,8 +1124,8 @@ func TestArrayOperator_None(t *testing.T) {
 		},
 		{
 			name: "none - empty array",
-			data: map[string]interface{}{
-				"items": []interface{}{},
+			data: map[string]any{
+				"items": []any{},
 			},
 			cond: Condition{
 				Field:    "{items}",
@@ -1141,11 +1139,11 @@ func TestArrayOperator_None(t *testing.T) {
 		},
 		{
 			name: "none - mixed array with non-objects (no object matches)",
-			data: map[string]interface{}{
-				"items": []interface{}{
+			data: map[string]any{
+				"items": []any{
 					"not-an-object",
 					42,
-					map[string]interface{}{"status": "inactive"},
+					map[string]any{"status": "inactive"},
 					true,
 				},
 			},
@@ -1161,8 +1159,8 @@ func TestArrayOperator_None(t *testing.T) {
 		},
 		{
 			name: "none - only non-objects",
-			data: map[string]interface{}{
-				"items": []interface{}{"string", 42, true},
+			data: map[string]any{
+				"items": []any{"string", 42, true},
 			},
 			cond: Condition{
 				Field:    "{items}",
@@ -1193,16 +1191,16 @@ func TestArrayOperator_ComplexConditions(t *testing.T) {
 
 	tests := []struct {
 		name string
-		data map[string]interface{}
+		data map[string]any
 		cond Condition
 		want bool
 	}{
 		{
 			name: "any with AND conditions",
-			data: map[string]interface{}{
-				"items": []interface{}{
-					map[string]interface{}{"status": "active", "priority": "high"},
-					map[string]interface{}{"status": "inactive", "priority": "high"},
+			data: map[string]any{
+				"items": []any{
+					map[string]any{"status": "active", "priority": "high"},
+					map[string]any{"status": "inactive", "priority": "high"},
 				},
 			},
 			cond: Condition{
@@ -1220,11 +1218,11 @@ func TestArrayOperator_ComplexConditions(t *testing.T) {
 		},
 		{
 			name: "all with OR conditions",
-			data: map[string]interface{}{
-				"items": []interface{}{
-					map[string]interface{}{"status": "active", "priority": "high"},
-					map[string]interface{}{"status": "inactive", "priority": "high"},
-					map[string]interface{}{"status": "active", "priority": "low"},
+			data: map[string]any{
+				"items": []any{
+					map[string]any{"status": "active", "priority": "high"},
+					map[string]any{"status": "inactive", "priority": "high"},
+					map[string]any{"status": "active", "priority": "low"},
 				},
 			},
 			cond: Condition{
@@ -1242,15 +1240,15 @@ func TestArrayOperator_ComplexConditions(t *testing.T) {
 		},
 		{
 			name: "any with nested field access",
-			data: map[string]interface{}{
-				"notifications": []interface{}{
-					map[string]interface{}{
-						"event": map[string]interface{}{
+			data: map[string]any{
+				"notifications": []any{
+					map[string]any{
+						"event": map[string]any{
 							"type": "MOTION_DETECTED",
 						},
 					},
-					map[string]interface{}{
-						"event": map[string]interface{}{
+					map[string]any{
+						"event": map[string]any{
 							"type": "DOOR_OPENED",
 						},
 					},
@@ -1285,13 +1283,13 @@ func TestArrayOperator_EdgeCases(t *testing.T) {
 
 	tests := []struct {
 		name string
-		data map[string]interface{}
+		data map[string]any
 		cond Condition
 		want bool
 	}{
 		{
 			name: "array operator on non-array field",
-			data: map[string]interface{}{
+			data: map[string]any{
 				"items": "not-an-array",
 			},
 			cond: Condition{
@@ -1306,7 +1304,7 @@ func TestArrayOperator_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "array operator on non-existent field",
-			data: map[string]interface{}{
+			data: map[string]any{
 				"other": "value",
 			},
 			cond: Condition{
@@ -1321,9 +1319,9 @@ func TestArrayOperator_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "array operator with nil nested conditions",
-			data: map[string]interface{}{
-				"items": []interface{}{
-					map[string]interface{}{"status": "active"},
+			data: map[string]any{
+				"items": []any{
+					map[string]any{"status": "active"},
 				},
 			},
 			cond: Condition{
@@ -1335,9 +1333,9 @@ func TestArrayOperator_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "single element array - all matches",
-			data: map[string]interface{}{
-				"items": []interface{}{
-					map[string]interface{}{"status": "active"},
+			data: map[string]any{
+				"items": []any{
+					map[string]any{"status": "active"},
 				},
 			},
 			cond: Condition{
@@ -1368,30 +1366,30 @@ func TestArrayOperator_RealWorldScenario(t *testing.T) {
 	evaluator := newTestEvaluator()
 
 	// Real-world batch notification payload
-	data := map[string]interface{}{
+	data := map[string]any{
 		"siteId": "site-123",
 		"type":   "NOTIFICATION",
-		"notification": []interface{}{
-			map[string]interface{}{
+		"notification": []any{
+			map[string]any{
 				"id":   "evt-001",
 				"type": "DEVICE_MOTION_START",
-				"event": map[string]interface{}{
+				"event": map[string]any{
 					"alarmId":   "alarm-abc",
 					"alarmName": "Motion Detected",
 				},
 			},
-			map[string]interface{}{
+			map[string]any{
 				"id":   "evt-002",
 				"type": "DEVICE_DOOR_OPEN",
-				"event": map[string]interface{}{
+				"event": map[string]any{
 					"alarmId":   "alarm-xyz",
 					"alarmName": "Door Opened",
 				},
 			},
-			map[string]interface{}{
+			map[string]any{
 				"id":   "evt-003",
 				"type": "DEVICE_MOTION_START",
-				"event": map[string]interface{}{
+				"event": map[string]any{
 					"alarmId":   "alarm-def",
 					"alarmName": "Motion Detected",
 				},
@@ -1470,31 +1468,31 @@ func TestArrayOperator_ShortCircuitBehavior(t *testing.T) {
 	evaluator := newTestEvaluator()
 
 	// Large array where first element matches (for "any")
-	largeArrayFirstMatch := []interface{}{
-		map[string]interface{}{"status": "active"},
+	largeArrayFirstMatch := []any{
+		map[string]any{"status": "active"},
 	}
 	for i := 0; i < 1000; i++ {
-		largeArrayFirstMatch = append(largeArrayFirstMatch, map[string]interface{}{"status": "inactive"})
+		largeArrayFirstMatch = append(largeArrayFirstMatch, map[string]any{"status": "inactive"})
 	}
 
 	// Large array where first element doesn't match (for "all")
-	largeArrayFirstNoMatch := []interface{}{
-		map[string]interface{}{"status": "inactive"},
+	largeArrayFirstNoMatch := []any{
+		map[string]any{"status": "inactive"},
 	}
 	for i := 0; i < 1000; i++ {
-		largeArrayFirstNoMatch = append(largeArrayFirstNoMatch, map[string]interface{}{"status": "active"})
+		largeArrayFirstNoMatch = append(largeArrayFirstNoMatch, map[string]any{"status": "active"})
 	}
 
 	tests := []struct {
 		name string
-		data map[string]interface{}
+		data map[string]any
 		cond Condition
 		want bool
 		desc string
 	}{
 		{
 			name: "any short-circuits on first match",
-			data: map[string]interface{}{
+			data: map[string]any{
 				"items": largeArrayFirstMatch,
 			},
 			cond: Condition{
@@ -1510,7 +1508,7 @@ func TestArrayOperator_ShortCircuitBehavior(t *testing.T) {
 		},
 		{
 			name: "all short-circuits on first non-match",
-			data: map[string]interface{}{
+			data: map[string]any{
 				"items": largeArrayFirstNoMatch,
 			},
 			cond: Condition{
@@ -1526,7 +1524,7 @@ func TestArrayOperator_ShortCircuitBehavior(t *testing.T) {
 		},
 		{
 			name: "none short-circuits on first match",
-			data: map[string]interface{}{
+			data: map[string]any{
 				"items": largeArrayFirstMatch,
 			},
 			cond: Condition{
@@ -1559,7 +1557,7 @@ func BenchmarkEvaluateCondition_Simple(b *testing.B) {
 	evaluator := newTestEvaluator()
 	condition := Condition{Field: "{temperature}", Operator: "gt", Value: 25}
 	prepareCondition(&condition)
-	context := newTestContext(map[string]interface{}{"temperature": 30}, "test.subject")
+	context := newTestContext(map[string]any{"temperature": 30}, "test.subject")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1582,10 +1580,10 @@ func BenchmarkEvaluateConditions_Complex(b *testing.B) {
 			},
 		},
 	}
-	data := map[string]interface{}{
+	data := map[string]any{
 		"active":      true,
 		"temperature": 35,
-		"user":        map[string]interface{}{"profile": map[string]interface{}{"tier": "standard"}},
+		"user":        map[string]any{"profile": map[string]any{"tier": "standard"}},
 	}
 	context := newTestContext(data, "sensors.temperature")
 	PrepareConditions(&conditions)
@@ -1601,7 +1599,7 @@ func BenchmarkEvaluateCondition_VariableComparison(b *testing.B) {
 	evaluator := newTestEvaluator()
 	condition := Condition{Field: "{temperature}", Operator: "gt", Value: "{threshold}"}
 	prepareCondition(&condition)
-	context := newTestContext(map[string]interface{}{"temperature": 105, "threshold": 100}, "test.subject")
+	context := newTestContext(map[string]any{"temperature": 105, "threshold": 100}, "test.subject")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1614,16 +1612,16 @@ func BenchmarkArrayOperator_Any(b *testing.B) {
 	evaluator := newTestEvaluator()
 
 	// 100-element array with match at position 50
-	items := make([]interface{}, 100)
+	items := make([]any, 100)
 	for i := 0; i < 100; i++ {
 		status := "inactive"
 		if i == 50 {
 			status = "active"
 		}
-		items[i] = map[string]interface{}{"status": status}
+		items[i] = map[string]any{"status": status}
 	}
 
-	data := map[string]interface{}{"items": items}
+	data := map[string]any{"items": items}
 	cond := Condition{
 		Field:    "{items}",
 		Operator: "any",
@@ -1645,12 +1643,12 @@ func BenchmarkArrayOperator_All(b *testing.B) {
 	evaluator := newTestEvaluator()
 
 	// 100-element array where all match
-	items := make([]interface{}, 100)
+	items := make([]any, 100)
 	for i := 0; i < 100; i++ {
-		items[i] = map[string]interface{}{"status": "active"}
+		items[i] = map[string]any{"status": "active"}
 	}
 
-	data := map[string]interface{}{"items": items}
+	data := map[string]any{"items": items}
 	cond := Condition{
 		Field:    "{items}",
 		Operator: "all",
@@ -1672,12 +1670,12 @@ func BenchmarkArrayOperator_None(b *testing.B) {
 	evaluator := newTestEvaluator()
 
 	// 100-element array where none match
-	items := make([]interface{}, 100)
+	items := make([]any, 100)
 	for i := 0; i < 100; i++ {
-		items[i] = map[string]interface{}{"status": "inactive"}
+		items[i] = map[string]any{"status": "inactive"}
 	}
 
-	data := map[string]interface{}{"items": items}
+	data := map[string]any{"items": items}
 	cond := Condition{
 		Field:    "{items}",
 		Operator: "none",
@@ -1699,13 +1697,13 @@ func BenchmarkArrayOperator_ShortCircuit(b *testing.B) {
 	evaluator := newTestEvaluator()
 
 	// 1000-element array with match at first position
-	items := make([]interface{}, 1000)
-	items[0] = map[string]interface{}{"status": "active"}
+	items := make([]any, 1000)
+	items[0] = map[string]any{"status": "active"}
 	for i := 1; i < 1000; i++ {
-		items[i] = map[string]interface{}{"status": "inactive"}
+		items[i] = map[string]any{"status": "inactive"}
 	}
 
-	data := map[string]interface{}{"items": items}
+	data := map[string]any{"items": items}
 	cond := Condition{
 		Field:    "{items}",
 		Operator: "any",
@@ -1727,18 +1725,18 @@ func BenchmarkArrayOperator_MixedArray(b *testing.B) {
 	evaluator := newTestEvaluator()
 
 	// 100-element mixed array
-	items := make([]interface{}, 100)
+	items := make([]any, 100)
 	for i := 0; i < 100; i++ {
 		if i%3 == 0 {
 			items[i] = "string"
 		} else if i%3 == 1 {
 			items[i] = 42
 		} else {
-			items[i] = map[string]interface{}{"status": "active"}
+			items[i] = map[string]any{"status": "active"}
 		}
 	}
 
-	data := map[string]interface{}{"items": items}
+	data := map[string]any{"items": items}
 	cond := Condition{
 		Field:    "{items}",
 		Operator: "any",

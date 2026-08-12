@@ -1,5 +1,3 @@
-// file: internal/broker/rule_kv_manager_test.go
-
 package broker
 
 import (
@@ -86,7 +84,7 @@ func TestRuleKVManagerRecreatesWatcherOnUnexpectedClose(t *testing.T) {
 
 	m := &RuleKVManager{
 		kvBucket:     "test",
-		logger:       logger.NewNopLogger(),
+		logger:       logger.NewNop(),
 		currentRules: make(map[string][]rule.Rule),
 		ready:        make(chan struct{}),
 		newWatcher:   newWatcher,
@@ -144,7 +142,7 @@ func TestRuleKVManagerCleanShutdownNoRecreate(t *testing.T) {
 	var calls int32
 	m := &RuleKVManager{
 		kvBucket:     "test",
-		logger:       logger.NewNopLogger(),
+		logger:       logger.NewNop(),
 		currentRules: make(map[string][]rule.Rule),
 		ready:        make(chan struct{}),
 		newWatcher: func(context.Context) (jetstream.KeyWatcher, error) {

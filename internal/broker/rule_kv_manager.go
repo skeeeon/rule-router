@@ -1,5 +1,3 @@
-// file: internal/broker/rule_kv_manager.go
-
 package broker
 
 import (
@@ -38,7 +36,7 @@ type RuleKVManager struct {
 	autoProvision       bool
 	processor           *rule.Processor
 	broker              *NATSBroker
-	rulesLoader         *rule.RulesLoader
+	rulesLoader         *rule.Loader
 	logger              *logger.Logger
 	currentRules        map[string][]rule.Rule // KV key → parsed rules
 	scheduleRebuildFunc func([]*rule.Rule)     // optional: called when schedule rules change
@@ -63,7 +61,7 @@ func NewRuleKVManager(
 	autoProvision bool,
 	processor *rule.Processor,
 	broker *NATSBroker,
-	rulesLoader *rule.RulesLoader,
+	rulesLoader *rule.Loader,
 	log *logger.Logger,
 ) *RuleKVManager {
 	return &RuleKVManager{
@@ -82,7 +80,7 @@ func NewRuleKVManager(
 // Only runs once (via sync.Once). Returns immediately; the watcher runs in a goroutine.
 func (m *RuleKVManager) Watch(ctx context.Context) error {
 	m.watchOnce.Do(func() {
-		js := m.broker.GetJetStream()
+		js := m.broker.JetStream()
 
 		store, err := js.KeyValue(ctx, m.kvBucket)
 		if err != nil {
@@ -297,7 +295,7 @@ func (m *RuleKVManager) handleRulePut(key string, value []byte, revision uint64)
 	}
 
 	// Validate that all rule subjects have corresponding streams
-	resolver := m.broker.GetStreamResolver()
+	resolver := m.broker.StreamResolver()
 	if streamErrs := resolver.ValidateRulesHaveStreams(rules); len(streamErrs) > 0 {
 		for _, e := range streamErrs {
 			m.logger.Error("stream validation failed, rejecting all rules for this key",
@@ -493,11 +491,11 @@ func (m *RuleKVManager) hasCoreRules(rules []rule.Rule) bool {
 	return false
 }
 
-// GetCoreRules returns all currently-loaded rules with a core-transport NATS
+// CoreRules returns all currently-loaded rules with a core-transport NATS
 // trigger (reply:true or mode:core). Used by RouterApp to deterministically
 // bootstrap responder subscriptions after initial KV sync, independent of the
 // per-put rebuild callback's timing.
-func (m *RuleKVManager) GetCoreRules() []*rule.Rule {
+func (m *RuleKVManager) CoreRules() []*rule.Rule {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

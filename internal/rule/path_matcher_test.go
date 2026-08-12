@@ -1,5 +1,3 @@
-// file: internal/rule/path_matcher_test.go
-
 package rule
 
 import (

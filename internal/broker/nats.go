@@ -1,5 +1,13 @@
-// file: internal/broker/nats.go
-
+// Package broker owns the NATS connection and everything layered on it:
+// JetStream pull consumers, core NATS subscriptions, action publishing, KV
+// bucket access, and hot-reload of KV-stored rules.
+//
+// NATSBroker holds the connection and hands out the pieces built from it.
+// SubscriptionManager serves JetStream-mode triggers through worker pools,
+// Responder serves core-mode and reply:true triggers, and both publish through
+// the shared ActionPublisher so retry and transport selection stay identical.
+// StreamResolver discovers which stream covers a subject; RuleKVManager watches
+// the rule bucket and swaps rules without a restart.
 package broker
 
 import (
@@ -92,7 +100,7 @@ type NATSBroker struct {
 
 	// HTTP action executor shared by the JetStream and core-NATS transports.
 	// Set by the gateway feature after broker startup, so reads go through
-	// GetHTTPExecutor which takes the mutex (traffic may already be flowing).
+	// HTTPExecutor which takes the mutex (traffic may already be flowing).
 	httpExecMu   sync.RWMutex
 	httpExecutor HTTPActionExecutor
 
@@ -189,7 +197,7 @@ func (b *NATSBroker) CreateConsumerForSubject(subject string) error {
 	// Find which stream handles this subject
 	streamName, err := b.streamResolver.FindStreamForSubject(subject)
 	if err != nil {
-		return fmt.Errorf("cannot create consumer for subject '%s': %w", subject, err)
+		return fmt.Errorf("cannot create consumer for subject %q: %w", subject, err)
 	}
 
 	// Generate a valid consumer name
@@ -225,7 +233,7 @@ func (b *NATSBroker) CreateConsumerForSubject(subject string) error {
 
 	consumer, err := b.jetStream.CreateOrUpdateConsumer(ctx, streamName, consumerConfig)
 	if err != nil {
-		return fmt.Errorf("failed to create consumer '%s' on stream '%s' for subject '%s': %w",
+		return fmt.Errorf("failed to create consumer %q on stream %q for subject %q: %w",
 			consumerName, streamName, subject, err)
 	}
 
@@ -290,7 +298,7 @@ func (b *NATSBroker) parseReplayPolicy(policy string) (jetstream.ReplayPolicy, e
 // It uses the broker's internal context for cancellation.
 func (b *NATSBroker) AddSubscription(subject string) error {
 	if b.subscriptionMgr == nil {
-		return fmt.Errorf("subscription manager not initialized")
+		return errors.New("subscription manager not initialized")
 	}
 
 	// Get consumer name
@@ -298,19 +306,19 @@ func (b *NATSBroker) AddSubscription(subject string) error {
 	consumerName, exists := b.consumers[subject]
 	b.consumersMu.RUnlock()
 	if !exists {
-		return fmt.Errorf("consumer not created for subject '%s'", subject)
+		return fmt.Errorf("consumer not created for subject %q", subject)
 	}
 
 	// Get stream name
 	streamName, err := b.streamResolver.FindStreamForSubject(subject)
 	if err != nil {
-		return fmt.Errorf("cannot find stream for subject '%s': %w", subject, err)
+		return fmt.Errorf("cannot find stream for subject %q: %w", subject, err)
 	}
 
 	// Add subscription with configured worker count, using broker's context
 	workers := b.config.NATS.Consumers.WorkerCount
 	if err := b.subscriptionMgr.AddSubscription(b.ctx, streamName, consumerName, subject, workers); err != nil {
-		return fmt.Errorf("failed to add subscription for '%s': %w", subject, err)
+		return fmt.Errorf("failed to add subscription for %q: %w", subject, err)
 	}
 
 	return nil
@@ -333,19 +341,19 @@ func (b *NATSBroker) ValidateSubjects(subjects []string) error {
 	return b.streamResolver.ValidateSubjects(subjects)
 }
 
-// GetStreamResolver returns the stream resolver
-func (b *NATSBroker) GetStreamResolver() *StreamResolver {
+// StreamResolver returns the stream resolver
+func (b *NATSBroker) StreamResolver() *StreamResolver {
 	return b.streamResolver
 }
 
 // FindStreamForSubject finds the stream name that handles the given subject.
-// This is a convenience method that wraps GetStreamResolver().FindStreamForSubject().
+// This is a convenience method that wraps StreamResolver().FindStreamForSubject().
 func (b *NATSBroker) FindStreamForSubject(subject string) (string, error) {
 	return b.streamResolver.FindStreamForSubject(subject)
 }
 
-// GetSubscriptionManager returns the subscription manager
-func (b *NATSBroker) GetSubscriptionManager() *SubscriptionManager {
+// SubscriptionManager returns the subscription manager
+func (b *NATSBroker) SubscriptionManager() *SubscriptionManager {
 	return b.subscriptionMgr
 }
 
@@ -361,9 +369,9 @@ func (b *NATSBroker) SetHTTPExecutor(exec HTTPActionExecutor) {
 	}
 }
 
-// GetHTTPExecutor returns the registered HTTP action executor, or nil when the
+// HTTPExecutor returns the registered HTTP action executor, or nil when the
 // gateway feature is disabled.
-func (b *NATSBroker) GetHTTPExecutor() HTTPActionExecutor {
+func (b *NATSBroker) HTTPExecutor() HTTPActionExecutor {
 	b.httpExecMu.RLock()
 	defer b.httpExecMu.RUnlock()
 	return b.httpExecutor
@@ -392,7 +400,7 @@ func (b *NATSBroker) InitializeKVCache() error {
 
 	b.logger.Info("local KV cache initialized successfully",
 		"cacheEnabled", b.localKVCache.IsEnabled(),
-		"stats", b.localKVCache.GetStats())
+		"stats", b.localKVCache.Stats())
 
 	return nil
 }
@@ -634,7 +642,7 @@ func (b *NATSBroker) handleKVUpdate(bucketName string, entry jetstream.KeyValueE
 	// Process normal update/create.
 	// UseNumber() preserves numeric precision by decoding numbers as json.Number
 	// instead of float64, preventing silent data corruption on large integers.
-	var parsedValue interface{}
+	var parsedValue any
 	rawValue := entry.Value()
 
 	if len(rawValue) > 0 {
@@ -656,8 +664,8 @@ func (b *NATSBroker) handleKVUpdate(bucketName string, entry jetstream.KeyValueE
 		"revision", entry.Revision())
 }
 
-// GetLocalKVCache returns the local KV cache instance
-func (b *NATSBroker) GetLocalKVCache() *rule.LocalKVCache {
+// LocalKVCache returns the local KV cache instance
+func (b *NATSBroker) LocalKVCache() *rule.LocalKVCache {
 	return b.localKVCache
 }
 
@@ -754,13 +762,13 @@ func (b *NATSBroker) initializeKVStores(ctx context.Context) error {
 			if errors.Is(err, jetstream.ErrBucketNotFound) {
 				// FAIL FAST: The bucket does not exist. Return a user-friendly error.
 				return fmt.Errorf(
-					"configured KV bucket not found: '%s'. Please create it before starting the application using 'nats kv add %s'",
+					"configured KV bucket not found: %q. Please create it before starting the application using 'nats kv add %s'",
 					bucket.Name,
 					bucket.Name,
 				)
 			}
 			// For all other errors (permissions, connection issues), fail as before.
-			return fmt.Errorf("failed to access KV bucket '%s': %w", bucket.Name, err)
+			return fmt.Errorf("failed to access KV bucket %q: %w", bucket.Name, err)
 		}
 
 		b.kvStores[bucket.Name] = kv
@@ -909,8 +917,8 @@ func (b *NATSBroker) getAuthMethod() string {
 	return "none"
 }
 
-// GetKVStores returns a copy of the KV stores map
-func (b *NATSBroker) GetKVStores() map[string]jetstream.KeyValue {
+// KVStores returns a copy of the KV stores map
+func (b *NATSBroker) KVStores() map[string]jetstream.KeyValue {
 	stores := make(map[string]jetstream.KeyValue)
 	for name, store := range b.kvStores {
 		stores[name] = store
@@ -919,18 +927,18 @@ func (b *NATSBroker) GetKVStores() map[string]jetstream.KeyValue {
 }
 
 // Helper
-// GetJetStream returns the JetStream interface
-func (b *NATSBroker) GetJetStream() jetstream.JetStream {
+// JetStream returns the JetStream interface
+func (b *NATSBroker) JetStream() jetstream.JetStream {
 	return b.jetStream
 }
 
-// GetNATSConn returns the NATS connection
-func (b *NATSBroker) GetNATSConn() *nats.Conn {
+// Conn returns the NATS connection
+func (b *NATSBroker) Conn() *nats.Conn {
 	return b.natsConn
 }
 
-// GetConsumerName returns the consumer name for a subject
-func (b *NATSBroker) GetConsumerName(subject string) string {
+// ConsumerName returns the consumer name for a subject
+func (b *NATSBroker) ConsumerName(subject string) string {
 	b.consumersMu.RLock()
 	name, exists := b.consumers[subject]
 	b.consumersMu.RUnlock()
@@ -976,11 +984,11 @@ func (b *NATSBroker) ActionPublisher() *ActionPublisher {
 // Used by RuleKVManager to dynamically add subscriptions at runtime.
 func (b *NATSBroker) AddAndStartSubscription(subject string) error {
 	if b.subscriptionMgr == nil {
-		return fmt.Errorf("subscription manager not initialized")
+		return errors.New("subscription manager not initialized")
 	}
 
 	if err := b.CreateConsumerForSubject(subject); err != nil {
-		return fmt.Errorf("failed to create consumer for subject '%s': %w", subject, err)
+		return fmt.Errorf("failed to create consumer for subject %q: %w", subject, err)
 	}
 
 	b.consumersMu.RLock()
@@ -989,7 +997,7 @@ func (b *NATSBroker) AddAndStartSubscription(subject string) error {
 
 	streamName, err := b.streamResolver.FindStreamForSubject(subject)
 	if err != nil {
-		return fmt.Errorf("failed to find stream for subject '%s': %w", subject, err)
+		return fmt.Errorf("failed to find stream for subject %q: %w", subject, err)
 	}
 
 	workers := b.config.NATS.Consumers.WorkerCount
@@ -1020,9 +1028,7 @@ func (b *NATSBroker) Close() error {
 
 	// Stop subscription manager
 	if b.subscriptionMgr != nil {
-		if err := b.subscriptionMgr.Stop(); err != nil {
-			errors = append(errors, fmt.Errorf("failed to stop subscription manager: %w", err))
-		}
+		b.subscriptionMgr.Stop()
 	}
 
 	// Stop all KV watchers explicitly (belt and suspenders with context cancellation).

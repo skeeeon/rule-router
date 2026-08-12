@@ -1,4 +1,6 @@
-// file: cmd/rule-cli/templates/embed.go
+// Package templates embeds the rule and config templates rule-cli writes when
+// scaffolding a new project, so the binary carries them and needs no files
+// installed alongside it.
 package templates
 
 import "embed"

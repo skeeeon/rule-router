@@ -1,5 +1,3 @@
-// file: internal/app/composite.go
-
 package app
 
 import (
@@ -32,8 +30,8 @@ func NewCompositeApp(apps []lifecycle.Application, base *BaseApp) *CompositeApp 
 func (c *CompositeApp) Run(ctx context.Context) error {
 	// Start the shared SubscriptionManager for file-based rules.
 	// In KV mode, subscriptions are started dynamically by RuleKVManager.
-	subMgr := c.base.Broker.GetSubscriptionManager()
-	if subMgr.GetSubscriptionCount() > 0 {
+	subMgr := c.base.Broker.SubscriptionManager()
+	if subMgr.SubscriptionCount() > 0 {
 		if err := subMgr.Start(ctx); err != nil {
 			return fmt.Errorf("failed to start subscription manager: %w", err)
 		}

@@ -1,5 +1,3 @@
-// file: internal/authmgr/nats_client.go
-
 package authmgr
 
 import (
@@ -70,10 +68,10 @@ func NewNATSClient(cfg *NATSConfig, storageConfig *StorageConfig, log *logger.Lo
 	if err != nil {
 		nc.Close()
 		if errors.Is(err, jetstream.ErrBucketNotFound) {
-			return nil, fmt.Errorf("KV bucket '%s' not found. Create it with: nats kv add %s",
+			return nil, fmt.Errorf("KV bucket %q not found. Create it with: nats kv add %s",
 				storageConfig.Bucket, storageConfig.Bucket)
 		}
-		return nil, fmt.Errorf("failed to open KV bucket '%s': %w", storageConfig.Bucket, err)
+		return nil, fmt.Errorf("failed to open KV bucket %q: %w", storageConfig.Bucket, err)
 	}
 
 	log.Info("KV bucket opened successfully", "bucket", storageConfig.Bucket)

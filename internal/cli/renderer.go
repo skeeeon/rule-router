@@ -1,4 +1,3 @@
-// file: internal/cli/renderer.go
 package cli
 
 import (
@@ -46,8 +45,8 @@ func (r *Renderer) ListTemplates() ([]string, error) {
 	return templateNames, nil
 }
 
-// GetTemplateContent returns the raw content of a specific template.
-func (r *Renderer) GetTemplateContent(templateName string) (string, error) {
+// TemplateContent returns the raw content of a specific template.
+func (r *Renderer) TemplateContent(templateName string) (string, error) {
 	// The path inside the embed.FS does not include the "templates/" directory.
 	// The embed root *is* the templates directory.
 	filePath := fmt.Sprintf("%s.yaml", templateName)
@@ -57,7 +56,7 @@ func (r *Renderer) GetTemplateContent(templateName string) (string, error) {
 		filePath = fmt.Sprintf("%s.yml", templateName)
 		content, err = fs.ReadFile(r.templateFS, filePath)
 		if err != nil {
-			return "", fmt.Errorf("template '%s' not found", templateName)
+			return "", fmt.Errorf("template %q not found", templateName)
 		}
 	}
 	return string(content), nil
@@ -65,14 +64,14 @@ func (r *Renderer) GetTemplateContent(templateName string) (string, error) {
 
 // RenderTemplate generates a rule file from a template.
 func (r *Renderer) RenderTemplate(templateName, outputPath string) error {
-	content, err := r.GetTemplateContent(templateName)
+	content, err := r.TemplateContent(templateName)
 	if err != nil {
 		return err
 	}
 
 	// Check if the file already exists before writing.
 	if _, err := os.Stat(outputPath); err == nil {
-		fmt.Printf("File '%s' already exists. Overwrite? (y/N): ", outputPath)
+		fmt.Printf("File %q already exists. Overwrite? (y/N): ", outputPath)
 		var response string
 		fmt.Scanln(&response)
 		if strings.ToLower(strings.TrimSpace(response)) != "y" {
@@ -83,16 +82,16 @@ func (r *Renderer) RenderTemplate(templateName, outputPath string) error {
 
 	err = os.WriteFile(outputPath, []byte(content), 0644)
 	if err != nil {
-		return fmt.Errorf("failed to write rule file '%s': %w", outputPath, err)
+		return fmt.Errorf("failed to write rule file %q: %w", outputPath, err)
 	}
 
-	fmt.Printf("✓ Success! Rule file '%s' created from template '%s'.\n", outputPath, templateName)
+	fmt.Printf("✓ Success! Rule file %q created from template %q.\n", outputPath, templateName)
 	return nil
 }
 
 // RenderTemplateWithData renders a template with provided data.
 func (r *Renderer) RenderTemplateWithData(templateName string, data map[string]string) (string, error) {
-	content, err := r.GetTemplateContent(templateName)
+	content, err := r.TemplateContent(templateName)
 	if err != nil {
 		return "", err
 	}

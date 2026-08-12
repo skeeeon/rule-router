@@ -1,4 +1,3 @@
-// file: cmd/rule-cli/cmd/test.go
 package cmd
 
 import (
@@ -32,7 +31,7 @@ conditions, templates, and forEach logic.`,
 			fmt.Printf("▶ RUNNING TESTS in %s\n\n", rulesDir)
 		}
 
-		log := logger.NewNopLogger()
+		log := logger.NewNop()
 		testRunner := tester.New(log, verbose, parallel)
 		// Progress lines would corrupt the JSON document on stdout.
 		testRunner.Quiet = outputFormat == "json"
@@ -68,7 +67,7 @@ func init() {
 }
 
 // printSummaryPretty is a helper to print the test summary in a human-readable format.
-func printSummaryPretty(summary tester.TestSummary) {
+func printSummaryPretty(summary tester.Summary) {
 	fmt.Println("--- SUMMARY ---")
 	fmt.Printf("Total Tests: %d, Passed: %d, Failed: %d\n",
 		summary.Total, summary.Passed, summary.Failed)

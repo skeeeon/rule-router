@@ -1,5 +1,3 @@
-// file: internal/deferred/coalescer.go
-
 // Package deferred implements the execution half of a trailing-edge action
 // throttle: it holds evaluated actions for the length of their window and emits
 // only the last batch submitted within it.
@@ -81,11 +79,15 @@ func New(name string, exec Executor, execTimeout time.Duration, log *logger.Logg
 // immediately; the batch fires when its window closes, unless a later Submit
 // for the same key replaces it first.
 //
-// After Stop the coalescer refuses new work and reports false, so callers can
-// tell that an action was dropped rather than silently delayed forever.
-func (c *Coalescer) Submit(batch rule.DeferredBatch) bool {
+// A batch submitted after Stop is dropped, logged, and counted here rather than
+// reported back. Every execution site shuts its producers down before calling
+// Stop, so reaching this case at all means a message raced shutdown — and by
+// then it has already been acked (JetStream), answered (HTTP), or delivered
+// at-most-once (core), leaving the caller nothing to decide. Returning a status
+// no caller could act on would only invite one to be invented.
+func (c *Coalescer) Submit(batch rule.DeferredBatch) {
 	if len(batch.Actions) == 0 {
-		return true
+		return
 	}
 
 	c.mu.Lock()
@@ -97,7 +99,7 @@ func (c *Coalescer) Submit(batch rule.DeferredBatch) bool {
 		if c.metrics != nil {
 			c.metrics.IncThrottleDeferred("dropped")
 		}
-		return false
+		return
 	}
 
 	if e, ok := c.pending[batch.Key]; ok {
@@ -107,7 +109,7 @@ func (c *Coalescer) Submit(batch rule.DeferredBatch) bool {
 		if c.metrics != nil {
 			c.metrics.IncThrottleDeferred("coalesced")
 		}
-		return true
+		return
 	}
 
 	key := batch.Key
@@ -116,7 +118,6 @@ func (c *Coalescer) Submit(batch rule.DeferredBatch) bool {
 	c.pending[key] = e
 
 	c.logger.Debug("opened deferred action window", "key", key, "window", batch.Window)
-	return true
 }
 
 // fire runs the surviving batch for a key once its window has closed.

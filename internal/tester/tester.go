@@ -1,9 +1,15 @@
-// file: internal/tester/tester.go
-
+// Package tester is the shared rule-evaluation harness behind `rule-cli check`
+// and the browser rule tester.
+//
+// It feeds a sample trigger through the real rule engine and reports what the
+// rules would do, so both surfaces exercise the same evaluation path the daemon
+// uses rather than a reimplementation of it. Nothing here performs a side
+// effect: actions are described, never published.
 package tester
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/textproto"
 	"os"
@@ -45,7 +51,7 @@ func (t *Tester) Lint(rulesDir string) error {
 	var failed bool
 
 	// Use the official loader which contains all validation logic
-	loader := rule.NewRulesLoader(t.Logger, nil) // KV buckets not needed for linting
+	loader := rule.NewLoader(t.Logger, nil) // KV buckets not needed for linting
 
 	err := filepath.Walk(rulesDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -75,7 +81,7 @@ func (t *Tester) Lint(rulesDir string) error {
 		return fmt.Errorf("walk error: %w", err)
 	}
 	if failed {
-		return fmt.Errorf("linting failed")
+		return errors.New("linting failed")
 	}
 	fmt.Println("\nLinting complete. All files are valid.")
 	return nil
@@ -85,7 +91,7 @@ func (t *Tester) Lint(rulesDir string) error {
 // Supports both single-rule and multi-rule YAML files.
 func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 	if !strings.HasSuffix(rulePath, ".yaml") && !strings.HasSuffix(rulePath, ".yml") {
-		return fmt.Errorf("--scaffold requires a path to a .yaml rule file")
+		return errors.New("--scaffold requires a path to a .yaml rule file")
 	}
 
 	testDir := strings.TrimSuffix(rulePath, filepath.Ext(rulePath)) + "_test"
@@ -142,7 +148,7 @@ func (t *Tester) Scaffold(rulePath string, noOverwrite bool) error {
 // scaffoldSingleRule generates test files for a single rule in the given directory.
 func (t *Tester) scaffoldSingleRule(testDir string, r *rule.Rule) error {
 	// Create a test config based on the rule's trigger type
-	testConfig := TestConfig{
+	testConfig := Config{
 		MockTime: time.Now().Format(time.RFC3339),
 		Headers:  make(map[string]string),
 	}
@@ -378,7 +384,7 @@ func hasVariableComparisonsRecursive(conds *rule.Conditions) bool {
 // generateBasicExamples creates simple test examples
 func (t *Tester) generateBasicExamples(testDir string, r *rule.Rule, features RuleFeatures) {
 	// Create basic match example
-	matchExample := map[string]interface{}{
+	matchExample := map[string]any{
 		"field":     "value",
 		"status":    "active",
 		"timestamp": "2025-01-15T10:30:00Z",
@@ -388,7 +394,7 @@ func (t *Tester) generateBasicExamples(testDir string, r *rule.Rule, features Ru
 	writeOrWarn(filepath.Join(testDir, "match_1.json"), matchBytes)
 
 	// Create basic non-match example
-	notMatchExample := map[string]interface{}{
+	notMatchExample := map[string]any{
 		"field":     "other",
 		"status":    "inactive",
 		"timestamp": "2025-01-15T10:30:00Z",
@@ -433,26 +439,26 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 	}
 
 	// Create example match case with array
-	matchExample := map[string]interface{}{
+	matchExample := map[string]any{
 		"timestamp": "2025-01-15T10:30:00Z",
 		"batch_id":  "batch-001",
 	}
 
 	// Build realistic array data
-	arrayData := []interface{}{
-		map[string]interface{}{
+	arrayData := []any{
+		map[string]any{
 			"id":     "item-1",
 			"status": "active",
 			"value":  100,
 			"type":   "CRITICAL",
 		},
-		map[string]interface{}{
+		map[string]any{
 			"id":     "item-2",
 			"status": "active",
 			"value":  200,
 			"type":   "CRITICAL",
 		},
-		map[string]interface{}{
+		map[string]any{
 			"id":     "item-3",
 			"status": "inactive",
 			"value":  150,
@@ -465,7 +471,7 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 		parts := strings.Split(fieldName, ".")
 		current := matchExample
 		for i := 0; i < len(parts)-1; i++ {
-			newLevel := make(map[string]interface{})
+			newLevel := make(map[string]any)
 			current[parts[i]] = newLevel
 			current = newLevel
 		}
@@ -512,13 +518,13 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 	writeOrWarn(filepath.Join(testDir, "match_1_output.json"), outputBytes)
 
 	// Create example non-match case (elements that don't pass filter)
-	notMatchExample := map[string]interface{}{
+	notMatchExample := map[string]any{
 		"timestamp": "2025-01-15T10:30:00Z",
 		"batch_id":  "batch-002",
 	}
 
-	notMatchArray := []interface{}{
-		map[string]interface{}{
+	notMatchArray := []any{
+		map[string]any{
 			"id":     "item-99",
 			"status": "inactive",
 			"value":  50,
@@ -530,7 +536,7 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 		parts := strings.Split(fieldName, ".")
 		current := notMatchExample
 		for i := 0; i < len(parts)-1; i++ {
-			newLevel := make(map[string]interface{})
+			newLevel := make(map[string]any)
 			current[parts[i]] = newLevel
 			current = newLevel
 		}
@@ -543,7 +549,7 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 	writeOrWarn(filepath.Join(testDir, "not_match_1.json"), notMatchBytes)
 
 	// Create additional example with empty array
-	emptyArrayExample := map[string]interface{}{
+	emptyArrayExample := map[string]any{
 		"timestamp": "2025-01-15T10:30:00Z",
 		"batch_id":  "batch-003",
 	}
@@ -552,13 +558,13 @@ func (t *Tester) generateForEachExamples(testDir, forEachField string, r *rule.R
 		parts := strings.Split(fieldName, ".")
 		current := emptyArrayExample
 		for i := 0; i < len(parts)-1; i++ {
-			newLevel := make(map[string]interface{})
+			newLevel := make(map[string]any)
 			current[parts[i]] = newLevel
 			current = newLevel
 		}
-		current[parts[len(parts)-1]] = []interface{}{}
+		current[parts[len(parts)-1]] = []any{}
 	} else {
-		emptyArrayExample[fieldName] = []interface{}{}
+		emptyArrayExample[fieldName] = []any{}
 	}
 
 	emptyBytes, _ := json.MarshalIndent(emptyArrayExample, "", "  ")
@@ -628,7 +634,7 @@ filter:
 // generateVariableComparisonExamples creates examples for rules with variable-to-variable comparisons
 func (t *Tester) generateVariableComparisonExamples(testDir string, r *rule.Rule, features RuleFeatures) {
 	// Create example with both fields present (should match)
-	matchExample := map[string]interface{}{
+	matchExample := map[string]any{
 		"temperature": 105,
 		"threshold":   100,
 		"sensor_id":   "sensor-001",
@@ -639,7 +645,7 @@ func (t *Tester) generateVariableComparisonExamples(testDir string, r *rule.Rule
 	writeOrWarn(filepath.Join(testDir, "match_1_above_threshold.json"), matchBytes)
 
 	// Create example where comparison fails (below threshold)
-	notMatchExample := map[string]interface{}{
+	notMatchExample := map[string]any{
 		"temperature": 95,
 		"threshold":   100,
 		"sensor_id":   "sensor-001",
@@ -650,7 +656,7 @@ func (t *Tester) generateVariableComparisonExamples(testDir string, r *rule.Rule
 	writeOrWarn(filepath.Join(testDir, "not_match_1_below_threshold.json"), notMatchBytes)
 
 	// Create example with missing comparison field
-	missingExample := map[string]interface{}{
+	missingExample := map[string]any{
 		"temperature": 105,
 		// threshold is missing
 		"sensor_id": "sensor-001",
@@ -661,7 +667,7 @@ func (t *Tester) generateVariableComparisonExamples(testDir string, r *rule.Rule
 	writeOrWarn(filepath.Join(testDir, "not_match_2_missing_field.json"), missingBytes)
 
 	// Create example with type mismatch
-	typeMismatchExample := map[string]interface{}{
+	typeMismatchExample := map[string]any{
 		"temperature": "105", // String instead of number
 		"threshold":   100,
 		"sensor_id":   "sensor-001",
@@ -829,14 +835,14 @@ value: "{@kv.config.{sensor_id}:max_temp}"
 
 // generateMockKVData creates a mock KV data file for testing
 func (t *Tester) generateMockKVData(testDir string, buckets []string) {
-	mockKV := make(map[string]map[string]interface{})
+	mockKV := make(map[string]map[string]any)
 
 	for _, bucket := range buckets {
-		mockKV[bucket] = map[string]interface{}{
-			"example-key": map[string]interface{}{
+		mockKV[bucket] = map[string]any{
+			"example-key": map[string]any{
 				"field1": "value1",
 				"field2": 100,
-				"nested": map[string]interface{}{
+				"nested": map[string]any{
 					"field3": "value3",
 				},
 			},
@@ -912,7 +918,7 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 			for i := range rules {
 				fmt.Printf("  %d: %s\n", i, describeTrigger(&rules[i]))
 			}
-			return fmt.Errorf("multiple rules found, specify --rule-index")
+			return errors.New("multiple rules found, specify --rule-index")
 		}
 		ruleIndex = 0
 	}
@@ -926,7 +932,7 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 	}
 
 	// Setup test config based on the actual rule trigger
-	testConfig := &TestConfig{Headers: make(map[string]string)}
+	testConfig := &Config{Headers: make(map[string]string)}
 	if r.Trigger.NATS != nil {
 		testConfig.MockTrigger.NATS = r.Trigger.NATS
 		if subjectOverride != "" {
@@ -937,7 +943,7 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 		testConfig.MockTrigger.HTTP = r.Trigger.HTTP
 		fmt.Printf("▶ Running Quick Check (HTTP) on path: %s, method: %s\n\n", testConfig.MockTrigger.HTTP.Path, testConfig.MockTrigger.HTTP.Method)
 	} else {
-		return fmt.Errorf("rule has no valid trigger")
+		return errors.New("rule has no valid trigger")
 	}
 
 	kvData := loadMockKV(kvMockPath)
@@ -1029,13 +1035,13 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 }
 
 // RunBatchTest executes all test suites found in a directory.
-func (t *Tester) RunBatchTest(rulesDir string) (TestSummary, error) {
+func (t *Tester) RunBatchTest(rulesDir string) (Summary, error) {
 	startTime := time.Now()
 	testGroups, err := t.collectTestGroups(rulesDir)
 	if err != nil {
-		return TestSummary{}, fmt.Errorf("failed to collect test groups: %w", err)
+		return Summary{}, fmt.Errorf("failed to collect test groups: %w", err)
 	}
-	var summary TestSummary
+	var summary Summary
 	if t.ParallelWorkers > 0 {
 		summary = t.runTestsParallel(testGroups)
 	} else {
@@ -1045,17 +1051,17 @@ func (t *Tester) RunBatchTest(rulesDir string) (TestSummary, error) {
 	return summary, nil
 }
 
-func (t *Tester) runTestsSequential(groups []TestGroup) TestSummary {
-	summary := TestSummary{}
+func (t *Tester) runTestsSequential(groups []Group) Summary {
+	summary := Summary{}
 	for _, group := range groups {
 		if !t.Quiet {
-			if group.RuleIndex >= 0 {
-				fmt.Printf("=== RULE: %s [rule %d] ===\n", group.RulePath, group.RuleIndex)
+			if group.Index >= 0 {
+				fmt.Printf("=== RULE: %s [rule %d] ===\n", group.RulePath, group.Index)
 			} else {
 				fmt.Printf("=== RULE: %s ===\n", group.RulePath)
 			}
 		}
-		processor, err := setupTestProcessor(group.RulePath, group.KVData, group.TestConfig, false)
+		processor, err := setupTestProcessor(group.RulePath, group.KVData, group.Config, false)
 		if err != nil {
 			// A rule that fails to load must surface as failures, not silent "no match".
 			if !t.Quiet {
@@ -1064,7 +1070,7 @@ func (t *Tester) runTestsSequential(groups []TestGroup) TestSummary {
 			for _, testFile := range group.TestFiles {
 				summary.Total++
 				summary.Failed++
-				summary.Results = append(summary.Results, TestResult{
+				summary.Results = append(summary.Results, Result{
 					File:   filepath.Base(testFile),
 					Passed: false,
 					Error:  err.Error(),
@@ -1075,7 +1081,7 @@ func (t *Tester) runTestsSequential(groups []TestGroup) TestSummary {
 		for _, testFile := range group.TestFiles {
 			baseName := filepath.Base(testFile)
 			summary.Total++
-			result := t.runSingleTestCase(processor, testFile, group.TestConfig)
+			result := t.runSingleTestCase(processor, testFile, group.Config)
 			summary.Results = append(summary.Results, result)
 			if result.Passed {
 				summary.Passed++
@@ -1103,9 +1109,9 @@ func (t *Tester) runTestsSequential(groups []TestGroup) TestSummary {
 	return summary
 }
 
-func (t *Tester) runTestsParallel(groups []TestGroup) TestSummary {
-	jobs := make(chan TestJob, 100)
-	results := make(chan TestResult, 100)
+func (t *Tester) runTestsParallel(groups []Group) Summary {
+	jobs := make(chan Job, 100)
+	results := make(chan Result, 100)
 	var wg sync.WaitGroup
 	for i := 0; i < t.ParallelWorkers; i++ {
 		wg.Add(1)
@@ -1118,11 +1124,11 @@ func (t *Tester) runTestsParallel(groups []TestGroup) TestSummary {
 	}
 	go func() {
 		for _, group := range groups {
-			processor, err := setupTestProcessor(group.RulePath, group.KVData, group.TestConfig, false)
+			processor, err := setupTestProcessor(group.RulePath, group.KVData, group.Config, false)
 			if err != nil {
 				// A rule that fails to load surfaces as a failed result per test file.
 				for _, testFile := range group.TestFiles {
-					results <- TestResult{
+					results <- Result{
 						File:   filepath.Base(testFile),
 						Passed: false,
 						Error:  err.Error(),
@@ -1131,10 +1137,10 @@ func (t *Tester) runTestsParallel(groups []TestGroup) TestSummary {
 				continue
 			}
 			for _, testFile := range group.TestFiles {
-				jobs <- TestJob{
+				jobs <- Job{
 					Processor: processor,
 					TestFile:  testFile,
-					Config:    group.TestConfig,
+					Config:    group.Config,
 					Verbose:   t.Verbose,
 				}
 			}
@@ -1145,7 +1151,7 @@ func (t *Tester) runTestsParallel(groups []TestGroup) TestSummary {
 		wg.Wait()
 		close(results)
 	}()
-	summary := TestSummary{}
+	summary := Summary{}
 	for result := range results {
 		summary.Total++
 		summary.Results = append(summary.Results, result)
@@ -1167,11 +1173,11 @@ func (t *Tester) runTestsParallel(groups []TestGroup) TestSummary {
 }
 
 // runSingleTestCase updated to handle multiple actions (forEach support)
-func (t *Tester) runSingleTestCase(processor *rule.Processor, messagePath string, testConfig *TestConfig) TestResult {
+func (t *Tester) runSingleTestCase(processor *rule.Processor, messagePath string, testConfig *Config) Result {
 	start := time.Now()
 	baseName := filepath.Base(messagePath)
 	shouldMatch := strings.HasPrefix(baseName, "match_")
-	result := TestResult{File: baseName}
+	result := Result{File: baseName}
 
 	msgBytes, err := os.ReadFile(messagePath)
 	if err != nil {
@@ -1272,12 +1278,12 @@ func validateSingleOutput(action *rule.Action, expected *ExpectedOutput) error {
 	} else if action.Respond != nil {
 		return validateRespondOutput(action.Respond, expected)
 	}
-	return fmt.Errorf("action has no NATS, HTTP, or respond configuration")
+	return errors.New("action has no NATS, HTTP, or respond configuration")
 }
 
 func validateNATSOutput(action *rule.NATSAction, expected *ExpectedOutput) error {
 	if expected.Subject != "" && action.Subject != expected.Subject {
-		return fmt.Errorf("subject mismatch: got '%s', want '%s'", action.Subject, expected.Subject)
+		return fmt.Errorf("subject mismatch: got %q, want %q", action.Subject, expected.Subject)
 	}
 	if expected.Payload != nil {
 		if err := validatePayload(action.Payload, action.Passthrough, action.RawPayload, expected.Payload); err != nil {
@@ -1294,10 +1300,10 @@ func validateNATSOutput(action *rule.NATSAction, expected *ExpectedOutput) error
 
 func validateHTTPOutput(action *rule.HTTPAction, expected *ExpectedOutput) error {
 	if expected.URL != "" && action.URL != expected.URL {
-		return fmt.Errorf("URL mismatch: got '%s', want '%s'", action.URL, expected.URL)
+		return fmt.Errorf("URL mismatch: got %q, want %q", action.URL, expected.URL)
 	}
 	if expected.Method != "" && action.Method != expected.Method {
-		return fmt.Errorf("method mismatch: got '%s', want '%s'", action.Method, expected.Method)
+		return fmt.Errorf("method mismatch: got %q, want %q", action.Method, expected.Method)
 	}
 	if expected.Payload != nil {
 		if err := validatePayload(action.Payload, action.Passthrough, action.RawPayload, expected.Payload); err != nil {
@@ -1336,7 +1342,7 @@ func validateRespondOutput(action *rule.RespondAction, expected *ExpectedOutput)
 }
 
 func validatePayload(payload string, passthrough bool, rawPayload []byte, expectedPayload json.RawMessage) error {
-	var actualPayload, expectedParsed interface{}
+	var actualPayload, expectedParsed any
 	payloadBytes := []byte(payload)
 	if passthrough {
 		payloadBytes = rawPayload
@@ -1360,10 +1366,10 @@ func validateHeaders(actualHeaders, expectedHeaders map[string]string) error {
 	for key, expectedValue := range expectedHeaders {
 		actualValue, exists := actualHeaders[key]
 		if !exists {
-			return fmt.Errorf("missing header '%s'", key)
+			return fmt.Errorf("missing header %q", key)
 		}
 		if actualValue != expectedValue {
-			return fmt.Errorf("header '%s': got '%s', want '%s'", key, actualValue, expectedValue)
+			return fmt.Errorf("header %q: got %q, want %q", key, actualValue, expectedValue)
 		}
 	}
 	return nil
@@ -1371,8 +1377,8 @@ func validateHeaders(actualHeaders, expectedHeaders map[string]string) error {
 
 // --- Helper Functions ---
 
-func (t *Tester) collectTestGroups(rulesDir string) ([]TestGroup, error) {
-	var testGroups []TestGroup
+func (t *Tester) collectTestGroups(rulesDir string) ([]Group, error) {
+	var testGroups []Group
 	err := filepath.Walk(rulesDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -1400,13 +1406,13 @@ func (t *Tester) collectTestGroups(rulesDir string) ([]TestGroup, error) {
 				subDirPath := filepath.Join(testDir, dirName)
 				validTests := collectTestFiles(subDirPath)
 				if len(validTests) > 0 {
-					testGroups = append(testGroups, TestGroup{
-						RulePath:   path,
-						TestDir:    subDirPath,
-						TestFiles:  validTests,
-						KVData:     loadMockKV(filepath.Join(subDirPath, "mock_kv_data.json")),
-						TestConfig: loadTestConfig(filepath.Join(subDirPath, "_test_config.json")),
-						RuleIndex:  idx,
+					testGroups = append(testGroups, Group{
+						RulePath:  path,
+						TestDir:   subDirPath,
+						TestFiles: validTests,
+						KVData:    loadMockKV(filepath.Join(subDirPath, "mock_kv_data.json")),
+						Config:    loadTestConfig(filepath.Join(subDirPath, "_test_config.json")),
+						Index:     idx,
 					})
 				}
 			}
@@ -1414,13 +1420,13 @@ func (t *Tester) collectTestGroups(rulesDir string) ([]TestGroup, error) {
 			// Flat layout (single-rule / legacy mode)
 			validTests := collectTestFiles(testDir)
 			if len(validTests) > 0 {
-				testGroups = append(testGroups, TestGroup{
-					RulePath:   path,
-					TestDir:    testDir,
-					TestFiles:  validTests,
-					KVData:     loadMockKV(filepath.Join(testDir, "mock_kv_data.json")),
-					TestConfig: loadTestConfig(filepath.Join(testDir, "_test_config.json")),
-					RuleIndex:  -1,
+				testGroups = append(testGroups, Group{
+					RulePath:  path,
+					TestDir:   testDir,
+					TestFiles: validTests,
+					KVData:    loadMockKV(filepath.Join(testDir, "mock_kv_data.json")),
+					Config:    loadTestConfig(filepath.Join(testDir, "_test_config.json")),
+					Index:     -1,
 				})
 			}
 		}
@@ -1429,20 +1435,21 @@ func (t *Tester) collectTestGroups(rulesDir string) ([]TestGroup, error) {
 	return testGroups, err
 }
 
-func setupTestProcessor(rulePath string, kvData map[string]map[string]interface{}, testConfig *TestConfig, verbose bool) (*rule.Processor, error) {
-	log := logger.NewNopLogger()
+func setupTestProcessor(rulePath string, kvData map[string]map[string]any, testConfig *Config, verbose bool) (*rule.Processor, error) {
+	log := logger.NewNop()
 	var bucketNames []string
 	for bucket := range kvData {
 		bucketNames = append(bucketNames, bucket)
 	}
-	loader := rule.NewRulesLoader(log, bucketNames)
+	loader := rule.NewLoader(log, bucketNames)
 	// Only load the specific rule file for this test group
 	rules, err := loader.LoadFromFile(rulePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load rules from %s: %w", rulePath, err)
 	}
 
-	var kvContext *rule.KVContext
+	var procOpts []rule.Option
+
 	if kvData != nil {
 		cache := rule.NewLocalKVCache(log)
 		for bucket, keys := range kvData {
@@ -1450,23 +1457,27 @@ func setupTestProcessor(rulePath string, kvData map[string]map[string]interface{
 				cache.Set(bucket, key, val)
 			}
 		}
-		kvContext = rule.NewKVContext(nil, log, cache)
+		procOpts = append(procOpts, rule.WithKVContext(rule.NewKVContext(nil, log, cache)))
 	}
 
-	var sigVerification *rule.SignatureVerification
 	if testConfig.MockSignature != nil {
-		sigVerification = rule.NewSignatureVerification(true, "Nats-Public-Key", "Nats-Signature")
+		procOpts = append(procOpts, rule.WithSignatureVerification(
+			rule.NewSignatureVerification(true, "Nats-Public-Key", "Nats-Signature")))
 	}
 
-	processor := rule.NewProcessor(log, nil, kvContext, sigVerification)
+	// Mock time is an option rather than a later setter, so a malformed value is
+	// reported instead of quietly evaluating the rule against the real clock.
+	if testConfig.MockTime != "" {
+		t, err := time.Parse(time.RFC3339, testConfig.MockTime)
+		if err != nil {
+			return nil, fmt.Errorf("invalid mockTime %q in %s (want RFC3339): %w", testConfig.MockTime, rulePath, err)
+		}
+		procOpts = append(procOpts, rule.WithTimeProvider(rule.NewMockTimeProvider(t)))
+	}
+
+	processor := rule.NewProcessor(log, procOpts...)
 	if err := processor.LoadRules(rules); err != nil {
 		return nil, fmt.Errorf("failed to load rules into processor from %s: %w", rulePath, err)
-	}
-
-	if testConfig.MockTime != "" {
-		if t, err := time.Parse(time.RFC3339, testConfig.MockTime); err == nil {
-			processor.SetTimeProvider(rule.NewMockTimeProvider(t))
-		}
 	}
 
 	return processor, nil
@@ -1480,8 +1491,8 @@ func writeOrWarn(path string, data []byte) {
 	}
 }
 
-func loadTestConfig(path string) *TestConfig {
-	config := &TestConfig{Headers: make(map[string]string)}
+func loadTestConfig(path string) *Config {
+	config := &Config{Headers: make(map[string]string)}
 	bytes, err := os.ReadFile(path)
 	if err != nil {
 		return config
@@ -1514,12 +1525,12 @@ func loadSingleRuleFile(path string) ([]rule.Rule, error) {
 	return rules, nil
 }
 
-func loadMockKV(path string) map[string]map[string]interface{} {
+func loadMockKV(path string) map[string]map[string]any {
 	bytes, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
-	var data map[string]map[string]interface{}
+	var data map[string]map[string]any
 	if err := json.Unmarshal(bytes, &data); err != nil {
 		fmt.Fprintf(os.Stderr, "⚠️  ignoring malformed mock KV data %s: %v\n", path, err)
 	}

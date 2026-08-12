@@ -1,5 +1,3 @@
-// file: internal/app/gateway.go
-
 package app
 
 import (
@@ -44,7 +42,7 @@ func NewGatewayApp(base *BaseApp, cfg *config.Config) (*GatewayApp, error) {
 	// Wire HTTP executor into the broker so both transports (JetStream
 	// SubscriptionManager and core-NATS Responder) can handle NATS-trigger +
 	// HTTP-action rules alongside NATS-trigger + NATS-action rules.
-	httpExec := httpclient.NewHTTPExecutor(&cfg.HTTP.Client, base.Logger, base.Metrics, base.Broker)
+	httpExec := httpclient.NewExecutor(&cfg.HTTP.Client, base.Logger, base.Metrics, base.Broker)
 	base.Broker.SetHTTPExecutor(httpExec)
 
 	// Setup inbound server (HTTP → NATS)
@@ -66,10 +64,10 @@ func NewGatewayApp(base *BaseApp, cfg *config.Config) (*GatewayApp, error) {
 
 // Run starts the application and waits for shutdown signal.
 func (app *GatewayApp) Run(ctx context.Context) error {
-	httpPaths := app.processor.GetHTTPPaths()
+	httpPaths := app.processor.HTTPPaths()
 
 	// Log configuration summary
-	allRules := app.processor.GetAllRules()
+	allRules := app.processor.AllRules()
 	app.logger.Info("configuration summary",
 		"totalRules", len(allRules),
 		"inboundHttpPaths", httpPaths,
@@ -93,7 +91,7 @@ func (app *GatewayApp) Run(ctx context.Context) error {
 
 	// Update metrics
 	if app.metrics != nil {
-		allRules := app.processor.GetAllRules()
+		allRules := app.processor.AllRules()
 		app.metrics.SetRulesActive(float64(len(allRules)))
 	}
 
@@ -123,7 +121,7 @@ func (app *GatewayApp) Close() error {
 
 // setupInboundServer configures the server for handling HTTP -> NATS traffic.
 func (app *GatewayApp) setupInboundServer() error {
-	serverConfig := &gateway.ServerConfig{
+	serverConfig := &gateway.Config{
 		Address:             app.config.HTTP.Server.Address,
 		ReadTimeout:         app.config.HTTP.Server.ReadTimeout,
 		WriteTimeout:        app.config.HTTP.Server.WriteTimeout,
@@ -138,7 +136,7 @@ func (app *GatewayApp) setupInboundServer() error {
 		app.metrics,
 		app.processor,
 		app.base.Broker.ActionPublisher(),
-		app.base.Broker.GetNATSConn(),
+		app.base.Broker.Conn(),
 		serverConfig,
 	)
 
@@ -149,7 +147,7 @@ func (app *GatewayApp) setupInboundServer() error {
 // setupOutboundSubscriptions creates subscriptions for NATS-trigger + HTTP-action rules
 // on the shared SubscriptionManager. Same pattern as router's setupSubscriptions.
 func (app *GatewayApp) setupOutboundSubscriptions() error {
-	allRules := app.processor.GetAllRules()
+	allRules := app.processor.AllRules()
 	outboundSubjects := make(map[string]bool)
 
 	for _, r := range allRules {
@@ -171,11 +169,11 @@ func (app *GatewayApp) setupOutboundSubscriptions() error {
 			outboundSubjects[subject] = true
 
 			if err := app.base.Broker.CreateConsumerForSubject(subject); err != nil {
-				return fmt.Errorf("failed to create consumer for subject '%s': %w", subject, err)
+				return fmt.Errorf("failed to create consumer for subject %q: %w", subject, err)
 			}
 
 			if err := app.base.Broker.AddSubscription(subject); err != nil {
-				return fmt.Errorf("failed to add subscription for subject '%s': %w", subject, err)
+				return fmt.Errorf("failed to add subscription for subject %q: %w", subject, err)
 			}
 		}
 	}

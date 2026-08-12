@@ -1,5 +1,3 @@
-// file: internal/rule/kv_context_test.go
-
 package rule
 
 import (
@@ -158,13 +156,13 @@ func setupTestKVContext(t *testing.T) (*KVContext, *LocalKVCache) {
 	}
 
 	// Local Cache
-	cache := NewLocalKVCache(logger.NewNopLogger())
+	cache := NewLocalKVCache(logger.NewNop())
 
 	// Pre-populate cache for some tests
-	cache.Set("device_config", "sensor-123", map[string]interface{}{"threshold": 30.0, "location": "room-a"})
-	cache.Set("customer_data", "cust-abc", map[string]interface{}{"tier": "premium", "profile": map[string]interface{}{"name": "Acme Corp"}})
+	cache.Set("device_config", "sensor-123", map[string]any{"threshold": 30.0, "location": "room-a"})
+	cache.Set("customer_data", "cust-abc", map[string]any{"tier": "premium", "profile": map[string]any{"name": "Acme Corp"}})
 
-	return NewKVContext(stores, logger.NewNopLogger(), cache), cache
+	return NewKVContext(stores, logger.NewNop(), cache), cache
 }
 
 func TestNewKVContext(t *testing.T) {
@@ -237,7 +235,7 @@ func TestGetField_Cache(t *testing.T) {
 	kvCtx, _ := setupTestKVContext(t)
 
 	t.Run("cache hit with path", func(t *testing.T) {
-		val, ok := kvCtx.GetField("@kv.device_config.sensor-123:threshold")
+		val, ok := kvCtx.Field("@kv.device_config.sensor-123:threshold")
 		if !ok {
 			t.Fatal("Expected to find value in cache")
 		}
@@ -247,7 +245,7 @@ func TestGetField_Cache(t *testing.T) {
 	})
 
 	t.Run("cache hit with deep path", func(t *testing.T) {
-		val, ok := kvCtx.GetField("@kv.customer_data.cust-abc:profile.name")
+		val, ok := kvCtx.Field("@kv.customer_data.cust-abc:profile.name")
 		if !ok {
 			t.Fatal("Expected to find value in cache")
 		}
@@ -257,14 +255,14 @@ func TestGetField_Cache(t *testing.T) {
 	})
 
 	t.Run("cache miss", func(t *testing.T) {
-		_, ok := kvCtx.GetField("@kv.device_config.non-existent-key:field")
+		_, ok := kvCtx.Field("@kv.device_config.non-existent-key:field")
 		if ok {
 			t.Error("Expected a cache miss, but found a value")
 		}
 	})
 
 	t.Run("cache hit with invalid path", func(t *testing.T) {
-		_, ok := kvCtx.GetField("@kv.device_config.sensor-123:invalid.path")
+		_, ok := kvCtx.Field("@kv.device_config.sensor-123:invalid.path")
 		if ok {
 			t.Error("Expected lookup to fail for invalid path on cached item")
 		}
@@ -275,7 +273,7 @@ func TestGetField_Cache(t *testing.T) {
 		defer kvCtx.localCache.SetEnabled(true) // Restore for other tests
 
 		// This should now be a cache miss and fall back to NATS (which will succeed)
-		val, ok := kvCtx.GetField("@kv.device_config.sensor-123:threshold")
+		val, ok := kvCtx.Field("@kv.device_config.sensor-123:threshold")
 		if !ok {
 			t.Fatal("Expected to find value via NATS fallback")
 		}
@@ -290,7 +288,7 @@ func TestGetField_NATSFallback(t *testing.T) {
 		kvCtx, cache := setupTestKVContext(t)
 		cache.Clear() // Isolate this test
 
-		val, ok := kvCtx.GetField("@kv.device_config.sensor-123:location")
+		val, ok := kvCtx.Field("@kv.device_config.sensor-123:location")
 		if !ok {
 			t.Fatal("Expected to find value via NATS")
 		}
@@ -303,7 +301,7 @@ func TestGetField_NATSFallback(t *testing.T) {
 		kvCtx, cache := setupTestKVContext(t)
 		cache.Clear() // Isolate this test
 
-		_, ok := kvCtx.GetField("@kv.device_config.not-a-sensor:field")
+		_, ok := kvCtx.Field("@kv.device_config.not-a-sensor:field")
 		if ok {
 			t.Error("Expected lookup to fail for non-existent key")
 		}
@@ -313,7 +311,7 @@ func TestGetField_NATSFallback(t *testing.T) {
 		kvCtx, cache := setupTestKVContext(t)
 		cache.Clear() // Isolate this test
 
-		_, ok := kvCtx.GetField("@kv.non_existent_bucket.key:field")
+		_, ok := kvCtx.Field("@kv.non_existent_bucket.key:field")
 		if ok {
 			t.Error("Expected lookup to fail for non-existent bucket")
 		}
@@ -328,7 +326,7 @@ func TestGetField_NATSFallback(t *testing.T) {
 		mockStore.fail = true
 		defer func() { mockStore.fail = false }()
 
-		_, ok := kvCtx.GetField("@kv.device_config.sensor-123:location")
+		_, ok := kvCtx.Field("@kv.device_config.sensor-123:location")
 		if ok {
 			t.Error("Expected lookup to fail on simulated NATS error")
 		}
@@ -339,7 +337,7 @@ func TestGetField_NATSFallback(t *testing.T) {
 		cache.Clear() // Isolate this test
 
 		kvCtx.stores["device_config"].Put(context.Background(), "bad-json", []byte("not json"))
-		_, ok := kvCtx.GetField("@kv.device_config.bad-json:field")
+		_, ok := kvCtx.Field("@kv.device_config.bad-json:field")
 		if ok {
 			t.Error("Expected lookup to fail for non-JSON value")
 		}
@@ -352,7 +350,7 @@ func TestGetField_PrimitivesAndArrays(t *testing.T) {
 	cache.Clear() // Isolate this test from cache hits
 
 	t.Run("get whole string primitive", func(t *testing.T) {
-		val, ok := kvCtx.GetField("@kv.primitives.api_key")
+		val, ok := kvCtx.Field("@kv.primitives.api_key")
 		if !ok {
 			t.Fatal("Expected to get primitive string value")
 		}
@@ -362,7 +360,7 @@ func TestGetField_PrimitivesAndArrays(t *testing.T) {
 	})
 
 	t.Run("get whole number primitive", func(t *testing.T) {
-		val, ok := kvCtx.GetField("@kv.primitives.rate_limit")
+		val, ok := kvCtx.Field("@kv.primitives.rate_limit")
 		if !ok {
 			t.Fatal("Expected to get primitive number value")
 		}
@@ -372,7 +370,7 @@ func TestGetField_PrimitivesAndArrays(t *testing.T) {
 	})
 
 	t.Run("get whole boolean primitive", func(t *testing.T) {
-		val, ok := kvCtx.GetField("@kv.primitives.is_enabled")
+		val, ok := kvCtx.Field("@kv.primitives.is_enabled")
 		if !ok {
 			t.Fatal("Expected to get primitive boolean value")
 		}
@@ -382,18 +380,18 @@ func TestGetField_PrimitivesAndArrays(t *testing.T) {
 	})
 
 	t.Run("get whole array", func(t *testing.T) {
-		val, ok := kvCtx.GetField("@kv.primitives.allowed_ips")
+		val, ok := kvCtx.Field("@kv.primitives.allowed_ips")
 		if !ok {
 			t.Fatal("Expected to get whole array value")
 		}
-		expected := []interface{}{"10.0.0.1", "10.0.0.2"}
+		expected := []any{"10.0.0.1", "10.0.0.2"}
 		if !reflect.DeepEqual(val, expected) {
 			t.Errorf("got %v, want %v", val, expected)
 		}
 	})
 
 	t.Run("get array element by index", func(t *testing.T) {
-		val, ok := kvCtx.GetField("@kv.primitives.allowed_ips:0")
+		val, ok := kvCtx.Field("@kv.primitives.allowed_ips:0")
 		if !ok {
 			t.Fatal("Expected to get array element by index")
 		}
@@ -403,14 +401,14 @@ func TestGetField_PrimitivesAndArrays(t *testing.T) {
 	})
 
 	t.Run("get array element by index out of bounds", func(t *testing.T) {
-		_, ok := kvCtx.GetField("@kv.primitives.allowed_ips:5")
+		_, ok := kvCtx.Field("@kv.primitives.allowed_ips:5")
 		if ok {
 			t.Error("Expected out-of-bounds array access to fail")
 		}
 	})
 
 	t.Run("fail to traverse path on primitive", func(t *testing.T) {
-		_, ok := kvCtx.GetField("@kv.primitives.api_key:some.path")
+		_, ok := kvCtx.Field("@kv.primitives.api_key:some.path")
 		if ok {
 			t.Error("Expected path traversal on a primitive string to fail")
 		}
@@ -419,15 +417,15 @@ func TestGetField_PrimitivesAndArrays(t *testing.T) {
 
 func TestGetFieldWithContext_VariableResolution(t *testing.T) {
 	kvCtx, _ := setupTestKVContext(t)
-	msgData := map[string]interface{}{
+	msgData := map[string]any{
 		"device_id": "sensor-123",
 		"customer":  "cust-abc",
 	}
-	timeCtx := NewSystemTimeProvider().GetCurrentContext()
+	timeCtx := NewSystemTimeProvider().CurrentContext()
 	subjectCtx := NewSubjectContext("events.device.sensor-123")
 
 	t.Run("resolve from message data", func(t *testing.T) {
-		val, ok := kvCtx.GetFieldWithContext("@kv.device_config.{device_id}:location", msgData, timeCtx, subjectCtx)
+		val, ok := kvCtx.FieldWithContext("@kv.device_config.{device_id}:location", msgData, timeCtx, subjectCtx)
 		if !ok {
 			t.Fatal("Expected successful lookup with resolved variable")
 		}
@@ -437,7 +435,7 @@ func TestGetFieldWithContext_VariableResolution(t *testing.T) {
 	})
 
 	t.Run("resolve from subject context", func(t *testing.T) {
-		val, ok := kvCtx.GetFieldWithContext("@kv.device_config.{@subject.2}:location", msgData, timeCtx, subjectCtx)
+		val, ok := kvCtx.FieldWithContext("@kv.device_config.{@subject.2}:location", msgData, timeCtx, subjectCtx)
 		if !ok {
 			t.Fatal("Expected successful lookup with resolved subject token")
 		}
@@ -447,7 +445,7 @@ func TestGetFieldWithContext_VariableResolution(t *testing.T) {
 	})
 
 	t.Run("unresolved variable returns false", func(t *testing.T) {
-		val, ok := kvCtx.GetFieldWithContext("@kv.device_config.{missing_var}:.location", msgData, timeCtx, subjectCtx)
+		val, ok := kvCtx.FieldWithContext("@kv.device_config.{missing_var}:.location", msgData, timeCtx, subjectCtx)
 		if ok {
 			t.Errorf("Expected lookup to fail for unresolved variable, but got value: %v", val)
 		}
@@ -458,8 +456,8 @@ func TestGetFieldWithContext_VariableResolution(t *testing.T) {
 	})
 
 	t.Run("key with dots and variables", func(t *testing.T) {
-		msgDataWithDots := map[string]interface{}{"id": "sensor.with.dots"}
-		val, ok := kvCtx.GetFieldWithContext("@kv.device_config.{id}:threshold", msgDataWithDots, timeCtx, subjectCtx)
+		msgDataWithDots := map[string]any{"id": "sensor.with.dots"}
+		val, ok := kvCtx.FieldWithContext("@kv.device_config.{id}:threshold", msgDataWithDots, timeCtx, subjectCtx)
 		if !ok {
 			t.Fatal("Expected successful lookup for key with dots")
 		}

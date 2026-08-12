@@ -1,9 +1,8 @@
-// file: internal/httpclient/httpclient_test.go
-
 package httpclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -16,26 +15,26 @@ import (
 	"rule-router/internal/rule"
 )
 
-// newTestExecutor creates an HTTPExecutor with test defaults, nil metrics, and no publisher.
-func newTestExecutor() *HTTPExecutor {
+// newTestExecutor creates an Executor with test defaults, nil metrics, and no publisher.
+func newTestExecutor() *Executor {
 	cfg := &config.HTTPClientConfig{
 		Timeout:             10 * time.Second,
 		MaxIdleConns:        10,
 		MaxIdleConnsPerHost: 5,
 		IdleConnTimeout:     30 * time.Second,
 	}
-	return NewHTTPExecutor(cfg, logger.NewNopLogger(), nil, nil)
+	return NewExecutor(cfg, logger.NewNop(), nil, nil)
 }
 
 // newTestExecutorWithPublisher is like newTestExecutor but with a response publisher.
-func newTestExecutorWithPublisher(p ResponsePublisher) *HTTPExecutor {
+func newTestExecutorWithPublisher(p ResponsePublisher) *Executor {
 	cfg := &config.HTTPClientConfig{
 		Timeout:             10 * time.Second,
 		MaxIdleConns:        10,
 		MaxIdleConnsPerHost: 5,
 		IdleConnTimeout:     30 * time.Second,
 	}
-	return NewHTTPExecutor(cfg, logger.NewNopLogger(), nil, p)
+	return NewExecutor(cfg, logger.NewNop(), nil, p)
 }
 
 // fakePublisher captures NATS publish calls for assertions.
@@ -486,7 +485,7 @@ func TestExecuteHTTPAction_PublishResponse_PublishErrorDoesNotFailAction(t *test
 	}))
 	defer server.Close()
 
-	pub := &fakePublisher{err: fmt.Errorf("nats unavailable")}
+	pub := &fakePublisher{err: errors.New("nats unavailable")}
 	executor := newTestExecutorWithPublisher(pub)
 	action := &rule.HTTPAction{
 		URL:    server.URL,

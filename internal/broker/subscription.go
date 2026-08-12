@@ -1,5 +1,3 @@
-// file: internal/broker/subscription.go
-
 package broker
 
 import (
@@ -51,7 +49,7 @@ const (
 	coreActionTimeout = 30 * time.Second
 )
 
-// HTTPActionExecutor handles HTTP action execution. Implemented by httpclient.HTTPExecutor.
+// HTTPActionExecutor handles HTTP action execution. Implemented by httpclient.Executor.
 // Defined here as an interface to keep the broker package decoupled from httpclient.
 type HTTPActionExecutor interface {
 	ExecuteHTTPAction(ctx context.Context, action *rule.HTTPAction) error
@@ -138,12 +136,12 @@ func (sm *SubscriptionManager) AddSubscription(ctx context.Context, streamName, 
 	// Perform network calls OUTSIDE the lock to avoid blocking other goroutines
 	stream, err := sm.jetStream.Stream(opCtx, streamName)
 	if err != nil {
-		return fmt.Errorf("failed to get stream '%s': %w", streamName, err)
+		return fmt.Errorf("failed to get stream %q: %w", streamName, err)
 	}
 
 	consumer, err := stream.Consumer(opCtx, consumerName)
 	if err != nil {
-		return fmt.Errorf("failed to get consumer '%s': %w", consumerName, err)
+		return fmt.Errorf("failed to get consumer %q: %w", consumerName, err)
 	}
 
 	sub := &Subscription{
@@ -238,7 +236,7 @@ func (sm *SubscriptionManager) Start(ctx context.Context) error {
 	defer sm.mu.RUnlock()
 
 	if len(sm.subscriptions) == 0 {
-		return fmt.Errorf("no subscriptions configured")
+		return errors.New("no subscriptions configured")
 	}
 
 	sm.logger.Info("starting subscription manager with Messages() iterator pattern",
@@ -248,7 +246,7 @@ func (sm *SubscriptionManager) Start(ctx context.Context) error {
 
 	for _, sub := range sm.subscriptions {
 		if err := sm.startSubscription(ctx, sub); err != nil {
-			return fmt.Errorf("failed to start subscription for '%s': %w", sub.Subject, err)
+			return fmt.Errorf("failed to start subscription for %q: %w", sub.Subject, err)
 		}
 	}
 
@@ -551,8 +549,10 @@ func (sm *SubscriptionManager) executeAction(ctx context.Context, action *rule.A
 	return nil
 }
 
-// Stop gracefully shuts down all subscriptions.
-func (sm *SubscriptionManager) Stop() error {
+// Stop gracefully shuts down all subscriptions: it drains the iterators, waits
+// for every worker to exit, then flushes trailing-throttle batches. Failures at
+// each step are logged and shutdown continues, so there is no error to report.
+func (sm *SubscriptionManager) Stop() {
 	sm.mu.Lock()
 	sm.logger.Info("stopping all subscriptions", "count", len(sm.subscriptions))
 
@@ -585,11 +585,10 @@ func (sm *SubscriptionManager) Stop() error {
 	sm.coalescer.Stop(flushCtx)
 
 	sm.logger.Info("all subscriptions stopped successfully")
-	return nil
 }
 
-// GetSubscriptionCount returns the number of active subscriptions.
-func (sm *SubscriptionManager) GetSubscriptionCount() int {
+// SubscriptionCount returns the number of active subscriptions.
+func (sm *SubscriptionManager) SubscriptionCount() int {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	return len(sm.subscriptions)

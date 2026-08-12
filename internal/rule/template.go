@@ -1,8 +1,7 @@
-// file: internal/rule/template.go
-
 package rule
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -38,7 +37,7 @@ func (te *TemplateEngine) Execute(template string, context *EvaluationContext) (
 // depth prevents infinite recursion (though logical loops shouldn't happen here).
 func (te *TemplateEngine) parseRecursive(input string, context *EvaluationContext, depth int) (string, error) {
 	if depth > 10 { // Grug safety check
-		return input, fmt.Errorf("template nesting too deep")
+		return input, errors.New("template nesting too deep")
 	}
 
 	var sb strings.Builder
@@ -199,7 +198,7 @@ func (te *TemplateEngine) processSystemFunction(function string) string {
 }
 
 // convertToString converts an interface to its string representation for templating.
-func (te *TemplateEngine) convertToString(value interface{}) string {
+func (te *TemplateEngine) convertToString(value any) string {
 	if value == nil {
 		return ""
 	}
@@ -216,7 +215,7 @@ func (te *TemplateEngine) convertToString(value interface{}) string {
 		return strconv.FormatInt(v, 10)
 	case bool:
 		return strconv.FormatBool(v)
-	case map[string]interface{}, []interface{}:
+	case map[string]any, []any:
 		jsonBytes, err := json.Marshal(v)
 		if err != nil {
 			return ""

@@ -1,5 +1,3 @@
-// file: internal/rule/condition_resolver_test.go
-
 package rule
 
 import (
@@ -151,11 +149,11 @@ func TestExtractVariable(t *testing.T) {
 }
 
 func TestResolveConditionValue(t *testing.T) {
-	log := logger.NewNopLogger() // ✅ Fixed: Use NewNopLogger()
+	log := logger.NewNop() // ✅ Fixed: Use NewNop()
 
 	// Create a simple test context with known values
 	// ✅ Fixed: Removed unused msgData, create context directly
-	timeCtx := NewSystemTimeProvider().GetCurrentContext()
+	timeCtx := NewSystemTimeProvider().CurrentContext()
 	subjectCtx := NewSubjectContext("sensors.temperature.room1")
 
 	context, err := NewEvaluationContext(
@@ -174,8 +172,8 @@ func TestResolveConditionValue(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		input       interface{}
-		expectValue interface{}
+		input       any
+		expectValue any
 		expectError bool
 	}{
 		{
@@ -276,13 +274,13 @@ func TestResolveConditionValue(t *testing.T) {
 // HTTP and NATS both canonicalize header keys at extraction; templates should
 // not require authors to memorize the canonical spelling.
 func TestResolveConditionValue_HeaderCaseInsensitive(t *testing.T) {
-	log := logger.NewNopLogger()
+	log := logger.NewNop()
 
 	tests := []struct {
 		name        string
 		headers     map[string]string
 		template    string
-		expectValue interface{}
+		expectValue any
 	}{
 		{
 			name:        "canonical source, canonical template",
@@ -323,7 +321,7 @@ func TestResolveConditionValue_HeaderCaseInsensitive(t *testing.T) {
 				tt.headers,
 				nil,
 				nil,
-				NewSystemTimeProvider().GetCurrentContext(),
+				NewSystemTimeProvider().CurrentContext(),
 				nil,
 				nil,
 				log,
@@ -344,7 +342,7 @@ func TestResolveConditionValue_HeaderCaseInsensitive(t *testing.T) {
 }
 
 func TestResolveConditionValue_TypePreservation(t *testing.T) {
-	log := logger.NewNopLogger() // ✅ Fixed: Use NewNopLogger()
+	log := logger.NewNop() // ✅ Fixed: Use NewNop()
 
 	// ✅ Fixed: Removed unused msgData, create context directly
 	context, err := NewEvaluationContext(
@@ -352,7 +350,7 @@ func TestResolveConditionValue_TypePreservation(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		NewSystemTimeProvider().GetCurrentContext(),
+		NewSystemTimeProvider().CurrentContext(),
 		nil,
 		nil,
 		log,
@@ -421,7 +419,7 @@ func TestResolveConditionValue_TypePreservation(t *testing.T) {
 
 // Helper functions for tests
 
-func compareTestValues(a, b interface{}) bool {
+func compareTestValues(a, b any) bool {
 	if a == nil && b == nil {
 		return true
 	}
@@ -455,7 +453,7 @@ func compareTestValues(a, b interface{}) bool {
 	return a == b
 }
 
-func normalizeForTest(v interface{}) interface{} {
+func normalizeForTest(v any) any {
 	n, ok := v.(json.Number)
 	if !ok {
 		return v
@@ -466,14 +464,14 @@ func normalizeForTest(v interface{}) interface{} {
 	return n.String()
 }
 
-func getTypeName(v interface{}) string {
+func getTypeName(v any) string {
 	if v == nil {
 		return "nil"
 	}
 	return typeToString(v)
 }
 
-func typeToString(v interface{}) string {
+func typeToString(v any) string {
 	switch v.(type) {
 	case int:
 		return "int"
@@ -485,9 +483,9 @@ func typeToString(v interface{}) string {
 		return "string"
 	case bool:
 		return "bool"
-	case []interface{}:
+	case []any:
 		return "[]interface {}"
-	case map[string]interface{}:
+	case map[string]any:
 		return "map[string]interface {}"
 	default:
 		return "unknown"

@@ -1,5 +1,3 @@
-// file: internal/rule/condition_resolver.go
-
 package rule
 
 import (
@@ -61,7 +59,7 @@ func ExtractVariable(template string) string {
 // Error handling:
 //   - Returns error if template variable cannot be resolved
 //   - Non-template values (literals) always succeed
-func resolveConditionValue(value interface{}, context *EvaluationContext) (interface{}, error) {
+func resolveConditionValue(value any, context *EvaluationContext) (any, error) {
 	// Only strings can be templates
 	strValue, isString := value.(string)
 	if !isString {
@@ -89,7 +87,7 @@ func resolveConditionValue(value interface{}, context *EvaluationContext) (inter
 
 // resolveConditionValueFast uses pre-computed path data when available.
 // Falls back to resolveConditionValue only for non-templates and nested braces.
-func resolveConditionValueFast(value interface{}, varName string, path []string, context *EvaluationContext) (interface{}, error) {
+func resolveConditionValueFast(value any, varName string, path []string, context *EvaluationContext) (any, error) {
 	if path != nil {
 		result, err := context.traverser.TraversePath(context.Msg, path)
 		if err != nil {

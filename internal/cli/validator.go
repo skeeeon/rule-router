@@ -1,4 +1,3 @@
-// file: internal/cli/validator.go
 package cli
 
 import "rule-router/internal/rule"

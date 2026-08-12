@@ -1,0 +1,13 @@
+# Normalize all text files to LF in the repository and in the working tree.
+#
+# Without this, a Windows checkout with core.autocrlf=true produces CRLF Go
+# files and `gofmt -l` reports every file in the repo as unformatted.
+* text=auto eol=lf
+
+# Binary assets: never touch.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.wasm binary

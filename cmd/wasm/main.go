@@ -1,9 +1,8 @@
-// cmd/wasm/main.go
-// WASM entry point for the rule evaluation engine.
-// Exposes evaluateRule() to JavaScript for browser-based rule testing.
-
 //go:build js && wasm
 
+// Command wasm compiles the rule engine to WebAssembly for the browser rule
+// tester. It exposes evaluateRule() to JavaScript and runs the same evaluation
+// path as `rule-cli check`, so results in the web UI match the daemon's.
 package main
 
 import (
@@ -18,14 +17,14 @@ import (
 
 // evaluateOptions represents the options passed from JavaScript.
 type evaluateOptions struct {
-	TriggerType string                            `json:"triggerType"`
-	Subject     string                            `json:"subject"`
-	Path        string                            `json:"path"`
-	Method      string                            `json:"method"`
-	Headers     map[string]string                 `json:"headers"`
-	KVMock      map[string]map[string]interface{} `json:"kvMock"`
-	MockTime    string                            `json:"mockTime"`
-	RuleIndex   int                               `json:"ruleIndex"`
+	TriggerType string                    `json:"triggerType"`
+	Subject     string                    `json:"subject"`
+	Path        string                    `json:"path"`
+	Method      string                    `json:"method"`
+	Headers     map[string]string         `json:"headers"`
+	KVMock      map[string]map[string]any `json:"kvMock"`
+	MockTime    string                    `json:"mockTime"`
+	Index       int                       `json:"ruleIndex"`
 }
 
 // evaluateResult is the JSON structure returned to JavaScript.
@@ -67,7 +66,7 @@ func withDefer(res actionResult, a *rule.Action) actionResult {
 	return res
 }
 
-func evaluateRule(_ js.Value, args []js.Value) interface{} {
+func evaluateRule(_ js.Value, args []js.Value) any {
 	if len(args) < 3 {
 		return errorResult("evaluateRule requires 3 arguments: yamlStr, messageStr, optionsJSON")
 	}
@@ -81,14 +80,14 @@ func evaluateRule(_ js.Value, args []js.Value) interface{} {
 		return errorResult(fmt.Sprintf("invalid options JSON: %v", err))
 	}
 
-	log := logger.NewNopLogger()
+	log := logger.NewNop()
 
 	// Parse and validate rules from YAML
 	var kvBuckets []string
 	for bucket := range opts.KVMock {
 		kvBuckets = append(kvBuckets, bucket)
 	}
-	loader := rule.NewRulesLoader(log, kvBuckets)
+	loader := rule.NewLoader(log, kvBuckets)
 	rules, err := loader.ParseAndValidateYAML([]byte(yamlStr), "web-tester")
 	if err != nil {
 		return marshalResult(evaluateResult{ValidationError: err.Error()})
@@ -98,7 +97,7 @@ func evaluateRule(_ js.Value, args []js.Value) interface{} {
 	}
 
 	// Resolve rule index
-	ruleIndex := opts.RuleIndex
+	ruleIndex := opts.Index
 	if ruleIndex < 0 || ruleIndex >= len(rules) {
 		ruleIndex = 0
 	}
@@ -113,17 +112,20 @@ func evaluateRule(_ js.Value, args []js.Value) interface{} {
 	}
 	kvCtx := rule.NewKVContext(nil, log, cache)
 
-	// Create processor
-	processor := rule.NewProcessor(log, nil, kvCtx, nil)
-	if err := processor.LoadRules(selectedRule); err != nil {
-		return marshalResult(evaluateResult{Error: fmt.Sprintf("failed to load rules: %v", err)})
+	// Create processor. Mock time is an option rather than a later setter, so a
+	// bad value is reported instead of quietly evaluating against the real clock.
+	procOpts := []rule.Option{rule.WithKVContext(kvCtx)}
+	if opts.MockTime != "" {
+		t, err := time.Parse(time.RFC3339, opts.MockTime)
+		if err != nil {
+			return marshalResult(evaluateResult{Error: fmt.Sprintf("invalid mockTime %q (want RFC3339): %v", opts.MockTime, err)})
+		}
+		procOpts = append(procOpts, rule.WithTimeProvider(rule.NewMockTimeProvider(t)))
 	}
 
-	// Set mock time if provided
-	if opts.MockTime != "" {
-		if t, err := time.Parse(time.RFC3339, opts.MockTime); err == nil {
-			processor.SetTimeProvider(rule.NewMockTimeProvider(t))
-		}
+	processor := rule.NewProcessor(log, procOpts...)
+	if err := processor.LoadRules(selectedRule); err != nil {
+		return marshalResult(evaluateResult{Error: fmt.Sprintf("failed to load rules: %v", err)})
 	}
 
 	// Process the message

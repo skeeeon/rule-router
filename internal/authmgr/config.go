@@ -1,8 +1,7 @@
-// file: internal/authmgr/config.go
-
 package authmgr
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -117,13 +116,13 @@ func Load(configPath string) (*Config, error) {
 var unsetEnvVars []string
 
 // expandEnvVars recursively expands ${VAR} placeholders in the config struct.
-func expandEnvVars(cfg interface{}) error {
+func expandEnvVars(cfg any) error {
 	// Reset tracking for each expansion
 	unsetEnvVars = nil
 
 	v := reflect.ValueOf(cfg)
 	if v.Kind() != reflect.Ptr || v.IsNil() {
-		return fmt.Errorf("config must be a non-nil pointer")
+		return errors.New("config must be a non-nil pointer")
 	}
 	if err := expandRecursive(v); err != nil {
 		return err
@@ -234,7 +233,7 @@ func setDefaults(cfg *Config) {
 func validate(cfg *Config) error {
 	// NATS validation
 	if len(cfg.NATS.URLs) == 0 {
-		return fmt.Errorf("at least one NATS URL required")
+		return errors.New("at least one NATS URL required")
 	}
 
 	// Auth method validation (only one allowed)
@@ -252,12 +251,12 @@ func validate(cfg *Config) error {
 		authCount++
 	}
 	if authCount > 1 {
-		return fmt.Errorf("only one NATS auth method allowed")
+		return errors.New("only one NATS auth method allowed")
 	}
 
 	// Providers validation
 	if len(cfg.Providers) == 0 {
-		return fmt.Errorf("at least one provider required")
+		return errors.New("at least one provider required")
 	}
 
 	seenIDs := make(map[string]bool)
@@ -266,12 +265,12 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("provider %d: id is required", i)
 		}
 		if seenIDs[p.ID] {
-			return fmt.Errorf("provider %d: duplicate id '%s'", i, p.ID)
+			return fmt.Errorf("provider %d: duplicate id %q", i, p.ID)
 		}
 		seenIDs[p.ID] = true
 
 		if p.Type != "oauth2" && p.Type != "custom-http" {
-			return fmt.Errorf("provider %s: invalid type '%s' (must be 'oauth2' or 'custom-http')", p.ID, p.Type)
+			return fmt.Errorf("provider %s: invalid type %q (must be 'oauth2' or 'custom-http')", p.ID, p.Type)
 		}
 
 		// Default kvKey to ID if not specified
@@ -318,16 +317,16 @@ func validate(cfg *Config) error {
 
 	// Storage validation
 	if cfg.Storage.Bucket == "" {
-		return fmt.Errorf("storage bucket name cannot be empty")
+		return errors.New("storage bucket name cannot be empty")
 	}
 
 	// TLS validation
 	if cfg.NATS.TLS.Enable {
 		if cfg.NATS.TLS.CertFile != "" && cfg.NATS.TLS.KeyFile == "" {
-			return fmt.Errorf("NATS TLS key file required when cert file provided")
+			return errors.New("NATS TLS key file required when cert file provided")
 		}
 		if cfg.NATS.TLS.KeyFile != "" && cfg.NATS.TLS.CertFile == "" {
-			return fmt.Errorf("NATS TLS cert file required when key file provided")
+			return errors.New("NATS TLS cert file required when key file provided")
 		}
 	}
 

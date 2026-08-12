@@ -1,4 +1,3 @@
-// file: internal/logger/logger_wasm.go
 // Lightweight logger for WASM builds — no zap, no viper, no config dependencies.
 
 //go:build js && wasm
@@ -17,8 +16,8 @@ type Logger struct {
 	syncer interface{ Sync() error }
 }
 
-// NewNopLogger creates a logger that discards all log output.
-func NewNopLogger() *Logger {
+// NewNop creates a logger that discards all log output.
+func NewNop() *Logger {
 	return &Logger{
 		Logger: slog.New(slog.DiscardHandler),
 		syncer: noopSyncer{},

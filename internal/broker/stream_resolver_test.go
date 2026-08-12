@@ -1,5 +1,3 @@
-// file: internal/broker/stream_resolver_test.go
-
 package broker
 
 import (
@@ -15,7 +13,7 @@ func newTestResolver() *StreamResolver {
 	return &StreamResolver{
 		streams:    make([]StreamInfo, 0),
 		discovered: true,
-		logger:     logger.NewNopLogger(),
+		logger:     logger.NewNop(),
 	}
 }
 
@@ -24,7 +22,7 @@ func newTestResolverWithStreams(streams []StreamInfo) *StreamResolver {
 	return &StreamResolver{
 		streams:    streams,
 		discovered: true,
-		logger:     logger.NewNopLogger(),
+		logger:     logger.NewNop(),
 	}
 }
 

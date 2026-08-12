@@ -1,5 +1,3 @@
-// file: internal/rule/context.go
-
 package rule
 
 import (
@@ -35,24 +33,24 @@ const (
 //   - SenML arrays at root
 //   - Simple string/number messages
 //   - Primitive array elements
-func wrapIfNeeded(raw interface{}) map[string]interface{} {
+func wrapIfNeeded(raw any) map[string]any {
 	switch v := raw.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		// Already an object - pass through unchanged
 		return v
 
-	case []interface{}:
+	case []any:
 		// Array at root - wrap in @items
-		return map[string]interface{}{"@items": v}
+		return map[string]any{"@items": v}
 
 	case nil:
 		// null value - wrap in @value
-		return map[string]interface{}{"@value": nil}
+		return map[string]any{"@value": nil}
 
 	default:
 		// Primitives: string, float64, bool
 		// Wrap in @value for consistent access
-		return map[string]interface{}{"@value": v}
+		return map[string]any{"@value": v}
 	}
 }
 
@@ -60,13 +58,13 @@ func wrapIfNeeded(raw interface{}) map[string]interface{} {
 // Supports both NATS and HTTP contexts, and now includes support for forEach array iteration
 type EvaluationContext struct {
 	// Message data
-	Msg        map[string]interface{} // CURRENT context (root message OR array element during forEach)
+	Msg        map[string]any // CURRENT context (root message OR array element during forEach)
 	RawPayload []byte
 	Headers    map[string]string
 
 	// Original message reference for @msg prefix
 	// ALWAYS points to root message, even when Msg points to array element
-	OriginalMsg map[string]interface{}
+	OriginalMsg map[string]any
 
 	// Context (NATS or HTTP, one will be nil)
 	Subject *SubjectContext
@@ -105,7 +103,7 @@ func NewEvaluationContext(
 	// Parse payload as generic interface to handle all JSON types.
 	// UseNumber() preserves numeric precision by decoding numbers as json.Number
 	// instead of float64, preventing silent data corruption on large integers.
-	var raw interface{}
+	var raw any
 	if len(payload) > 0 {
 		dec := json.NewDecoder(bytes.NewReader(payload))
 		dec.UseNumber()
@@ -167,7 +165,7 @@ func truncateString(s string, maxLen int) string {
 // WithElement creates a child context for processing an array element.
 // The new context has Msg set to the element while preserving OriginalMsg
 // for @msg access to the root message. All other fields are inherited.
-func (c *EvaluationContext) WithElement(element map[string]interface{}) *EvaluationContext {
+func (c *EvaluationContext) WithElement(element map[string]any) *EvaluationContext {
 	return &EvaluationContext{
 		Msg:             element,
 		OriginalMsg:     c.OriginalMsg, // Preserve root for @msg access
@@ -190,7 +188,7 @@ func (c *EvaluationContext) WithElement(element map[string]interface{}) *Evaluat
 // ResolveValue resolves a field value from the context
 // Supports message fields, system fields (@subject, @path, @header, @time, @kv, @signature)
 // Also supports @msg prefix for explicit root message access during forEach
-func (c *EvaluationContext) ResolveValue(path string) (interface{}, bool) {
+func (c *EvaluationContext) ResolveValue(path string) (any, bool) {
 	// System fields start with @
 	if strings.HasPrefix(path, "@") {
 		return c.resolveSystemField(path)
@@ -209,7 +207,7 @@ func (c *EvaluationContext) ResolveValue(path string) (interface{}, bool) {
 // resolveSystemField handles all @ prefixed system fields
 // Includes @msg.* prefix for explicit root message access
 // Includes fallback for wrapped fields (@value, @items)
-func (c *EvaluationContext) resolveSystemField(path string) (interface{}, bool) {
+func (c *EvaluationContext) resolveSystemField(path string) (any, bool) {
 	// @msg prefix - explicitly access root message
 	// This is critical during forEach to access fields outside the current array element
 	if strings.HasPrefix(path, prefixMsg) {
@@ -224,7 +222,7 @@ func (c *EvaluationContext) resolveSystemField(path string) (interface{}, bool) 
 	// Subject fields (NATS context)
 	if strings.HasPrefix(path, "@subject") {
 		if c.Subject != nil {
-			return c.Subject.GetField(path)
+			return c.Subject.Field(path)
 		}
 		return nil, false
 	}
@@ -232,7 +230,7 @@ func (c *EvaluationContext) resolveSystemField(path string) (interface{}, bool) 
 	// HTTP path fields (HTTP context)
 	if strings.HasPrefix(path, "@path") {
 		if c.HTTP != nil {
-			return c.HTTP.GetField(path)
+			return c.HTTP.Field(path)
 		}
 		return nil, false
 	}
@@ -261,7 +259,7 @@ func (c *EvaluationContext) resolveSystemField(path string) (interface{}, bool) 
 	// Time fields (both contexts)
 	if strings.HasPrefix(path, "@time") || strings.HasPrefix(path, "@day") || strings.HasPrefix(path, "@date") {
 		if c.Time != nil {
-			return c.Time.GetField(path)
+			return c.Time.Field(path)
 		}
 		return nil, false
 	}
@@ -269,7 +267,7 @@ func (c *EvaluationContext) resolveSystemField(path string) (interface{}, bool) 
 	// KV fields (both contexts)
 	if strings.HasPrefix(path, prefixKV) {
 		if c.KV != nil {
-			return c.KV.GetFieldWithContext(path, c.Msg, c.Time, c.Subject)
+			return c.KV.FieldWithContext(path, c.Msg, c.Time, c.Subject)
 		}
 		return nil, false
 	}
@@ -310,7 +308,7 @@ func (c *EvaluationContext) resolveSystemField(path string) (interface{}, bool) 
 }
 
 // valueType returns a human-readable type description for logging
-func valueType(v interface{}) string {
+func valueType(v any) string {
 	if v == nil {
 		return "nil"
 	}
@@ -321,9 +319,9 @@ func valueType(v interface{}) string {
 		return "number"
 	case bool:
 		return "boolean"
-	case []interface{}:
+	case []any:
 		return "array"
-	case map[string]interface{}:
+	case map[string]any:
 		return "object"
 	default:
 		return "unknown"

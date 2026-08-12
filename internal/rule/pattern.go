@@ -3,6 +3,7 @@
 package rule
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -74,8 +75,8 @@ func (pm *PatternMatcher) IsPattern() bool {
 	return pm.isPattern
 }
 
-// GetPattern returns the original pattern string
-func (pm *PatternMatcher) GetPattern() string {
+// Pattern returns the original pattern string
+func (pm *PatternMatcher) Pattern() string {
 	return pm.pattern
 }
 
@@ -222,7 +223,7 @@ func (pm *PatternMatcher) matchRecursive(subjectTokens []string, subjectIdx int,
 // ValidatePattern validates NATS pattern syntax
 func ValidatePattern(pattern string) error {
 	if pattern == "" {
-		return fmt.Errorf("pattern cannot be empty")
+		return errors.New("pattern cannot be empty")
 	}
 
 	tokens := strings.Split(pattern, ".")
@@ -241,7 +242,7 @@ func ValidatePattern(pattern string) error {
 		default:
 			// Regular token - check for invalid wildcard usage
 			if strings.Contains(token, "*") || strings.Contains(token, ">") {
-				return fmt.Errorf("invalid wildcard usage in token '%s' at position %d", token, i)
+				return fmt.Errorf("invalid wildcard usage in token %q at position %d", token, i)
 			}
 			// Could add more validation here (e.g., valid characters)
 		}

@@ -1,4 +1,3 @@
-// file: internal/rule/hmac.go
 // Generic HMAC verification for inbound webhooks (GitHub/Shopify-style).
 // Pure stdlib crypto (hmac/sha256/sha1, hex/base64) — WASM-safe, no build tag.
 

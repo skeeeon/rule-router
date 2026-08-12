@@ -1,5 +1,3 @@
-// file: internal/rule/loader_test.go
-
 package rule
 
 import (
@@ -12,10 +10,10 @@ import (
 )
 
 // newTestLoader creates a loader with a nop logger and predefined KV buckets for testing.
-func newTestLoader() *RulesLoader {
+func newTestLoader() *Loader {
 	// Pre-configure some buckets to test KV validation logic.
 	configuredBuckets := []string{"device_status", "device_config", "customer_data"}
-	return NewRulesLoader(logger.NewNopLogger(), configuredBuckets)
+	return NewLoader(logger.NewNop(), configuredBuckets)
 }
 
 // helper function to create a temporary rule file.
@@ -32,7 +30,7 @@ func TestNewRulesLoader(t *testing.T) {
 	t.Run("successful creation", func(t *testing.T) {
 		loader := newTestLoader()
 		if loader == nil {
-			t.Fatal("NewRulesLoader returned nil")
+			t.Fatal("NewLoader returned nil")
 		}
 		if loader.logger == nil {
 			t.Error("Logger was not initialized")
@@ -245,7 +243,7 @@ func TestLoadFromDirectory_ValidationErrors(t *testing.T) {
 			ruleContent: `- trigger: { nats: { subject: a } }
   conditions: { operator: "and", items: [{field: "{f}", operator: "equals", value: "v"}] }
   action: { nats: { subject: b, payload: "" } }`,
-			errMsg: "invalid condition operator 'equals'",
+			errMsg: "invalid condition operator \"equals\"",
 		},
 		{
 			name: "invalid subject field (non-numeric)",
@@ -297,10 +295,10 @@ func TestLoadFromDirectory_ValidationErrors(t *testing.T) {
 
 			_, err := loader.LoadFromDirectory(tempDir)
 			if err == nil {
-				t.Fatalf("Expected validation error containing '%s', but got nil", tt.errMsg)
+				t.Fatalf("Expected validation error containing %q, but got nil", tt.errMsg)
 			}
 			if !strings.Contains(err.Error(), tt.errMsg) {
-				t.Errorf("Expected error to contain '%s', but got: %v", tt.errMsg, err)
+				t.Errorf("Expected error to contain %q, but got: %v", tt.errMsg, err)
 			}
 		})
 	}
@@ -394,9 +392,9 @@ func TestConditionField_TemplateSyntaxValidation(t *testing.T) {
 				}
 			} else {
 				if err == nil {
-					t.Errorf("Expected validation error containing '%s', but got nil", tt.errMsg)
+					t.Errorf("Expected validation error containing %q, but got nil", tt.errMsg)
 				} else if !strings.Contains(err.Error(), tt.errMsg) {
-					t.Errorf("Expected error to contain '%s', but got: %v", tt.errMsg, err)
+					t.Errorf("Expected error to contain %q, but got: %v", tt.errMsg, err)
 				}
 			}
 		})
@@ -549,9 +547,9 @@ func TestForEach_TemplateSyntaxValidation(t *testing.T) {
 				}
 			} else {
 				if err == nil {
-					t.Errorf("Expected validation error containing '%s', but got nil", tt.errMsg)
+					t.Errorf("Expected validation error containing %q, but got nil", tt.errMsg)
 				} else if !strings.Contains(err.Error(), tt.errMsg) {
-					t.Errorf("Expected error to contain '%s', but got: %v", tt.errMsg, err)
+					t.Errorf("Expected error to contain %q, but got: %v", tt.errMsg, err)
 				}
 			}
 		})
@@ -792,9 +790,9 @@ func TestKVField_Validation(t *testing.T) {
 				}
 			} else {
 				if err == nil {
-					t.Errorf("Expected validation error containing '%s', but got nil", tt.errMsg)
+					t.Errorf("Expected validation error containing %q, but got nil", tt.errMsg)
 				} else if !strings.Contains(err.Error(), tt.errMsg) {
-					t.Errorf("Expected error to contain '%s', but got: %v", tt.errMsg, err)
+					t.Errorf("Expected error to contain %q, but got: %v", tt.errMsg, err)
 				}
 			}
 		})
@@ -899,7 +897,7 @@ func TestArrayOperator_Validation(t *testing.T) {
       subject: output
       payload: "{}"`,
 			shouldPass: false,
-			errMsg:     "array operator 'any' requires nested conditions",
+			errMsg:     "array operator \"any\" requires nested conditions",
 		},
 		{
 			name: "all operator missing nested conditions",
@@ -917,7 +915,7 @@ func TestArrayOperator_Validation(t *testing.T) {
       subject: output
       payload: "{}"`,
 			shouldPass: false,
-			errMsg:     "array operator 'all' requires nested conditions",
+			errMsg:     "array operator \"all\" requires nested conditions",
 		},
 		{
 			name: "none operator missing nested conditions",
@@ -935,7 +933,7 @@ func TestArrayOperator_Validation(t *testing.T) {
       subject: output
       payload: "{}"`,
 			shouldPass: false,
-			errMsg:     "array operator 'none' requires nested conditions",
+			errMsg:     "array operator \"none\" requires nested conditions",
 		},
 		{
 			name: "array operator with invalid nested operator",
@@ -983,7 +981,7 @@ func TestArrayOperator_Validation(t *testing.T) {
       subject: output
       payload: "{}"`,
 			shouldPass: false,
-			errMsg:     "invalid condition operator 'equals'",
+			errMsg:     "invalid condition operator \"equals\"",
 		},
 		{
 			name: "nested array operators",
@@ -1029,9 +1027,9 @@ func TestArrayOperator_Validation(t *testing.T) {
 				}
 			} else {
 				if err == nil {
-					t.Errorf("Expected validation error containing '%s', but got nil", tt.errMsg)
+					t.Errorf("Expected validation error containing %q, but got nil", tt.errMsg)
 				} else if !strings.Contains(err.Error(), tt.errMsg) {
-					t.Errorf("Expected error to contain '%s', but got: %v", tt.errMsg, err)
+					t.Errorf("Expected error to contain %q, but got: %v", tt.errMsg, err)
 				}
 			}
 		})
@@ -1175,7 +1173,7 @@ func TestForEach_NATS_Validation(t *testing.T) {
       subject: alerts.{id}
       payload: '{"id": "{id}"}'`,
 			shouldPass: false,
-			errMsg:     "invalid condition operator 'equals'",
+			errMsg:     "invalid condition operator \"equals\"",
 		},
 		{
 			name: "forEach filter with missing braces",
@@ -1213,9 +1211,9 @@ func TestForEach_NATS_Validation(t *testing.T) {
 				}
 			} else {
 				if err == nil {
-					t.Errorf("Expected validation error containing '%s', but got nil", tt.errMsg)
+					t.Errorf("Expected validation error containing %q, but got nil", tt.errMsg)
 				} else if !strings.Contains(err.Error(), tt.errMsg) {
-					t.Errorf("Expected error to contain '%s', but got: %v", tt.errMsg, err)
+					t.Errorf("Expected error to contain %q, but got: %v", tt.errMsg, err)
 				}
 			}
 		})
@@ -1313,7 +1311,7 @@ func TestForEach_HTTP_Validation(t *testing.T) {
       method: POST
       payload: '{"id": "{id}"}'`,
 			shouldPass: false,
-			errMsg:     "invalid condition operator 'invalid_op'",
+			errMsg:     "invalid condition operator \"invalid_op\"",
 		},
 	}
 
@@ -1331,9 +1329,9 @@ func TestForEach_HTTP_Validation(t *testing.T) {
 				}
 			} else {
 				if err == nil {
-					t.Errorf("Expected validation error containing '%s', but got nil", tt.errMsg)
+					t.Errorf("Expected validation error containing %q, but got nil", tt.errMsg)
 				} else if !strings.Contains(err.Error(), tt.errMsg) {
-					t.Errorf("Expected error to contain '%s', but got: %v", tt.errMsg, err)
+					t.Errorf("Expected error to contain %q, but got: %v", tt.errMsg, err)
 				}
 			}
 		})
@@ -1404,9 +1402,9 @@ func TestForEach_MutualExclusivity(t *testing.T) {
 				}
 			} else {
 				if err == nil {
-					t.Errorf("Expected validation error containing '%s', but got nil", tt.errMsg)
+					t.Errorf("Expected validation error containing %q, but got nil", tt.errMsg)
 				} else if !strings.Contains(err.Error(), tt.errMsg) {
-					t.Errorf("Expected error to contain '%s', but got: %v", tt.errMsg, err)
+					t.Errorf("Expected error to contain %q, but got: %v", tt.errMsg, err)
 				}
 			}
 		})
@@ -1508,7 +1506,7 @@ func TestArrayOperator_And_ForEach_Combined(t *testing.T) {
       subject: alerts.{id}
       payload: '{"id": "{id}"}'`,
 			shouldPass: false,
-			errMsg:     "array operator 'any' requires nested conditions",
+			errMsg:     "array operator \"any\" requires nested conditions",
 		},
 		{
 			name: "invalid: valid array operator + forEach with wildcard",
@@ -1551,9 +1549,9 @@ func TestArrayOperator_And_ForEach_Combined(t *testing.T) {
 				}
 			} else {
 				if err == nil {
-					t.Errorf("Expected validation error containing '%s', but got nil", tt.errMsg)
+					t.Errorf("Expected validation error containing %q, but got nil", tt.errMsg)
 				} else if !strings.Contains(err.Error(), tt.errMsg) {
-					t.Errorf("Expected error to contain '%s', but got: %v", tt.errMsg, err)
+					t.Errorf("Expected error to contain %q, but got: %v", tt.errMsg, err)
 				}
 			}
 		})
@@ -1631,7 +1629,7 @@ func TestRealWorldScenario_BatchNotifications(t *testing.T) {
 		t.Error("Expected NATS action")
 	}
 	if rule.Action.NATS.ForEach != "{notification}" {
-		t.Errorf("Expected forEach='{notification}', got '%s'", rule.Action.NATS.ForEach)
+		t.Errorf("Expected forEach='{notification}', got %q", rule.Action.NATS.ForEach)
 	}
 	if rule.Action.NATS.Filter == nil {
 		t.Error("Expected forEach filter")
@@ -1893,7 +1891,7 @@ func TestThrottle_Validation(t *testing.T) {
         window: "5s"
         mode: sideways`,
 			shouldPass: false,
-			errMsg:     "invalid throttle mode 'sideways'",
+			errMsg:     "invalid throttle mode \"sideways\"",
 		},
 		{
 			name: "invalid trigger throttle - empty window",
@@ -1971,9 +1969,9 @@ func TestThrottle_Validation(t *testing.T) {
 				}
 			} else {
 				if err == nil {
-					t.Errorf("Expected validation error containing '%s', but got nil", tt.errMsg)
+					t.Errorf("Expected validation error containing %q, but got nil", tt.errMsg)
 				} else if !strings.Contains(err.Error(), tt.errMsg) {
-					t.Errorf("Expected error to contain '%s', but got: %v", tt.errMsg, err)
+					t.Errorf("Expected error to contain %q, but got: %v", tt.errMsg, err)
 				}
 			}
 		})
@@ -2037,7 +2035,7 @@ func TestOperatorWhitelist_IncludesArrayOperators(t *testing.T) {
 	for _, op := range operators {
 		t.Run("operator_"+op, func(t *testing.T) {
 			if !loader.isValidOperator(op) {
-				t.Errorf("Array operator '%s' should be in whitelist", op)
+				t.Errorf("Array operator %q should be in whitelist", op)
 			}
 		})
 	}
@@ -2047,7 +2045,7 @@ func TestOperatorWhitelist_IncludesArrayOperators(t *testing.T) {
 	for _, op := range existingOps {
 		t.Run("existing_operator_"+op, func(t *testing.T) {
 			if !loader.isValidOperator(op) {
-				t.Errorf("Existing operator '%s' should still be in whitelist", op)
+				t.Errorf("Existing operator %q should still be in whitelist", op)
 			}
 		})
 	}
@@ -2057,7 +2055,7 @@ func TestOperatorWhitelist_IncludesArrayOperators(t *testing.T) {
 	for _, op := range invalidOps {
 		t.Run("invalid_operator_"+op, func(t *testing.T) {
 			if loader.isValidOperator(op) {
-				t.Errorf("Invalid operator '%s' should not be in whitelist", op)
+				t.Errorf("Invalid operator %q should not be in whitelist", op)
 			}
 		})
 	}

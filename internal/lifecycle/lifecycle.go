@@ -1,5 +1,3 @@
-// file: internal/lifecycle/lifecycle.go
-
 package lifecycle
 
 import (

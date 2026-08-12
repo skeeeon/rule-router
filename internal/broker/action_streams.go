@@ -1,5 +1,3 @@
-// file: internal/broker/action_streams.go
-
 package broker
 
 import (

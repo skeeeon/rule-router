@@ -1,5 +1,3 @@
-// file: internal/authmgr/metrics.go
-
 package authmgr
 
 import (

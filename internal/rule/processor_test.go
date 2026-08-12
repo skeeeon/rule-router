@@ -1,5 +1,3 @@
-// file: internal/rule/processor_test.go
-
 package rule
 
 import (
@@ -14,11 +12,11 @@ import (
 
 // Helper to create a template engine for testing.
 func newTestTemplateEngine() *TemplateEngine {
-	return NewTemplateEngine(logger.NewNopLogger())
+	return NewTemplateEngine(logger.NewNop())
 }
 
 // Helper to create a context for template tests (No KV).
-func newTemplateTestContext(data map[string]interface{}, subject string, t time.Time) *EvaluationContext {
+func newTemplateTestContext(data map[string]any, subject string, t time.Time) *EvaluationContext {
 	timeProvider := NewMockTimeProvider(t)
 	subjectCtx := NewSubjectContext(subject)
 
@@ -32,10 +30,10 @@ func newTemplateTestContext(data map[string]interface{}, subject string, t time.
 		nil, // headers
 		subjectCtx,
 		nil, // httpCtx
-		timeProvider.GetCurrentContext(),
+		timeProvider.CurrentContext(),
 		nil, // kvCtx
 		nil, // sigVerification
-		logger.NewNopLogger(),
+		logger.NewNop(),
 	)
 	if err != nil {
 		panic(fmt.Sprintf("failed to create evaluation context: %v", err))
@@ -44,8 +42,8 @@ func newTemplateTestContext(data map[string]interface{}, subject string, t time.
 }
 
 // Helper to create a context WITH KV support for benchmarking complex templates
-func newKVTemplateTestContext(data map[string]interface{}, kvData map[string]map[string]interface{}) *EvaluationContext {
-	log := logger.NewNopLogger()
+func newKVTemplateTestContext(data map[string]any, kvData map[string]map[string]any) *EvaluationContext {
+	log := logger.NewNop()
 
 	// Setup Local Cache with pre-populated data
 	cache := NewLocalKVCache(log)
@@ -64,7 +62,7 @@ func newKVTemplateTestContext(data map[string]interface{}, kvData map[string]map
 		nil,
 		NewSubjectContext("test.subject"),
 		nil,
-		NewSystemTimeProvider().GetCurrentContext(),
+		NewSystemTimeProvider().CurrentContext(),
 		kvCtx,
 		nil,
 		log,
@@ -81,13 +79,13 @@ func actionsOf(o Outcome, err error) ([]*Action, error) {
 	return o.All(), err
 }
 
-func newTestProcessor() *Processor {
-	return NewProcessor(logger.NewNopLogger(), nil, nil, nil)
+func newTestProcessor(opts ...Option) *Processor {
+	return NewProcessor(logger.NewNop(), opts...)
 }
 
 // Helper to create a processor with pre-populated KV cache for testing
-func setupTestProcessorWithKV(kvData map[string]map[string]interface{}) *Processor {
-	log := logger.NewNopLogger()
+func setupTestProcessorWithKV(kvData map[string]map[string]any) *Processor {
+	log := logger.NewNop()
 	cache := NewLocalKVCache(log)
 
 	// Populate cache
@@ -100,7 +98,7 @@ func setupTestProcessorWithKV(kvData map[string]map[string]interface{}) *Process
 	// Create KV context with the cache
 	kvCtx := NewKVContext(nil, log, cache)
 
-	return NewProcessor(log, nil, kvCtx, nil)
+	return NewProcessor(log, WithKVContext(kvCtx))
 }
 
 // TestProcessor_ComplexIntegration_DeepContext tests a highly complex scenario involving:
@@ -111,12 +109,12 @@ func setupTestProcessorWithKV(kvData map[string]map[string]interface{}) *Process
 // 5. Timestamp context injection in output (@timestamp.iso)
 func TestProcessor_ComplexIntegration_DeepContext(t *testing.T) {
 	// Setup KV Data
-	kvData := map[string]map[string]interface{}{
+	kvData := map[string]map[string]any{
 		"configurations": {
-			"cfg_alpha": map[string]interface{}{
+			"cfg_alpha": map[string]any{
 				"threshold": 90,
 				"region":    "us-east-1",
-				"settings": map[string]interface{}{
+				"settings": map[string]any{
 					"retry": true,
 				},
 			},
@@ -213,8 +211,8 @@ func TestProcessor_ComplexIntegration_DeepContext(t *testing.T) {
 
 // TestProcessor_Orchestration verifies the processor correctly calls evaluator and templater.
 func TestProcessor_Orchestration(t *testing.T) {
-	log := logger.NewNopLogger()
-	processor := NewProcessor(log, nil, nil, nil)
+	log := logger.NewNop()
+	processor := NewProcessor(log)
 
 	rules := []Rule{
 		{
@@ -265,20 +263,20 @@ func TestProcessor_Orchestration(t *testing.T) {
 // TestProcessor_ComplexKVOrchestration tests nested variables inside KV lookups
 func TestProcessor_ComplexKVOrchestration(t *testing.T) {
 	// Setup KV data
-	kvData := map[string]map[string]interface{}{
+	kvData := map[string]map[string]any{
 		"device_configs": {
-			"sensor-type-a": map[string]interface{}{
+			"sensor-type-a": map[string]any{
 				"threshold": 50,
 				"owner_ref": "group_1",
 			},
-			"sensor-type-b": map[string]interface{}{
+			"sensor-type-b": map[string]any{
 				"threshold": 80,
 				"owner_ref": "group_2",
 			},
 		},
 		"groups": {
-			"group_1": map[string]interface{}{"email": "team_a@example.com"},
-			"group_2": map[string]interface{}{"email": "team_b@example.com"},
+			"group_1": map[string]any{"email": "team_a@example.com"},
+			"group_2": map[string]any{"email": "team_b@example.com"},
 		},
 	}
 
@@ -345,25 +343,25 @@ func TestTemplateEngine_BasicVariables(t *testing.T) {
 	tests := []struct {
 		name     string
 		template string
-		data     map[string]interface{}
+		data     map[string]any
 		want     string
 	}{
 		{
 			name:     "single variable",
 			template: "Temperature is {temperature}",
-			data:     map[string]interface{}{"temperature": 25.5},
+			data:     map[string]any{"temperature": 25.5},
 			want:     "Temperature is 25.5",
 		},
 		{
 			name:     "missing variable returns empty string",
 			template: "Value: {missing_field}",
-			data:     map[string]interface{}{"temperature": 25},
+			data:     map[string]any{"temperature": 25},
 			want:     "Value: ",
 		},
 		{
 			name:     "nil value returns empty string",
 			template: "Value: {null_field}",
-			data:     map[string]interface{}{"null_field": nil},
+			data:     map[string]any{"null_field": nil},
 			want:     "Value: ",
 		},
 	}
@@ -385,9 +383,9 @@ func TestTemplateEngine_BasicVariables(t *testing.T) {
 func TestTemplateEngine_NestedFields(t *testing.T) {
 	engine := newTestTemplateEngine()
 	template := "Email: {user.profile.email}"
-	data := map[string]interface{}{
-		"user": map[string]interface{}{
-			"profile": map[string]interface{}{
+	data := map[string]any{
+		"user": map[string]any{
+			"profile": map[string]any{
 				"email": "john@example.com",
 			},
 		},
@@ -407,7 +405,7 @@ func TestTemplateEngine_NestedFields(t *testing.T) {
 func TestTemplateEngine_SystemFunctions(t *testing.T) {
 	engine := newTestTemplateEngine()
 	template := "{@uuid4()}"
-	context := newTemplateTestContext(map[string]interface{}{}, "test.subject", time.Now())
+	context := newTemplateTestContext(map[string]any{}, "test.subject", time.Now())
 
 	got, err := engine.Execute(template, context)
 	if err != nil {
@@ -424,7 +422,7 @@ func TestTemplateEngine_TimeFields(t *testing.T) {
 	template := "Hour: {@time.hour}"
 	want := "Hour: 14"
 
-	context := newTemplateTestContext(map[string]interface{}{}, "test.subject", fixedTime)
+	context := newTemplateTestContext(map[string]any{}, "test.subject", fixedTime)
 	got, err := engine.Execute(template, context)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -439,7 +437,7 @@ func TestTemplateEngine_SubjectFields(t *testing.T) {
 	template := "Location: {@subject.2}"
 	want := "Location: room1"
 
-	context := newTemplateTestContext(map[string]interface{}{}, "sensors.temperature.room1", time.Now())
+	context := newTemplateTestContext(map[string]any{}, "sensors.temperature.room1", time.Now())
 	got, err := engine.Execute(template, context)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -453,7 +451,7 @@ func TestTemplateEngine_ComplexTemplates(t *testing.T) {
 	engine := newTestTemplateEngine()
 	fixedTime := time.Date(2024, 3, 15, 14, 30, 0, 0, time.UTC)
 	template := `{ "device": "{device_id}", "type": "{@subject.1}", "hour": {@time.hour} }`
-	data := map[string]interface{}{"device_id": "sensor001"}
+	data := map[string]any{"device_id": "sensor001"}
 	contains := []string{`"device": "sensor001"`, `"type": "temperature"`, `"hour": 14`}
 
 	context := newTemplateTestContext(data, "sensors.temperature.room101", fixedTime)
@@ -481,11 +479,11 @@ func TestProcessNATSActionWithForEach_Basic(t *testing.T) {
 		Payload: `{"id": "{id}", "value": {value}}`,
 	}
 
-	data := map[string]interface{}{
-		"items": []interface{}{
-			map[string]interface{}{"id": "item1", "value": 10},
-			map[string]interface{}{"id": "item2", "value": 20},
-			map[string]interface{}{"id": "item3", "value": 30},
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"id": "item1", "value": 10},
+			map[string]any{"id": "item2", "value": 20},
+			map[string]any{"id": "item3", "value": 30},
 		},
 	}
 
@@ -561,9 +559,9 @@ func TestProcessNATSActionWithForEach_InvalidSyntax(t *testing.T) {
 				Payload: `{"id": "{id}"}`,
 			}
 
-			data := map[string]interface{}{
-				"items": []interface{}{
-					map[string]interface{}{"id": "item1"},
+			data := map[string]any{
+				"items": []any{
+					map[string]any{"id": "item1"},
 				},
 			}
 
@@ -573,9 +571,9 @@ func TestProcessNATSActionWithForEach_InvalidSyntax(t *testing.T) {
 
 			if tt.wantErr {
 				if err == nil {
-					t.Errorf("Expected error containing '%s', got nil", tt.errContains)
+					t.Errorf("Expected error containing %q, got nil", tt.errContains)
 				} else if !strings.Contains(err.Error(), tt.errContains) {
-					t.Errorf("Expected error containing '%s', got: %v", tt.errContains, err)
+					t.Errorf("Expected error containing %q, got: %v", tt.errContains, err)
 				}
 			} else {
 				if err != nil {
@@ -601,11 +599,11 @@ func TestProcessNATSActionWithForEach_WithFilter(t *testing.T) {
 		Payload: `{"id": "{id}"}`,
 	}
 
-	data := map[string]interface{}{
-		"items": []interface{}{
-			map[string]interface{}{"id": "item1", "status": "active"},
-			map[string]interface{}{"id": "item2", "status": "inactive"},
-			map[string]interface{}{"id": "item3", "status": "active"},
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"id": "item1", "status": "active"},
+			map[string]any{"id": "item2", "status": "inactive"},
+			map[string]any{"id": "item3", "status": "active"},
 		},
 	}
 
@@ -639,8 +637,8 @@ func TestProcessNATSActionWithForEach_EmptyArray(t *testing.T) {
 		Payload: `{"id": "{id}"}`,
 	}
 
-	data := map[string]interface{}{
-		"items": []interface{}{},
+	data := map[string]any{
+		"items": []any{},
 	}
 
 	context := newTemplateTestContext(data, "test.subject", time.Now())
@@ -671,13 +669,13 @@ func TestProcessNATSActionWithForEach_MixedArray(t *testing.T) {
 		Payload: `{"id": "{id}"}`,
 	}
 
-	data := map[string]interface{}{
-		"items": []interface{}{
-			map[string]interface{}{"id": "item1"},
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"id": "item1"},
 			"not-an-object", // This will be filtered out because it has no 'id' field.
-			map[string]interface{}{"id": "item2"},
+			map[string]any{"id": "item2"},
 			42, // This will also be filtered out.
-			map[string]interface{}{"id": "item3"},
+			map[string]any{"id": "item3"},
 		},
 	}
 
@@ -713,12 +711,12 @@ func TestProcessNATSActionWithForEach_RootMessageAccess(t *testing.T) {
 		Payload: `{"id": "{id}", "siteId": "{@msg.siteId}", "deviceId": "{@msg.deviceId}"}`,
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"siteId":   "site-123",
 		"deviceId": "device-456",
-		"notifications": []interface{}{
-			map[string]interface{}{"id": "notif1"},
-			map[string]interface{}{"id": "notif2"},
+		"notifications": []any{
+			map[string]any{"id": "notif1"},
+			map[string]any{"id": "notif2"},
 		},
 	}
 
@@ -761,10 +759,10 @@ func TestProcessNATSActionWithForEach_Passthrough(t *testing.T) {
 		Passthrough: true,
 	}
 
-	data := map[string]interface{}{
-		"items": []interface{}{
-			map[string]interface{}{"id": "item1", "value": 10},
-			map[string]interface{}{"id": "item2", "value": 20},
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"id": "item1", "value": 10},
+			map[string]any{"id": "item2", "value": 20},
 		},
 	}
 
@@ -785,7 +783,7 @@ func TestProcessNATSActionWithForEach_Passthrough(t *testing.T) {
 	}
 
 	// Parse and verify content
-	var payload1 map[string]interface{}
+	var payload1 map[string]any
 	if err := json.Unmarshal(actions[0].NATS.RawPayload, &payload1); err != nil {
 		t.Fatalf("Failed to parse action 0 raw payload: %v", err)
 	}
@@ -796,8 +794,7 @@ func TestProcessNATSActionWithForEach_Passthrough(t *testing.T) {
 }
 
 func TestProcessNATSActionWithForEach_IterationLimit(t *testing.T) {
-	processor := newTestProcessor()
-	processor.SetMaxForEachIterations(5) // Set low limit for testing
+	processor := newTestProcessor(WithMaxForEachIterations(5)) // low limit for testing
 
 	action := &NATSAction{
 		ForEach: "{items}",
@@ -806,12 +803,12 @@ func TestProcessNATSActionWithForEach_IterationLimit(t *testing.T) {
 	}
 
 	// Create 10 items (exceeds limit of 5)
-	items := make([]interface{}, 10)
+	items := make([]any, 10)
 	for i := 0; i < 10; i++ {
-		items[i] = map[string]interface{}{"id": fmt.Sprintf("item%d", i)}
+		items[i] = map[string]any{"id": fmt.Sprintf("item%d", i)}
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"items": items,
 	}
 
@@ -836,16 +833,16 @@ func TestProcessNATSActionWithForEach_NestedFields(t *testing.T) {
 		Payload: `{"alarmId": "{event.alarmId}", "alarmName": "{event.alarmName}"}`,
 	}
 
-	data := map[string]interface{}{
-		"notifications": []interface{}{
-			map[string]interface{}{
-				"event": map[string]interface{}{
+	data := map[string]any{
+		"notifications": []any{
+			map[string]any{
+				"event": map[string]any{
 					"alarmId":   "alarm-001",
 					"alarmName": "Motion Detected",
 				},
 			},
-			map[string]interface{}{
-				"event": map[string]interface{}{
+			map[string]any{
+				"event": map[string]any{
 					"alarmId":   "alarm-002",
 					"alarmName": "Door Opened",
 				},
@@ -887,10 +884,10 @@ func TestProcessNATSActionWithForEach_Headers(t *testing.T) {
 		},
 	}
 
-	data := map[string]interface{}{
-		"items": []interface{}{
-			map[string]interface{}{"id": "item1", "priority": "high"},
-			map[string]interface{}{"id": "item2", "priority": "low"},
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"id": "item1", "priority": "high"},
+			map[string]any{"id": "item2", "priority": "low"},
 		},
 	}
 
@@ -932,10 +929,10 @@ func TestProcessHTTPActionWithForEach_Basic(t *testing.T) {
 		Payload: `{"id": "{id}", "value": {value}}`,
 	}
 
-	data := map[string]interface{}{
-		"items": []interface{}{
-			map[string]interface{}{"id": "item1", "value": 10},
-			map[string]interface{}{"id": "item2", "value": 20},
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"id": "item1", "value": 10},
+			map[string]any{"id": "item2", "value": 20},
 		},
 	}
 
@@ -970,9 +967,9 @@ func TestProcessHTTPActionWithForEach_InvalidSyntax(t *testing.T) {
 		Payload: `{"id": "{id}"}`,
 	}
 
-	data := map[string]interface{}{
-		"items": []interface{}{
-			map[string]interface{}{"id": "item1"},
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"id": "item1"},
 		},
 	}
 
@@ -1006,9 +1003,9 @@ func TestProcessHTTPActionWithForEach_WithRetry(t *testing.T) {
 		Retry:   retryConfig,
 	}
 
-	data := map[string]interface{}{
-		"items": []interface{}{
-			map[string]interface{}{"id": "item1"},
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"id": "item1"},
 		},
 	}
 
@@ -1046,7 +1043,7 @@ func TestProcessForEach_NonExistentField(t *testing.T) {
 		Payload: `{"id": "{id}"}`,
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"other": "value",
 	}
 
@@ -1072,7 +1069,7 @@ func TestProcessForEach_NonArrayField(t *testing.T) {
 		Payload: `{"id": "{id}"}`,
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"items": "not-an-array",
 	}
 
@@ -1104,10 +1101,10 @@ func TestProcessForEach_AllElementsFiltered(t *testing.T) {
 		Payload: `{"id": "{id}"}`,
 	}
 
-	data := map[string]interface{}{
-		"items": []interface{}{
-			map[string]interface{}{"id": "item1", "status": "normal"},
-			map[string]interface{}{"id": "item2", "status": "normal"},
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"id": "item1", "status": "normal"},
+			map[string]any{"id": "item2", "status": "normal"},
 		},
 	}
 
@@ -1150,34 +1147,34 @@ func TestProcessForEach_RealWorldBatchNotification(t *testing.T) {
 		}`,
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"siteId": "site-123",
 		"type":   "NOTIFICATION",
 		"time":   "2019-10-29T17:02:18.528Z",
-		"notification": []interface{}{
-			map[string]interface{}{
+		"notification": []any{
+			map[string]any{
 				"id":       "evt-001",
 				"type":     "DEVICE_MOTION_START",
 				"cameraId": "cam-001",
-				"event": map[string]interface{}{
+				"event": map[string]any{
 					"alarmId":   "alarm-abc",
 					"alarmName": "Motion Detected",
 				},
 			},
-			map[string]interface{}{
+			map[string]any{
 				"id":       "evt-002",
 				"type":     "DEVICE_DOOR_OPEN",
 				"cameraId": "cam-002",
-				"event": map[string]interface{}{
+				"event": map[string]any{
 					"alarmId":   "alarm-xyz",
 					"alarmName": "Door Opened",
 				},
 			},
-			map[string]interface{}{
+			map[string]any{
 				"id":       "evt-003",
 				"type":     "DEVICE_MOTION_START",
 				"cameraId": "cam-003",
-				"event": map[string]interface{}{
+				"event": map[string]any{
 					"alarmId":   "alarm-def",
 					"alarmName": "Motion Detected",
 				},
@@ -1223,7 +1220,7 @@ func TestProcessForEach_RealWorldBatchNotification(t *testing.T) {
 func BenchmarkTemplateEngine_Simple(b *testing.B) {
 	engine := newTestTemplateEngine()
 	template := "Device {device_id} reports {temperature}°C"
-	data := map[string]interface{}{"device_id": "sensor001", "temperature": 25.5}
+	data := map[string]any{"device_id": "sensor001", "temperature": 25.5}
 	context := newTemplateTestContext(data, "sensors.temperature", time.Now())
 
 	b.ResetTimer()
@@ -1236,7 +1233,7 @@ func BenchmarkTemplateEngine_Simple(b *testing.B) {
 func BenchmarkTemplateEngine_MixedTypes(b *testing.B) {
 	engine := newTestTemplateEngine()
 	template := `{ "id": "{device_id}", "type": "{@subject.1}", "ts": "{@timestamp()}" }`
-	data := map[string]interface{}{"device_id": "sensor001"}
+	data := map[string]any{"device_id": "sensor001"}
 	context := newTemplateTestContext(data, "sensors.temperature.room101", time.Now())
 
 	b.ResetTimer()
@@ -1251,21 +1248,21 @@ func BenchmarkTemplateEngine_NestedKV(b *testing.B) {
 
 	// Setup chained KV data for deep recursion
 	// Message ID -> Config Key -> Region -> Endpoint
-	kvData := make(map[string]map[string]interface{})
-	kvData["devices"] = map[string]interface{}{
-		"sensor-001": map[string]interface{}{"config_id": "cfg-alpha"},
+	kvData := make(map[string]map[string]any)
+	kvData["devices"] = map[string]any{
+		"sensor-001": map[string]any{"config_id": "cfg-alpha"},
 	}
-	kvData["configs"] = map[string]interface{}{
-		"cfg-alpha": map[string]interface{}{"region": "us-west"},
+	kvData["configs"] = map[string]any{
+		"cfg-alpha": map[string]any{"region": "us-west"},
 	}
-	kvData["regions"] = map[string]interface{}{
-		"us-west": map[string]interface{}{"url": "api.west.internal"},
+	kvData["regions"] = map[string]any{
+		"us-west": map[string]any{"url": "api.west.internal"},
 	}
 
 	// 3 levels of nesting + 1 base variable
 	template := `{"target": "https://{@kv.regions.{@kv.configs.{@kv.devices.{id}:config_id}:region}:url}/ingest"}`
 
-	data := map[string]interface{}{"id": "sensor-001"}
+	data := map[string]any{"id": "sensor-001"}
 	context := newKVTemplateTestContext(data, kvData)
 
 	b.ResetTimer()
@@ -1276,21 +1273,21 @@ func BenchmarkTemplateEngine_NestedKV(b *testing.B) {
 
 // BenchmarkProcessor_Heavy_KV tests a realistic scenario with extensive KV usage
 func BenchmarkProcessor_Heavy_KV(b *testing.B) {
-	kvData := make(map[string]map[string]interface{})
-	kvData["configs"] = make(map[string]interface{})
-	kvData["limits"] = make(map[string]interface{})
-	kvData["enrichment"] = make(map[string]interface{})
+	kvData := make(map[string]map[string]any)
+	kvData["configs"] = make(map[string]any)
+	kvData["limits"] = make(map[string]any)
+	kvData["enrichment"] = make(map[string]any)
 
 	for i := 0; i < 1000; i++ {
 		id := fmt.Sprintf("dev-%d", i)
-		kvData["configs"][id] = map[string]interface{}{
+		kvData["configs"][id] = map[string]any{
 			"type":   "sensor-type-x",
 			"region": "us-east",
 		}
-		kvData["limits"]["sensor-type-x"] = map[string]interface{}{
+		kvData["limits"]["sensor-type-x"] = map[string]any{
 			"max_temp": 100,
 		}
-		kvData["enrichment"]["us-east"] = map[string]interface{}{
+		kvData["enrichment"]["us-east"] = map[string]any{
 			"datacenter": "virginia",
 			"support":    "team-a",
 		}
@@ -1333,9 +1330,9 @@ func BenchmarkProcessor_Heavy_KV(b *testing.B) {
 // involving deep JSON traversal, header checks, dynamic KV lookup, and context injection
 func BenchmarkProcessor_ComplexIntegration_DeepContext(b *testing.B) {
 	// Setup KV Data
-	kvData := map[string]map[string]interface{}{
+	kvData := map[string]map[string]any{
 		"configurations": {
-			"cfg_alpha": map[string]interface{}{
+			"cfg_alpha": map[string]any{
 				"threshold": 90,
 				"region":    "us-east-1",
 			},
@@ -1384,11 +1381,11 @@ func BenchmarkProcessForEach_Small(b *testing.B) {
 		Payload: `{"id": "{id}", "value": {value}}`,
 	}
 
-	data := map[string]interface{}{
-		"items": []interface{}{
-			map[string]interface{}{"id": "item1", "value": 10},
-			map[string]interface{}{"id": "item2", "value": 20},
-			map[string]interface{}{"id": "item3", "value": 30},
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"id": "item1", "value": 10},
+			map[string]any{"id": "item2", "value": 20},
+			map[string]any{"id": "item3", "value": 30},
 		},
 	}
 
@@ -1409,12 +1406,12 @@ func BenchmarkProcessForEach_Large(b *testing.B) {
 		Payload: `{"id": "{id}", "value": {value}}`,
 	}
 
-	items := make([]interface{}, 100)
+	items := make([]any, 100)
 	for i := 0; i < 100; i++ {
-		items[i] = map[string]interface{}{"id": fmt.Sprintf("item%d", i), "value": i * 10}
+		items[i] = map[string]any{"id": fmt.Sprintf("item%d", i), "value": i * 10}
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"items": items,
 	}
 
@@ -1441,12 +1438,12 @@ func BenchmarkProcessForEach_WithFilter(b *testing.B) {
 		Payload: `{"id": "{id}", "value": {value}}`,
 	}
 
-	items := make([]interface{}, 100)
+	items := make([]any, 100)
 	for i := 0; i < 100; i++ {
-		items[i] = map[string]interface{}{"id": fmt.Sprintf("item%d", i), "value": i}
+		items[i] = map[string]any{"id": fmt.Sprintf("item%d", i), "value": i}
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"items": items,
 	}
 
@@ -1467,10 +1464,10 @@ func BenchmarkProcessForEach_MixedArray(b *testing.B) {
 		Payload: `{"id": "{id}"}`,
 	}
 
-	items := make([]interface{}, 90)
+	items := make([]any, 90)
 	for i := 0; i < 90; i++ {
 		if i%3 == 0 {
-			items[i] = map[string]interface{}{"id": fmt.Sprintf("item%d", i)}
+			items[i] = map[string]any{"id": fmt.Sprintf("item%d", i)}
 		} else if i%3 == 1 {
 			items[i] = "string"
 		} else {
@@ -1478,7 +1475,7 @@ func BenchmarkProcessForEach_MixedArray(b *testing.B) {
 		}
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"items": items,
 	}
 
@@ -1507,8 +1504,8 @@ func BenchmarkExtractVariable(b *testing.B) {
 // --- Deep Merge Tests ---
 
 func TestDeepMerge_BasicOverwrite(t *testing.T) {
-	base := map[string]interface{}{"a": "old", "b": 1}
-	overlay := map[string]interface{}{"a": "new"}
+	base := map[string]any{"a": "old", "b": 1}
+	overlay := map[string]any{"a": "new"}
 	result := deepMerge(base, overlay)
 
 	if result["a"] != "new" {
@@ -1520,8 +1517,8 @@ func TestDeepMerge_BasicOverwrite(t *testing.T) {
 }
 
 func TestDeepMerge_NewKeys(t *testing.T) {
-	base := map[string]interface{}{"a": 1}
-	overlay := map[string]interface{}{"b": 2, "c": 3}
+	base := map[string]any{"a": 1}
+	overlay := map[string]any{"b": 2, "c": 3}
 	result := deepMerge(base, overlay)
 
 	if result["a"] != 1 {
@@ -1536,21 +1533,21 @@ func TestDeepMerge_NewKeys(t *testing.T) {
 }
 
 func TestDeepMerge_NestedObjectsRecursed(t *testing.T) {
-	base := map[string]interface{}{
-		"nested": map[string]interface{}{
+	base := map[string]any{
+		"nested": map[string]any{
 			"keep":      "yes",
 			"overwrite": "old",
 		},
 	}
-	overlay := map[string]interface{}{
-		"nested": map[string]interface{}{
+	overlay := map[string]any{
+		"nested": map[string]any{
 			"overwrite": "new",
 			"added":     "extra",
 		},
 	}
 	result := deepMerge(base, overlay)
 
-	nested, ok := result["nested"].(map[string]interface{})
+	nested, ok := result["nested"].(map[string]any)
 	if !ok {
 		t.Fatalf("nested should be map, got %T", result["nested"])
 	}
@@ -1566,11 +1563,11 @@ func TestDeepMerge_NestedObjectsRecursed(t *testing.T) {
 }
 
 func TestDeepMerge_ArraysReplacedWholesale(t *testing.T) {
-	base := map[string]interface{}{"arr": []interface{}{1, 2, 3}}
-	overlay := map[string]interface{}{"arr": []interface{}{4, 5}}
+	base := map[string]any{"arr": []any{1, 2, 3}}
+	overlay := map[string]any{"arr": []any{4, 5}}
 	result := deepMerge(base, overlay)
 
-	arr, ok := result["arr"].([]interface{})
+	arr, ok := result["arr"].([]any)
 	if !ok {
 		t.Fatalf("arr should be slice, got %T", result["arr"])
 	}
@@ -1580,8 +1577,8 @@ func TestDeepMerge_ArraysReplacedWholesale(t *testing.T) {
 }
 
 func TestDeepMerge_EmptyOverlay(t *testing.T) {
-	base := map[string]interface{}{"a": 1, "b": 2}
-	overlay := map[string]interface{}{}
+	base := map[string]any{"a": 1, "b": 2}
+	overlay := map[string]any{}
 	result := deepMerge(base, overlay)
 
 	if len(result) != 2 || result["a"] != 1 || result["b"] != 2 {
@@ -1590,8 +1587,8 @@ func TestDeepMerge_EmptyOverlay(t *testing.T) {
 }
 
 func TestDeepMerge_EmptyBase(t *testing.T) {
-	base := map[string]interface{}{}
-	overlay := map[string]interface{}{"a": 1}
+	base := map[string]any{}
+	overlay := map[string]any{"a": 1}
 	result := deepMerge(base, overlay)
 
 	if len(result) != 1 || result["a"] != 1 {
@@ -1600,8 +1597,8 @@ func TestDeepMerge_EmptyBase(t *testing.T) {
 }
 
 func TestDeepMerge_BaseNotMutated(t *testing.T) {
-	base := map[string]interface{}{"a": "original"}
-	overlay := map[string]interface{}{"a": "changed", "b": "new"}
+	base := map[string]any{"a": "original"}
+	overlay := map[string]any{"a": "changed", "b": "new"}
 	deepMerge(base, overlay)
 
 	if base["a"] != "original" {
@@ -1620,7 +1617,7 @@ func BenchmarkNATSAction_Templated(b *testing.B) {
 		Subject: "output.{device_id}",
 		Payload: `{"device_id": "{device_id}", "reading": {reading}, "status": "{status}"}`,
 	}
-	data := map[string]interface{}{
+	data := map[string]any{
 		"device_id": "sensor-001",
 		"reading":   98.6,
 		"status":    "active",
@@ -1641,7 +1638,7 @@ func BenchmarkNATSAction_Passthrough(b *testing.B) {
 		Subject:     "output.passthrough",
 		Passthrough: true,
 	}
-	data := map[string]interface{}{
+	data := map[string]any{
 		"device_id": "sensor-001",
 		"reading":   98.6,
 		"status":    "active",
@@ -1663,7 +1660,7 @@ func BenchmarkNATSAction_Merge(b *testing.B) {
 		Merge:   true,
 		Payload: `{"processed": true, "tier": "premium"}`,
 	}
-	data := map[string]interface{}{
+	data := map[string]any{
 		"device_id": "sensor-001",
 		"reading":   98.6,
 		"status":    "active",
@@ -1687,7 +1684,7 @@ func BenchmarkNATSAction_Merge_LargePayload(b *testing.B) {
 	}
 
 	// Build a message with 50 fields to simulate a wide schema
-	data := map[string]interface{}{"id": "msg-1"}
+	data := map[string]any{"id": "msg-1"}
 	for i := 0; i < 50; i++ {
 		data[fmt.Sprintf("field_%d", i)] = fmt.Sprintf("value_%d", i)
 	}
@@ -1710,7 +1707,7 @@ func TestProcessNATSAction_Merge_Basic(t *testing.T) {
 		Payload: `{"added_field": "new_value"}`,
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"existing": "preserved",
 		"count":    42,
 	}
@@ -1730,7 +1727,7 @@ func TestProcessNATSAction_Merge_Basic(t *testing.T) {
 		t.Fatal("Merge should produce RawPayload")
 	}
 
-	var merged map[string]interface{}
+	var merged map[string]any
 	if err := json.Unmarshal(result.RawPayload, &merged); err != nil {
 		t.Fatalf("Failed to parse merged payload: %v", err)
 	}
@@ -1756,7 +1753,7 @@ func TestProcessNATSAction_Merge_OverwritesExistingField(t *testing.T) {
 		Payload: `{"status": "enriched"}`,
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"status": "raw",
 		"id":     "msg-1",
 	}
@@ -1767,7 +1764,7 @@ func TestProcessNATSAction_Merge_OverwritesExistingField(t *testing.T) {
 		t.Fatalf("processNATSAction() error = %v", err)
 	}
 
-	var merged map[string]interface{}
+	var merged map[string]any
 	if err := json.Unmarshal(actions[0].NATS.RawPayload, &merged); err != nil {
 		t.Fatalf("Failed to parse: %v", err)
 	}
@@ -1789,7 +1786,7 @@ func TestProcessNATSAction_Merge_WithTemplateVariables(t *testing.T) {
 		Payload: `{"device_name": "{name}", "source_subject": "{@subject}"}`,
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"name":    "sensor-1",
 		"reading": 98.6,
 	}
@@ -1800,7 +1797,7 @@ func TestProcessNATSAction_Merge_WithTemplateVariables(t *testing.T) {
 		t.Fatalf("processNATSAction() error = %v", err)
 	}
 
-	var merged map[string]interface{}
+	var merged map[string]any
 	if err := json.Unmarshal(actions[0].NATS.RawPayload, &merged); err != nil {
 		t.Fatalf("Failed to parse: %v", err)
 	}
@@ -1825,7 +1822,7 @@ func TestProcessNATSAction_Merge_InvalidOverlayJSON(t *testing.T) {
 		Payload: `not valid json`,
 	}
 
-	data := map[string]interface{}{"key": "value"}
+	data := map[string]any{"key": "value"}
 	context := newTemplateTestContext(data, "test.subject", time.Now())
 
 	_, err := processor.processNATSAction(action, context)
@@ -1846,9 +1843,9 @@ func TestProcessNATSAction_Merge_NestedObject(t *testing.T) {
 		Payload: `{"metadata": {"processed": true, "tier": "premium"}}`,
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"id": "order-1",
-		"metadata": map[string]interface{}{
+		"metadata": map[string]any{
 			"source":  "api",
 			"version": "2.0",
 		},
@@ -1860,12 +1857,12 @@ func TestProcessNATSAction_Merge_NestedObject(t *testing.T) {
 		t.Fatalf("processNATSAction() error = %v", err)
 	}
 
-	var merged map[string]interface{}
+	var merged map[string]any
 	if err := json.Unmarshal(actions[0].NATS.RawPayload, &merged); err != nil {
 		t.Fatalf("Failed to parse: %v", err)
 	}
 
-	metadata, ok := merged["metadata"].(map[string]interface{})
+	metadata, ok := merged["metadata"].(map[string]any)
 	if !ok {
 		t.Fatalf("metadata should be object, got %T", merged["metadata"])
 	}
@@ -1900,7 +1897,7 @@ func TestProcessHTTPAction_PublishResponse_SubjectTemplating(t *testing.T) {
 		},
 	}
 
-	data := map[string]interface{}{"deviceId": "abc123"}
+	data := map[string]any{"deviceId": "abc123"}
 	ctx := newTemplateTestContext(data, "trigger.poll", time.Now())
 
 	actions, err := processor.processHTTPAction(action, ctx)
@@ -1934,7 +1931,7 @@ func TestProcessHTTPAction_Merge_Basic(t *testing.T) {
 		Payload: `{"enriched": true}`,
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"id":   "msg-1",
 		"data": "original",
 	}
@@ -1954,7 +1951,7 @@ func TestProcessHTTPAction_Merge_Basic(t *testing.T) {
 		t.Fatal("Merge should produce RawPayload")
 	}
 
-	var merged map[string]interface{}
+	var merged map[string]any
 	if err := json.Unmarshal(result.RawPayload, &merged); err != nil {
 		t.Fatalf("Failed to parse merged payload: %v", err)
 	}
@@ -1979,10 +1976,10 @@ func TestProcessNATSActionWithForEach_Merge_Basic(t *testing.T) {
 		Payload: `{"processed": true}`,
 	}
 
-	data := map[string]interface{}{
-		"items": []interface{}{
-			map[string]interface{}{"id": "a", "value": 10},
-			map[string]interface{}{"id": "b", "value": 20},
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"id": "a", "value": 10},
+			map[string]any{"id": "b", "value": 20},
 		},
 	}
 	context := newTemplateTestContext(data, "test.subject", time.Now())
@@ -2001,7 +1998,7 @@ func TestProcessNATSActionWithForEach_Merge_Basic(t *testing.T) {
 			t.Fatalf("Action %d should have RawPayload", i)
 		}
 
-		var merged map[string]interface{}
+		var merged map[string]any
 		if err := json.Unmarshal(act.NATS.RawPayload, &merged); err != nil {
 			t.Fatalf("Action %d: failed to parse: %v", i, err)
 		}
@@ -2035,10 +2032,10 @@ func TestProcessNATSActionWithForEach_Merge_ElementIsBase(t *testing.T) {
 		Payload: `{"rootField": "{@msg.globalKey}"}`,
 	}
 
-	data := map[string]interface{}{
+	data := map[string]any{
 		"globalKey": "global-value",
-		"items": []interface{}{
-			map[string]interface{}{"id": "x", "localField": "local-value"},
+		"items": []any{
+			map[string]any{"id": "x", "localField": "local-value"},
 		},
 	}
 	context := newTemplateTestContext(data, "test.subject", time.Now())
@@ -2052,7 +2049,7 @@ func TestProcessNATSActionWithForEach_Merge_ElementIsBase(t *testing.T) {
 		t.Fatalf("Expected 1 action, got %d", len(actions))
 	}
 
-	var merged map[string]interface{}
+	var merged map[string]any
 	if err := json.Unmarshal(actions[0].NATS.RawPayload, &merged); err != nil {
 		t.Fatalf("Failed to parse: %v", err)
 	}
@@ -2084,10 +2081,10 @@ func TestProcessNATSActionWithForEach_Merge_InvalidOverlay(t *testing.T) {
 		Payload: `not valid json {id}`,
 	}
 
-	data := map[string]interface{}{
-		"items": []interface{}{
-			map[string]interface{}{"id": "a"},
-			map[string]interface{}{"id": "b"},
+	data := map[string]any{
+		"items": []any{
+			map[string]any{"id": "a"},
+			map[string]any{"id": "b"},
 		},
 	}
 	context := newTemplateTestContext(data, "test.subject", time.Now())
@@ -2732,12 +2729,12 @@ func TestOutcome_EmptyAndAll(t *testing.T) {
 // --- KV-Sourced forEach Tests ---
 
 func TestProcessNATSForEach_KVSourcedArray(t *testing.T) {
-	kvData := map[string]map[string]interface{}{
+	kvData := map[string]map[string]any{
 		"config": {
-			"devices": []interface{}{
-				map[string]interface{}{"id": "dev-1", "name": "Front Door"},
-				map[string]interface{}{"id": "dev-2", "name": "Back Door"},
-				map[string]interface{}{"id": "dev-3", "name": "Garage"},
+			"devices": []any{
+				map[string]any{"id": "dev-1", "name": "Front Door"},
+				map[string]any{"id": "dev-2", "name": "Back Door"},
+				map[string]any{"id": "dev-3", "name": "Garage"},
 			},
 		},
 	}
@@ -2750,7 +2747,7 @@ func TestProcessNATSForEach_KVSourcedArray(t *testing.T) {
 	}
 
 	// Message payload doesn't need to contain the array — it comes from KV
-	data := map[string]interface{}{"source": "scheduler"}
+	data := map[string]any{"source": "scheduler"}
 	context := newKVTemplateTestContext(data, kvData)
 
 	actions, err := processor.processNATSActionWithForEach(action, context)
@@ -2779,11 +2776,11 @@ func TestProcessNATSForEach_KVSourcedArray(t *testing.T) {
 }
 
 func TestProcessScheduleForEach_KVSourcedArray(t *testing.T) {
-	kvData := map[string]map[string]interface{}{
+	kvData := map[string]map[string]any{
 		"config": {
-			"doors": []interface{}{
-				map[string]interface{}{"id": "front", "zone": "main"},
-				map[string]interface{}{"id": "back", "zone": "service"},
+			"doors": []any{
+				map[string]any{"id": "front", "zone": "main"},
+				map[string]any{"id": "back", "zone": "service"},
 			},
 		},
 	}
@@ -2830,7 +2827,7 @@ func TestProcessScheduleForEach_KVSourcedArray(t *testing.T) {
 
 func TestProcessForEach_KVSourcedArray_NotFound(t *testing.T) {
 	// Empty KV — no data
-	processor := setupTestProcessorWithKV(map[string]map[string]interface{}{})
+	processor := setupTestProcessorWithKV(map[string]map[string]any{})
 
 	action := &NATSAction{
 		ForEach: "{@kv.config.missing_key}",
@@ -2838,8 +2835,8 @@ func TestProcessForEach_KVSourcedArray_NotFound(t *testing.T) {
 		Payload: `{"id": "{id}"}`,
 	}
 
-	data := map[string]interface{}{}
-	kvData := map[string]map[string]interface{}{}
+	data := map[string]any{}
+	kvData := map[string]map[string]any{}
 	context := newKVTemplateTestContext(data, kvData)
 
 	_, err := processor.processNATSActionWithForEach(action, context)
@@ -2852,9 +2849,9 @@ func TestProcessForEach_KVSourcedArray_NotFound(t *testing.T) {
 }
 
 func TestProcessForEach_KVSourcedArray_NotArray(t *testing.T) {
-	kvData := map[string]map[string]interface{}{
+	kvData := map[string]map[string]any{
 		"config": {
-			"settings": map[string]interface{}{"key": "value"}, // object, not array
+			"settings": map[string]any{"key": "value"}, // object, not array
 		},
 	}
 	processor := setupTestProcessorWithKV(kvData)
@@ -2865,7 +2862,7 @@ func TestProcessForEach_KVSourcedArray_NotArray(t *testing.T) {
 		Payload: `{"key": "{key}"}`,
 	}
 
-	context := newKVTemplateTestContext(map[string]interface{}{}, kvData)
+	context := newKVTemplateTestContext(map[string]any{}, kvData)
 
 	_, err := processor.processNATSActionWithForEach(action, context)
 	if err == nil {
@@ -2877,12 +2874,12 @@ func TestProcessForEach_KVSourcedArray_NotArray(t *testing.T) {
 }
 
 func TestProcessForEach_KVSourcedArray_WithFilter(t *testing.T) {
-	kvData := map[string]map[string]interface{}{
+	kvData := map[string]map[string]any{
 		"config": {
-			"doors": []interface{}{
-				map[string]interface{}{"id": "front", "enabled": true},
-				map[string]interface{}{"id": "back", "enabled": false},
-				map[string]interface{}{"id": "garage", "enabled": true},
+			"doors": []any{
+				map[string]any{"id": "front", "enabled": true},
+				map[string]any{"id": "back", "enabled": false},
+				map[string]any{"id": "garage", "enabled": true},
 			},
 		},
 	}
@@ -2900,7 +2897,7 @@ func TestProcessForEach_KVSourcedArray_WithFilter(t *testing.T) {
 		Payload: `{"door": "{id}"}`,
 	}
 
-	context := newKVTemplateTestContext(map[string]interface{}{}, kvData)
+	context := newKVTemplateTestContext(map[string]any{}, kvData)
 
 	actions, err := processor.processNATSActionWithForEach(action, context)
 	if err != nil {
@@ -2920,13 +2917,13 @@ func TestProcessForEach_KVSourcedArray_WithFilter(t *testing.T) {
 }
 
 func TestProcessForEach_KVSourcedArray_WithJsonPath(t *testing.T) {
-	kvData := map[string]map[string]interface{}{
+	kvData := map[string]map[string]any{
 		"config": {
-			"building": map[string]interface{}{
+			"building": map[string]any{
 				"name": "HQ",
-				"doors": []interface{}{
-					map[string]interface{}{"id": "front"},
-					map[string]interface{}{"id": "back"},
+				"doors": []any{
+					map[string]any{"id": "front"},
+					map[string]any{"id": "back"},
 				},
 			},
 		},
@@ -2940,7 +2937,7 @@ func TestProcessForEach_KVSourcedArray_WithJsonPath(t *testing.T) {
 		Payload: `{"door": "{id}", "command": "unlock"}`,
 	}
 
-	context := newKVTemplateTestContext(map[string]interface{}{}, kvData)
+	context := newKVTemplateTestContext(map[string]any{}, kvData)
 
 	actions, err := processor.processNATSActionWithForEach(action, context)
 	if err != nil {

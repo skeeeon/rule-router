@@ -1,4 +1,3 @@
-// file: cmd/rule-cli/cmd/check.go
 package cmd
 
 import (
@@ -24,7 +23,7 @@ and displays the fully rendered action(s) if the rule matches.`,
 			return cmd.Help()
 		}
 
-		log := logger.NewNopLogger()
+		log := logger.NewNop()
 		testRunner := tester.New(log, false, 0)
 
 		return testRunner.QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath, ruleIndex)

@@ -1,9 +1,8 @@
-// file: internal/authmgr/providers/oauth2.go
-
 package providers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -49,8 +48,8 @@ func (p *OAuth2Provider) ID() string {
 	return p.id
 }
 
-// GetToken authenticates and returns an access token
-func (p *OAuth2Provider) GetToken(ctx context.Context) (string, error) {
+// Token authenticates and returns an access token
+func (p *OAuth2Provider) Token(ctx context.Context) (string, error) {
 	// Use the library to handle OAuth2 flow
 	token, err := p.config.Token(ctx)
 	if err != nil {
@@ -58,7 +57,7 @@ func (p *OAuth2Provider) GetToken(ctx context.Context) (string, error) {
 	}
 
 	if token.AccessToken == "" {
-		return "", fmt.Errorf("received empty access token")
+		return "", errors.New("received empty access token")
 	}
 
 	// Cache the expiry time for efficient RefreshInterval() calls
@@ -72,7 +71,7 @@ func (p *OAuth2Provider) GetToken(ctx context.Context) (string, error) {
 // RefreshInterval returns how often to re-authenticate
 // For OAuth2, we use the token expiry minus the refresh buffer
 func (p *OAuth2Provider) RefreshInterval() time.Duration {
-	// Check if we have a cached expiry from a previous GetToken call
+	// Check if we have a cached expiry from a previous Token call
 	p.mu.RLock()
 	cachedExpiry := p.cachedExpiry
 	p.mu.RUnlock()
@@ -92,7 +91,7 @@ func (p *OAuth2Provider) RefreshInterval() time.Duration {
 		return refreshInterval
 	}
 
-	// No cached expiry yet (first call before GetToken)
+	// No cached expiry yet (first call before Token)
 	// Return refresh buffer as initial interval
 	// This will be updated after the first authentication
 	return p.refreshBuffer
