@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-08-12
+
 ### Fixes
 - **A failed local KV cache reported itself as initialized** — `InitializeKVCache` logged `failed to subscribe to KV changes` and then returned `nil`, and `subscribeToKVChanges` beneath it returned `nil` whether one bucket failed or all of them did, making the error check above it dead code. The caller's fail-soft branch — `continuing with direct NATS KV access` — was therefore unreachable, and startup logged `local KV cache initialized successfully` even when not a single watcher had been established. Nothing was ever wrong with the *results* (`KVContext` reads straight from NATS KV whenever the cache misses, so `{@kv.bucket.key}` stayed correct), but the process ran without the cache while claiming otherwise, and the reconnect handler only cycles watchers that already exist, so the state was permanent. A total watch failure is now returned as an error naming the buckets, and the cache is switched off rather than left enabled and permanently empty. A *partial* failure is still non-fatal — the buckets that did attach keep their speedup, the rest read through — but the warning now says the fallback lasts for the life of the process. Duplicate "initializing"/"initialized successfully" log lines between the broker and its caller are gone.
 - **A malformed `mockTime` produced confidently wrong results in both testers** — the browser rule tester and `rule-cli check` both parsed the mock timestamp as `if t, err := time.Parse(...); err == nil`, so anything that was not RFC3339 was discarded and the rule was evaluated against the *real* clock — with the outcome reported as a normal, successful result. A rule gated on `{@time.hour}` or `{@day.name}` would simply appear not to match, for a reason the author had no way to see. Both paths now report the parse failure instead. The web UI validates the field client-side already, so this is a backstop there; for `rule-cli` it was reachable directly.
@@ -234,6 +236,7 @@
 - Signature verification
 - Rule-cli utility
 
+[0.18.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.18.0
 [0.17.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.17.0
 [0.16.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.16.0
 [0.15.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.15.0
