@@ -2,7 +2,9 @@ package rule
 
 import (
 	"bytes"
+	"fmt"
 	"net/textproto"
+	"net/url"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -20,6 +22,19 @@ const (
 	prefixKV        = "@kv."
 	prefixSignature = "@signature."
 )
+
+// contentTypeForm is the media type of a URL-encoded form body.
+//
+// This is the only body format besides JSON that the engine decodes, and the
+// bar for adding a third is deliberately high: a decoder belongs here only if
+// it needs no configuration and yields the map[string]any shape the engine
+// already uses. Form encoding clears that bar with url.ParseQuery and nothing
+// else. XML (element/attribute/namespace ambiguity), multipart (files are not
+// fields), CSV (header and delimiter policy), and Protobuf/Avro (schema
+// registry) all fail it — each would drag configuration or a subsystem into
+// the evaluation path. Decode formats that outlive any one vendor; never
+// decode a vendor's schema.
+const contentTypeForm = "application/x-www-form-urlencoded"
 
 // wrapIfNeeded wraps primitives and arrays to ensure root message is always an object.
 // Objects are passed through unchanged for backward compatibility.
@@ -88,6 +103,49 @@ type EvaluationContext struct {
 	Metrics *metrics.Metrics
 }
 
+// isFormContentType reports whether ct names a URL-encoded form body, ignoring
+// any media type parameters such as "; charset=UTF-8".
+func isFormContentType(ct string) bool {
+	mediaType, _, _ := strings.Cut(ct, ";")
+	return strings.EqualFold(strings.TrimSpace(mediaType), contentTypeForm)
+}
+
+// decodeForm parses an application/x-www-form-urlencoded body into a message
+// object.
+//
+// Every value stays a string. Form encoding carries no types, and inferring
+// them corrupts data — a PIN of "007" would become 7. Nothing downstream needs
+// the inference: Evaluator.toFloat parses strings for the numeric operators and
+// compareValues stringifies the other side for eq, so conditions written
+// against a form field behave the same as against a JSON one.
+//
+// A key repeated in the body becomes an array, so {tag.0} and forEach traverse
+// it exactly like a JSON array. This differs from a flat @-namespace such as
+// @header, which has no traversal behind it and keeps only the first value.
+func decodeForm(payload []byte) (map[string]any, error) {
+	values, err := url.ParseQuery(string(payload))
+	if err != nil {
+		return nil, fmt.Errorf("parsing form body: %w", err)
+	}
+
+	msg := make(map[string]any, len(values))
+	for k, v := range values {
+		switch len(v) {
+		case 0:
+			msg[k] = ""
+		case 1:
+			msg[k] = v[0]
+		default:
+			items := make([]any, len(v))
+			for i, s := range v {
+				items[i] = s
+			}
+			msg[k] = items
+		}
+	}
+	return msg, nil
+}
+
 // NewEvaluationContext creates a new evaluation context
 // Either subjectCtx OR httpCtx should be provided (not both)
 func NewEvaluationContext(
@@ -100,11 +158,44 @@ func NewEvaluationContext(
 	sigVerification *SignatureVerification,
 	logger *logger.Logger,
 ) (*EvaluationContext, error) {
-	// Parse payload as generic interface to handle all JSON types.
-	// UseNumber() preserves numeric precision by decoding numbers as json.Number
-	// instead of float64, preventing silent data corruption on large integers.
-	var raw any
-	if len(payload) > 0 {
+	// Canonicalize header keys at the rule-engine boundary so lookups are case-insensitive
+	// regardless of how the caller constructed the map (extraction sites, tests, WASM).
+	// This runs before the payload decode, which reads Content-Type — a caller
+	// spelling it "content-type" must select the same decoder.
+	if len(headers) > 0 {
+		canonical := make(map[string]string, len(headers))
+		for k, v := range headers {
+			canonical[textproto.CanonicalMIMEHeaderKey(k)] = v
+		}
+		headers = canonical
+	}
+
+	var msgData map[string]any
+	switch {
+	case len(payload) == 0:
+		msgData = wrapIfNeeded(nil)
+
+	case isFormContentType(headers["Content-Type"]):
+		// Fail closed. url.ParseQuery returns the pairs it managed to read
+		// alongside its error, and evaluating a rule against a silently
+		// truncated field set is worse than rejecting the message: a dropped
+		// field reads as absent, which can flip a condition rather than raise
+		// one. A body without the header still takes the JSON path below, so
+		// this decoder is opt-in by the sender.
+		decoded, err := decodeForm(payload)
+		if err != nil {
+			logger.Error("failed to decode form payload",
+				"error", err,
+				"payloadSize", len(payload))
+			return nil, err
+		}
+		msgData = decoded
+
+	default:
+		// Parse payload as generic interface to handle all JSON types.
+		// UseNumber() preserves numeric precision by decoding numbers as json.Number
+		// instead of float64, preventing silent data corruption on large integers.
+		var raw any
 		dec := json.NewDecoder(bytes.NewReader(payload))
 		dec.UseNumber()
 		if err := dec.Decode(&raw); err != nil {
@@ -120,19 +211,9 @@ func NewEvaluationContext(
 				return nil, err
 			}
 		}
-	}
 
-	// Wrap if needed to ensure msgData is always an object
-	msgData := wrapIfNeeded(raw)
-
-	// Canonicalize header keys at the rule-engine boundary so lookups are case-insensitive
-	// regardless of how the caller constructed the map (extraction sites, tests, WASM).
-	if len(headers) > 0 {
-		canonical := make(map[string]string, len(headers))
-		for k, v := range headers {
-			canonical[textproto.CanonicalMIMEHeaderKey(k)] = v
-		}
-		headers = canonical
+		// Wrap if needed to ensure msgData is always an object
+		msgData = wrapIfNeeded(raw)
 	}
 
 	ctx := &EvaluationContext{

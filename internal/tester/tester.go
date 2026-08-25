@@ -905,7 +905,7 @@ func (t *Tester) printScaffoldTips(features RuleFeatures) {
 
 // QuickCheck runs the quick check mode for interactive testing.
 // ruleIndex selects which rule in a multi-rule file (-1 = auto, works for single-rule files).
-func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath string, ruleIndex int) error {
+func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath string, ruleIndex int, headers map[string]string) error {
 	rules, err := loadSingleRuleFile(rulePath)
 	if err != nil || len(rules) == 0 {
 		return fmt.Errorf("could not load or parse rule file %s: %w", rulePath, err)
@@ -931,8 +931,13 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 		fmt.Printf("Using rule %d: %s\n\n", ruleIndex, describeTrigger(&r))
 	}
 
-	// Setup test config based on the actual rule trigger
-	testConfig := &Config{Headers: make(map[string]string)}
+	// Setup test config based on the actual rule trigger. Headers come from
+	// --header so a quick check can exercise header-driven behavior, including
+	// the Content-Type that selects the payload decoder.
+	if headers == nil {
+		headers = make(map[string]string)
+	}
+	testConfig := &Config{Headers: headers}
 	if r.Trigger.NATS != nil {
 		testConfig.MockTrigger.NATS = r.Trigger.NATS
 		if subjectOverride != "" {

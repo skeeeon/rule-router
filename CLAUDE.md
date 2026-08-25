@@ -62,6 +62,13 @@ Template syntax:
 - System functions: `{@timestamp()}`, `{@uuid4()}`, `{@uuid7()}`
 - Time context (pre-computed per evaluation): `{@time.hour}`, `{@time.minute}`, `{@day.name}`, `{@day.number}`, `{@date.year}`, `{@date.month}`, `{@date.day}`, `{@date.iso}`, `{@timestamp.unix}`, `{@timestamp.iso}`
 
+Body decoding (`context.go::NewEvaluationContext`) is the single payload→fields boundary — the gateway, `rule-cli`, and WASM all route through it. It picks a decoder from the canonicalized `Content-Type` header (canonicalization therefore runs *before* the decode):
+
+- `application/x-www-form-urlencoded` → `decodeForm`. Values stay strings (inferring types would turn a PIN of `007` into `7`; `Evaluator.toFloat` parses strings, so numeric operators work anyway), a repeated key becomes an array, and a malformed body is an error rather than a partial parse — a silently dropped field reads as absent and can flip a condition instead of raising one. A form body sent *without* the header still takes the JSON path, so the decoder is opt-in by the sender.
+- anything else → JSON with `UseNumber()`, falling back to a raw string for valid-UTF-8 non-JSON.
+
+**The bar for a third decoder is deliberately high** and is written above `contentTypeForm`: it must need no configuration and yield the existing `map[string]any` shape. XML, multipart, CSV, and Protobuf/Avro all fail that test. Decode formats that outlive any one vendor; never decode a vendor's schema.
+
 ### Broker (`internal/broker/`)
 
 NATS connection and subscription management:
@@ -89,7 +96,7 @@ Each feature is a separate `lifecycle.Application` wired up by the AppBuilder:
 - **Deferred** (`internal/deferred/`) — the execution half of a trailing-edge action throttle. See Throttle below.
 - **HTTPClient** (`internal/httpclient/`) — shared HTTP client (with retry/backoff) used by GatewayApp and SchedulerApp
 - **Tester** (`internal/tester/`) — shared rule-evaluation harness used by both `rule-cli check` and the WASM build
-- **CLI helpers** (`internal/cli/`) — prompt, renderer, and validator helpers backing `rule-cli`
+- **CLI helpers** (`internal/cli/`) — prompt, renderer, and validator helpers backing `rule-cli`. `rule-cli check` takes repeatable `--header 'Name: value'` so a quick check can set the `Content-Type` that selects the payload decoder; `rule-cli test` reads the same headers from `_test_config.json`
 - **Auth Manager** (`internal/authmgr/`, with providers under `internal/authmgr/providers/`) — OAuth2 / custom-HTTP token provider layer backing `cmd/nats-auth-manager`
 
 ### Configuration
