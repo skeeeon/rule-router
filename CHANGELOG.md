@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Features
+- **Form-encoded request bodies decode into fields** — a request sent with `Content-Type: application/x-www-form-urlencoded` is now parsed into normal message fields, so `{device_id}` works exactly as it does for JSON. Previously the body failed JSON parsing and fell through to the raw-string path, arriving as `{"@value": "device_id=9876&user_id=42"}` with no way to address a field. This is what HTML form posts and many embedded and industrial devices send. Decoding lives in `NewEvaluationContext`, the single payload→fields boundary, so the gateway, `rule-cli check`, and the browser tester all pick it up.
+  - Values stay strings. Types are never inferred, because inference corrupts data — a PIN of `007` would become `7`. Nothing downstream needs it: `Evaluator.toFloat` parses strings for the numeric operators and `compareValues` stringifies the other side for `eq`, so a condition written against a form field behaves identically to one against JSON.
+  - A key repeated in the body becomes an array, reachable through the traverser and `forEach`.
+  - A malformed body is an **error**, not the partial parse `url.ParseQuery` returns. This diverges from the lenient JSON path deliberately: a silently dropped field reads as absent and can flip a condition rather than raise one.
+  - Decoding is opt-in by the sender — a form body sent without the header still takes the JSON path. Header canonicalization now runs *before* the payload decode, so a caller spelling it `content-type` selects the same decoder.
+  - **The bar for a third decoder is deliberately high**, and is written down above `contentTypeForm`: no configuration, and the existing `map[string]any` shape. XML (element/attribute/namespace ambiguity), multipart (files are not fields), CSV (header and delimiter policy), and Protobuf/Avro (schema registry) all fail it.
+- **Query parameters via `{@query.name}`** — HTTP rules can read the request URL's query string. Names are matched verbatim (HTTP defines query names as case-sensitive, unlike headers), values are strings that coerce in conditions like header values do, and a repeated name keeps only its first value.
+  - Query values are **never merged into the message object**. Query data is attacker-supplied in a way an HMAC-gated body is not, so letting `?user_id=1` shadow a body field would be a privilege-escalation path; a rule that wants a query value has to name it.
+  - The query never affects rule matching or the Prometheus `path` label — both key off `r.URL.Path` alone.
+  - `HTTPRequestContext` gained a `Query` field of the new named type `rule.QueryParams`, so it cannot be transposed with the headers argument at a `ProcessHTTP` call site. **Breaking for embedders:** `Processor.ProcessHTTP` and `NewHTTPRequestContext` each take one additional argument.
+
+### Improvements
+- **`rule-cli check` gained `--header` and `--query`** — it previously hardcoded empty headers, so there was no way to exercise a header-driven condition, and no way to reach the form decoder at all. `--header 'Name: value'` is repeatable; `--query` takes a raw query string and tolerates a leading `?` so it can be pasted from a URL. The command also gained a worked `Example:` block covering both, plus KV mocks and multi-rule selection.
+- **New `http-form-webhook` rule template** (`rule-cli new --template=http-form-webhook`) covering a form body and a query parameter together, with the payload-quoting rule for optional fields called out.
+- **Scaffolded HTTP tests seed `Content-Type`** in `_test_config.json` so the body decoder is discoverable in the file being edited, and scaffold tips now mention `headers`, `query`, and that a message file may hold a form body or plain text rather than JSON.
+- **Documentation** — new *Request body formats* section in the gateway guide, a *Query parameters* section in the system-variables reference, two troubleshooting entries (empty form fields, empty query parameters), two examples in `rules/http/webhooks.yaml`, and `{@query.name}` added to the web rule-builder's autocomplete and help modal. The browser tester gained a **Query Params** field on HTTP triggers.
+
+### Fixes
+- **Stale documentation links** — six links in `cmd/rule-cli/README.md` and `cmd/rule-router/README.md` pointed at pre-renumbering doc filenames (`docs/02-system-variables.md`, `docs/05-security.md`, and so on) that have not existed for some time. The `rule-cli` template list in the README was also missing `nats-core-mode`, and the troubleshooting guide's `rule-cli check` example used a stdin-and-positional-argument form the command has never accepted.
+
 ## [0.18.0] - 2026-08-12
 
 ### Fixes

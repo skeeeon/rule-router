@@ -22,13 +22,13 @@ The platform is designed for performance, security, and flexibility in event-dri
 *   **Array Processing**: Native support for batch message processing with array operators and forEach iteration.
 *   **Primitive Message Support**: Handle strings, numbers, arrays, and objects at the root - perfect for IoT protocols and simple formats.
 *   **Bidirectional HTTP Gateway**:
-    *   **Inbound**: "Fire-and-forget" webhook ingestion returns `200 OK` immediately for maximum compatibility. Optional per-rule **HMAC verification** authenticates provider webhooks (GitHub, Shopify, …) as a fail-closed gate — a bad/missing signature returns `401` before the rule fires.
+    *   **Inbound**: "Fire-and-forget" webhook ingestion returns `200 OK` immediately for maximum compatibility. Optional per-rule **HMAC verification** authenticates provider webhooks (GitHub, Shopify, …) as a fail-closed gate — a bad/missing signature returns `401` before the rule fires. JSON and `application/x-www-form-urlencoded` bodies both decode into addressable fields, and query parameters are available as `{@query.name}` in their own namespace.
     *   **Outbound**: "ACK-on-Success" API calls with configurable retries and exponential backoff ensure reliable delivery.
     *   **Synchronous responses**: An HTTP rule can return an evaluated/enriched payload as the response (`respond` action), or bridge the request through NATS request/reply (`request: true`) and return the reply.
 *   **NATS Request/Reply**: Answer requests on a subject via `msg.Respond` (`reply: true` trigger + `respond` action), with optional queue-group load balancing — exposing rule-driven services over core NATS.
 *   **NATS JetStream Native**: Built on JetStream pull consumers for durable, scalable, and resilient message processing.
 *   **Powerful Rule Engine**:
-    *   **Dynamic Conditions**: Evaluate message payloads, headers, NATS subjects, and HTTP paths.
+    *   **Dynamic Conditions**: Evaluate message payloads, headers, NATS subjects, HTTP paths, and query parameters.
     *   **Templating**: Construct new message payloads, subjects, URLs, and headers using data from the trigger.
     *   **Key-Value Integration**: Enrich messages with data from NATS KV stores, with an optional local cache for a ~25x performance boost.
     *   **KV Rule Store**: Optionally store rules in a NATS KV bucket with automatic hot-reload on any change. Push rules with `rule-cli kv push` for a GitOps workflow.

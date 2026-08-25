@@ -2169,7 +2169,7 @@ func TestProcessor_TriggerThrottle_HTTP(t *testing.T) {
 
 	payload := []byte(`{"action": "push"}`)
 
-	actions1, err := actionsOf(processor.ProcessHTTP("/webhooks/github", "POST", payload, nil))
+	actions1, err := actionsOf(processor.ProcessHTTP("/webhooks/github", "POST", payload, nil, nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2177,7 +2177,7 @@ func TestProcessor_TriggerThrottle_HTTP(t *testing.T) {
 		t.Fatal("first message should produce actions")
 	}
 
-	actions2, err := actionsOf(processor.ProcessHTTP("/webhooks/github", "POST", payload, nil))
+	actions2, err := actionsOf(processor.ProcessHTTP("/webhooks/github", "POST", payload, nil, nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

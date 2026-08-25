@@ -692,7 +692,7 @@ func (p *Processor) processNATSFiltered(subject string, payload []byte, headers 
 }
 
 // ProcessHTTP processes an HTTP request through the rule engine
-func (p *Processor) ProcessHTTP(path, method string, payload []byte, headers map[string]string) (Outcome, error) {
+func (p *Processor) ProcessHTTP(path, method string, payload []byte, headers map[string]string, query QueryParams) (Outcome, error) {
 	p.logger.Debug("processing HTTP request", "path", path, "method", method, "payloadSize", len(payload))
 
 	rules := p.findHTTPRules(path, method)
@@ -704,7 +704,7 @@ func (p *Processor) ProcessHTTP(path, method string, payload []byte, headers map
 		payload,
 		headers,
 		nil,
-		NewHTTPRequestContext(path, method),
+		NewHTTPRequestContext(path, method, query),
 		p.timeProvider.CurrentContext(),
 		p.kvContext,
 		p.sigVerification,

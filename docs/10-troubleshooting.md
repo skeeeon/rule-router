@@ -37,7 +37,8 @@ Look in the application logs at startup for messages like `"no stream found for 
 Use `rule-cli check` to evaluate a rule against a sample message offline:
 
 ```bash
-echo '{"temperature": 35}' | rule-cli check rules/sensors/temp.yaml --subject sensors.temperature
+echo '{"temperature": 35}' > msg.json
+rule-cli check --rule rules/sensors/temp.yaml --message msg.json --subject sensors.temperature
 ```
 
 This runs the real rule engine and shows whether each condition passed or failed and what the final action would be. Most subtle bugs (type mismatch, missing field, wrong operator) surface here.
@@ -52,6 +53,38 @@ Two specific traps:
 
 - **A trigger throttle on a rule with conditions.** The window is consumed by whichever message arrives first, match or not, and later messages are never evaluated. A reading that would have alerted gets dropped because a boring one got there first. Move the throttle to the action.
 - **`mode: trailing` looks like nothing fired.** It did not fire *yet* — the action is held until the window closes. Watch `throttle_deferred_total{outcome="emitted"}` rather than expecting an immediate publish.
+
+## Form-encoded webhook: every field is empty
+
+A form body reaches the rule as fields only when the request carries `Content-Type: application/x-www-form-urlencoded`. Without that header the whole body is treated as one raw string, so `{device_id}` renders empty and any condition on it fails. Confirm what the sender is actually sending — some devices omit the header, and there is no sniffing fallback by design.
+
+Reproduce it offline both ways:
+
+```bash
+printf 'device_id=9876&user_id=42' > body.form
+
+# Decoded into fields
+rule-cli check --rule idface.yaml --message body.form \
+  --header 'Content-Type: application/x-www-form-urlencoded'
+
+# Same bytes, no header — one raw string, conditions fail
+rule-cli check --rule idface.yaml --message body.form
+```
+
+Two adjacent symptoms:
+
+- **The rendered payload is invalid JSON.** An unresolved variable renders as an empty string, so `"card": {card_value}` becomes `"card": ` when the sender omits that field. Quote every optional field: `"card": "{card_value}"`.
+- **The request returns 500 with `parsing form body`.** The body has a malformed percent-escape. This is rejected rather than partially parsed on purpose — a silently dropped field reads as absent and can flip a condition instead of raising an error.
+
+## Query parameter is always empty
+
+Check three things, in this order:
+
+1. **Case.** Query names are matched verbatim — `{@query.Tenant}` will not find `?tenant=acme`. (Headers are the opposite; those are case-insensitive.)
+2. **Namespace.** Query values are *only* reachable via `{@query.name}`. They are deliberately never merged into the message, so `{tenant}` reads the body, not the URL.
+3. **You are testing with a query string at all.** `rule-cli check` sends none unless you pass `--query 'tenant=acme'`; the web tester needs its **Query Params** field filled in.
+
+Note that a query string never affects *routing* — if the path matches, the rule fires regardless of the query, and a rule cannot be selected by query parameter.
 
 ## KV lookup returns empty
 

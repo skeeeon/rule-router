@@ -19,6 +19,7 @@ import (
 const (
 	prefixMsg       = "@msg."
 	prefixHeader    = "@header."
+	prefixQuery     = "@query."
 	prefixKV        = "@kv."
 	prefixSignature = "@signature."
 )
@@ -331,6 +332,22 @@ func (c *EvaluationContext) resolveSystemField(path string) (any, bool) {
 		headerName := textproto.CanonicalMIMEHeaderKey(path[len(prefixHeader):])
 		if c.Headers != nil {
 			if value, ok := c.Headers[headerName]; ok {
+				return value, true
+			}
+		}
+		return nil, false
+	}
+
+	// Query parameters (HTTP context). Unlike headers these are case-sensitive,
+	// which is what HTTP says, so the name is looked up verbatim. Values stay
+	// strings for the same reason form fields do — conditions coerce them.
+	//
+	// Query data is attacker-supplied in a way a signed or HMAC-gated body is
+	// not, so it lives in its own namespace and never merges into the message.
+	// A rule that wants a query value has to name it.
+	if strings.HasPrefix(path, prefixQuery) {
+		if c.HTTP != nil && c.HTTP.Query != nil {
+			if value, ok := c.HTTP.Query[path[len(prefixQuery):]]; ok {
 				return value, true
 			}
 		}

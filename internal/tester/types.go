@@ -12,6 +12,7 @@ type Config struct {
 	MockTrigger   MockTrigger          `json:"mockTrigger"`
 	MockTime      string               `json:"mockTime,omitempty"`
 	Headers       map[string]string    `json:"headers,omitempty"`
+	Query         rule.QueryParams     `json:"query,omitempty"`
 	MockSignature *MockSignatureConfig `json:"mockSignature,omitempty"`
 }
 

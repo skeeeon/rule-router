@@ -58,6 +58,7 @@ The core of the system. Key types and flow:
 Template syntax:
 - Message fields: `{field}`, plus nested paths via `{data.device.id}`
 - Subject tokens: `{@subject.0}`, `{@subject.1}`, …
+- HTTP request: `{@path}`, `{@path.0}`, `{@path.count}`, `{@method}`, `{@header.X-Name}` (case-insensitive), `{@query.name}` (case-sensitive)
 - KV lookups: `{@kv.bucket.key}` (supports nested template substitution inside the key)
 - System functions: `{@timestamp()}`, `{@uuid4()}`, `{@uuid7()}`
 - Time context (pre-computed per evaluation): `{@time.hour}`, `{@time.minute}`, `{@day.name}`, `{@day.number}`, `{@date.year}`, `{@date.month}`, `{@date.day}`, `{@date.iso}`, `{@timestamp.unix}`, `{@timestamp.iso}`
@@ -68,6 +69,8 @@ Body decoding (`context.go::NewEvaluationContext`) is the single payload→field
 - anything else → JSON with `UseNumber()`, falling back to a raw string for valid-UTF-8 non-JSON.
 
 **The bar for a third decoder is deliberately high** and is written above `contentTypeForm`: it must need no configuration and yield the existing `map[string]any` shape. XML, multipart, CSV, and Protobuf/Avro all fail that test. Decode formats that outlive any one vendor; never decode a vendor's schema.
+
+Query parameters live in their own `{@query.name}` namespace on `HTTPRequestContext.Query` (type `rule.QueryParams` — named so it cannot be transposed with the headers argument at a `ProcessHTTP` call site). They **never merge into the message object**: query data is attacker-supplied in a way an HMAC-gated body is not, so letting `?user_id=1` shadow a body field would be a privilege-escalation path. Names are matched verbatim (HTTP says query names are case-sensitive, unlike headers), only the first value of a repeated name is kept, and the query never affects rule matching or the metrics label — both key off `r.URL.Path` alone. `rule-cli check` takes `--query 'a=1&b=2'`; the web tester has a Query Params field on HTTP triggers.
 
 ### Broker (`internal/broker/`)
 

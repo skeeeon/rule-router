@@ -48,17 +48,19 @@ First, list the available templates:
 Available templates:
   - http-bridge
   - http-forEach
-  - http-inbound
+  - http-form-webhook
   - http-inbound-hmac
+  - http-inbound
   - http-outbound
   - http-respond
   - nats-array-operators
   - nats-basic
+  - nats-core-mode
   - nats-forEach
   - nats-kv-enrichment
   - nats-reply
-  - nats-throttle
   - nats-throttle-trailing
+  - nats-throttle
   - schedule-basic
   - schedule-poll
   - signature-verification
@@ -236,13 +238,33 @@ rule-cli check --rule rules/kv-rule.yaml --message msg.json --kv-mock test-data/
 
 # Check a specific rule in a multi-rule file (0-based index)
 rule-cli check --rule rules/webhooks.yaml --message msg.json --rule-index 2
+
+# Set request headers to resolve {@header.Name} in conditions (repeatable)
+rule-cli check --rule webhook.yaml --message msg.json \
+  --header 'X-GitHub-Event: pull_request'
+
+# Set query parameters to resolve {@query.name} — paste straight from a URL
+rule-cli check --rule webhook.yaml --message msg.json --query '?tenant=acme&page=2'
 ```
 
 For multi-rule files, omitting `--rule-index` will list all rules with their triggers so you can pick one.
 
+#### Testing non-JSON bodies
+
+The `--message` file is sent **verbatim** as the request body, so it can hold a URL-encoded form or plain text as well as JSON. `Content-Type` selects the decoder:
+
+```bash
+printf 'device_id=9876&user_id=42&user_name=Neal+Caffrey' > body.form
+
+rule-cli check --rule idface.yaml --message body.form \
+  --header 'Content-Type: application/x-www-form-urlencoded'
+```
+
+Without that header the same bytes are treated as one raw string (reachable as `{@value}`) rather than as fields, which is the usual reason a form-triggered rule appears not to match. See [Request body formats](../../docs/02-gateway.md#request-body-formats).
+
 ### `kv push` Command
 
-Push validated rule files to a NATS KV bucket for use with the [KV Rule Store](../../docs/06-kv-rule-store.md) feature.
+Push validated rule files to a NATS KV bucket for use with the [KV Rule Store](../../docs/08-kv-rule-store.md) feature.
 
 ```bash
 # Push all YAML files in a directory
@@ -265,7 +287,7 @@ File paths are converted to dotted KV keys: `sensors/tank.yaml` becomes `sensors
 
 All rules are validated before pushing. If any rule fails validation, the push is aborted.
 
-**» See the [KV Rule Store guide](../../docs/06-kv-rule-store.md) for full details on configuration, GitOps workflows, and how hot-reload works.**
+**» See the [KV Rule Store guide](../../docs/08-kv-rule-store.md) for full details on configuration, GitOps workflows, and how hot-reload works.**
 
 -----
 

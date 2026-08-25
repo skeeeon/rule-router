@@ -24,6 +24,8 @@ const pathInput = ref('')
 const methodInput = ref('POST')
 const showHeaders = ref(false)
 const headersInput = ref('')
+const showQuery = ref(false)
+const queryInput = ref('')
 const showKvMock = ref(false)
 const kvMockInput = ref('')
 const showMockTime = ref(false)
@@ -146,6 +148,17 @@ async function runTest() {
     }
   }
 
+  // Parse the query string if provided. Taken raw so it can be pasted straight
+  // from a URL; a leading "?" is tolerated. Only the first value of a repeated
+  // name is kept, matching the gateway.
+  const query = {}
+  const rawQuery = queryInput.value.trim().replace(/^\?/, '')
+  if (rawQuery) {
+    for (const [name, value] of new URLSearchParams(rawQuery)) {
+      if (!(name in query)) query[name] = value
+    }
+  }
+
   // Validate mock time if provided — the engine silently ignores values it
   // can't parse, so catch the mistake here instead.
   const mockTime = mockTimeInput.value.trim()
@@ -165,6 +178,7 @@ async function runTest() {
       path: pathInput.value,
       method: methodInput.value,
       headers,
+      query,
       kvMock,
       mockTime,
       ruleIndex: props.ruleIndex,
@@ -252,6 +266,9 @@ async function runTest() {
         <label class="checkbox">
           <input type="checkbox" v-model="showHeaders"> Headers
         </label>
+        <label class="checkbox" v-if="triggerType === 'http'">
+          <input type="checkbox" v-model="showQuery"> Query Params
+        </label>
         <label class="checkbox">
           <input type="checkbox" v-model="showKvMock"> Mock KV Data
         </label>
@@ -269,6 +286,18 @@ async function runTest() {
           placeholder='{"X-Api-Key": "abc123"}'
           spellcheck="false"
         ></textarea>
+      </div>
+
+      <div v-if="showQuery && triggerType === 'http'" class="field">
+        <label>Query Params <span class="optional">(query string, for {@query.name})</span></label>
+        <input
+          v-model="queryInput"
+          placeholder="tenant=acme&amp;debug=1"
+          autocapitalize="off"
+          autocorrect="off"
+          autocomplete="off"
+          spellcheck="false"
+        >
       </div>
 
       <div v-if="showKvMock" class="field">

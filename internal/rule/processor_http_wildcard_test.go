@@ -21,7 +21,7 @@ func BenchmarkProcessHTTP_ExactOnly(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		processor.ProcessHTTP("/webhooks/github", "POST", body, nil)
+		processor.ProcessHTTP("/webhooks/github", "POST", body, nil, nil)
 	}
 }
 
@@ -39,7 +39,7 @@ func BenchmarkProcessHTTP_WildcardOnly(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		processor.ProcessHTTP("/webhooks/github/events", "POST", body, nil)
+		processor.ProcessHTTP("/webhooks/github/events", "POST", body, nil, nil)
 	}
 }
 
@@ -58,7 +58,7 @@ func BenchmarkProcessHTTP_MixedExactAndWildcard(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		processor.ProcessHTTP("/webhooks/github", "POST", body, nil)
+		processor.ProcessHTTP("/webhooks/github", "POST", body, nil, nil)
 	}
 }
 
@@ -121,7 +121,7 @@ func TestProcessHTTP_WildcardMatch(t *testing.T) {
 		t.Fatalf("LoadRules: %v", err)
 	}
 
-	actions, err := actionsOf(processor.ProcessHTTP("/webhooks/github/events", "POST", []byte(`{}`), nil))
+	actions, err := actionsOf(processor.ProcessHTTP("/webhooks/github/events", "POST", []byte(`{}`), nil, nil))
 	if err != nil {
 		t.Fatalf("ProcessHTTP: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestProcessHTTP_GreedyWildcardMatch(t *testing.T) {
 
 	cases := []string{"/api/v1", "/api/v1/users", "/api/v1/users/42/posts"}
 	for _, p := range cases {
-		actions, err := actionsOf(processor.ProcessHTTP(p, "GET", []byte(`{}`), nil))
+		actions, err := actionsOf(processor.ProcessHTTP(p, "GET", []byte(`{}`), nil, nil))
 		if err != nil {
 			t.Fatalf("ProcessHTTP(%q): %v", p, err)
 		}
@@ -161,7 +161,7 @@ func TestProcessHTTP_ExactAndWildcardBothFire(t *testing.T) {
 		t.Fatalf("LoadRules: %v", err)
 	}
 
-	actions, err := actionsOf(processor.ProcessHTTP("/webhooks/github", "POST", []byte(`{}`), nil))
+	actions, err := actionsOf(processor.ProcessHTTP("/webhooks/github", "POST", []byte(`{}`), nil, nil))
 	if err != nil {
 		t.Fatalf("ProcessHTTP: %v", err)
 	}
@@ -194,12 +194,12 @@ func TestProcessHTTP_MethodFilterAppliesAcrossExactAndPattern(t *testing.T) {
 		t.Fatalf("LoadRules: %v", err)
 	}
 
-	postActions, _ := actionsOf(processor.ProcessHTTP("/webhooks/github", "POST", []byte(`{}`), nil))
+	postActions, _ := actionsOf(processor.ProcessHTTP("/webhooks/github", "POST", []byte(`{}`), nil, nil))
 	if len(postActions) != 1 || subjectTags(postActions)[0] != "exact-post" {
 		t.Errorf("POST: expected only exact-post, got %v", subjectTags(postActions))
 	}
 
-	getActions, _ := actionsOf(processor.ProcessHTTP("/webhooks/github", "GET", []byte(`{}`), nil))
+	getActions, _ := actionsOf(processor.ProcessHTTP("/webhooks/github", "GET", []byte(`{}`), nil, nil))
 	if len(getActions) != 1 || subjectTags(getActions)[0] != "wildcard-get" {
 		t.Errorf("GET: expected only wildcard-get, got %v", subjectTags(getActions))
 	}
@@ -215,7 +215,7 @@ func TestProcessHTTP_NoMatchOnWildcard(t *testing.T) {
 	}
 
 	// Wrong tail segment.
-	actions, err := actionsOf(processor.ProcessHTTP("/webhooks/github/issues", "POST", []byte(`{}`), nil))
+	actions, err := actionsOf(processor.ProcessHTTP("/webhooks/github/issues", "POST", []byte(`{}`), nil, nil))
 	if err != nil {
 		t.Fatalf("ProcessHTTP: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestProcessHTTP_KVRulesetWithPatterns(t *testing.T) {
 		t.Error("KV pattern should be matched by HasHTTPPath")
 	}
 
-	actions, err := actionsOf(processor.ProcessHTTP("/kv/anything/ok", "POST", []byte(`{}`), nil))
+	actions, err := actionsOf(processor.ProcessHTTP("/kv/anything/ok", "POST", []byte(`{}`), nil, nil))
 	if err != nil {
 		t.Fatalf("ProcessHTTP: %v", err)
 	}
@@ -375,7 +375,7 @@ func TestProcessHTTP_FileAndKVExactAndPatternAllFire(t *testing.T) {
 		Patterns: []*HTTPPatternRule{{Rule: &kvPattern, Matcher: matcher}},
 	}})
 
-	actions, err := actionsOf(processor.ProcessHTTP("/webhooks/github", "POST", []byte(`{}`), nil))
+	actions, err := actionsOf(processor.ProcessHTTP("/webhooks/github", "POST", []byte(`{}`), nil, nil))
 	if err != nil {
 		t.Fatalf("ProcessHTTP: %v", err)
 	}

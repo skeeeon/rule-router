@@ -425,16 +425,25 @@ func (sc *SubjectContext) Field(fieldName string) (any, bool) {
 	return nil, false
 }
 
+// QueryParams holds a request's decoded query string, one value per name.
+//
+// It is a named type rather than a bare map so it cannot be transposed with
+// the headers argument at a ProcessHTTP call site — the two are otherwise
+// identical to the compiler.
+type QueryParams map[string]string
+
 // HTTPRequestContext provides HTTP-specific context for rule evaluation
 type HTTPRequestContext struct {
-	Path       string   // Full path: "/webhooks/github/pr"
-	PathTokens []string // Tokens: ["webhooks", "github", "pr"]
-	Method     string   // HTTP method: "POST", "GET", etc.
-	Count      int      // Token count
+	Path       string      // Full path: "/webhooks/github/pr"
+	PathTokens []string    // Tokens: ["webhooks", "github", "pr"]
+	Method     string      // HTTP method: "POST", "GET", etc.
+	Count      int         // Token count
+	Query      QueryParams // Decoded query string, resolved via {@query.name}
 }
 
-// NewHTTPRequestContext creates an HTTPRequestContext from path and method
-func NewHTTPRequestContext(path, method string) *HTTPRequestContext {
+// NewHTTPRequestContext creates an HTTPRequestContext from path, method, and
+// query parameters. query may be nil for requests without a query string.
+func NewHTTPRequestContext(path, method string, query QueryParams) *HTTPRequestContext {
 	tokens := strings.Split(strings.Trim(path, "/"), "/")
 
 	// Handle root path
@@ -447,6 +456,7 @@ func NewHTTPRequestContext(path, method string) *HTTPRequestContext {
 		PathTokens: tokens,
 		Method:     method,
 		Count:      len(tokens),
+		Query:      query,
 	}
 }
 

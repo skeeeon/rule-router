@@ -48,6 +48,7 @@ onUnmounted(() => { document.removeEventListener('keydown', onEscape) })
             <tr><td class="mono">{@path.0}</td><td>Path segment by index</td></tr>
             <tr><td class="mono">{@method}</td><td>HTTP method</td></tr>
             <tr><td class="mono">{@header.X-Name}</td><td>Request header value</td></tr>
+            <tr><td class="mono">{@query.name}</td><td>Query parameter (case-sensitive)</td></tr>
           </tbody></table>
 
           <h3>Time &amp; Date</h3>

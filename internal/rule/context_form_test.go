@@ -15,7 +15,7 @@ func formContext(t *testing.T, payload string, headers map[string]string) (*Eval
 		[]byte(payload),
 		headers,
 		nil, // subjectCtx
-		NewHTTPRequestContext("/new_user_identified.fcgi", "POST"),
+		NewHTTPRequestContext("/new_user_identified.fcgi", "POST", nil),
 		nil, // timeCtx
 		nil, // kvCtx
 		nil, // sigVerification

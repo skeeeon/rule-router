@@ -34,6 +34,36 @@ The rule engine provides a rich set of system variables (prefixed with `@`) that
 | `{@path.N}` | Nth path segment (zero-indexed) | `pr` |
 | `{@path.count}` | Number of path segments | `3` |
 | `{@method}` | HTTP method | `POST` |
+| `{@query.name}` | Query parameter by name | `?tenant=acme` → `acme` |
+
+### Query parameters
+
+Query parameters live in their own `{@query.name}` namespace and are **never merged into the message**. That separation is deliberate: anyone who can reach the URL can append a parameter, so if `?user_id=1` could shadow a body field, appending it to a webhook URL would be a privilege-escalation path. A rule that wants a query value has to name it explicitly.
+
+- **Names are case-sensitive.** `{@query.tenant}` and `{@query.Tenant}` are different parameters. (Headers are the opposite — HTTP defines those as case-insensitive.)
+- **Values are always strings**, like headers. Conditions coerce them, so `operator: gte, value: 2` works against `?version=3`.
+- **A repeated name keeps only its first value.** `?tag=a&tag=b` gives `{@query.tag}` → `a`.
+- **An absent parameter renders as an empty string** in templates and fails any condition except `exists`.
+- **The query never affects routing.** Rule matching and the Prometheus `path` label key off the path alone, so `?anything=goes` can't turn a matching path into a 404 — nor make a non-matching one match.
+
+```yaml
+- trigger:
+    http:
+      path: /webhooks/acme
+      method: POST
+  conditions:
+    operator: and
+    items:
+      - field: "{@query.tenant}"
+        operator: exists
+  action:
+    nats:
+      subject: "events.{@query.tenant}.ingest"
+      payload: |
+        {"tenant": "{@query.tenant}", "page": "{@query.page}"}
+```
+
+Test it with `rule-cli check --query 'tenant=acme&page=2'`, or the **Query Params** field in the web rule tester.
 
 ## Headers (Both NATS and HTTP)
 

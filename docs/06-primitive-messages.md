@@ -21,6 +21,8 @@ Messages are automatically wrapped to provide consistent field access:
 - Use the `@` prefix convention you're already familiar with
 - Works with both root messages and array elements
 
+**Non-JSON payloads:** a payload that isn't valid JSON but is valid UTF-8 text is treated as a raw string and wrapped as `{"@value": "..."}` — useful for plain-text log lines. The one exception is an HTTP request sent with `Content-Type: application/x-www-form-urlencoded`, which is decoded into fields instead; see [Request body formats](./02-gateway.md#request-body-formats).
+
 ## Example 1: SenML Array at Root
 
 SenML (Sensor Markup Language) is a common IoT format that sends arrays at the root.

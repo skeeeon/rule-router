@@ -51,9 +51,50 @@ The full set is in [04 System Variables](./04-system-variables.md#http-context-g
 | `{@path}` | Full HTTP path | `/webhooks/tenant-a/events` |
 | `{@path.N}` | Path segment (zero-indexed) | `{@path.1}` → `tenant-a` |
 | `{@method}` | HTTP method | `POST` |
-| `{@header.HeaderName}` | Request header | `{@header.X-GitHub-Event}` |
+| `{@header.HeaderName}` | Request header (case-insensitive) | `{@header.X-GitHub-Event}` |
+| `{@query.name}` | Query parameter (case-sensitive) | `{@query.tenant}` |
 
 Path segments are useful for multi-tenant webhooks: a path like `/webhooks/tenant-a/events` can route to per-tenant subjects via `{@path.1}`.
+
+Query parameters are read from the request URL into their own namespace — they are never merged into the message body, so a caller cannot append `?user_id=1` to shadow a body field. A repeated name keeps only its first value, and the query has no effect on which rule matches. See [Query parameters](./04-system-variables.md#query-parameters).
+
+### Request body formats
+
+The gateway decodes the request body based on `Content-Type`:
+
+| Content-Type | Handling |
+|--------------|----------|
+| `application/json` (or anything unrecognized) | Parsed as JSON. Numbers keep full precision. Valid-UTF-8 text that isn't JSON becomes a raw string reachable as `{@value}`. |
+| `application/x-www-form-urlencoded` | Parsed as a URL-encoded form. Each field becomes a top-level message field. |
+
+Form bodies are what HTML form posts and many embedded/industrial devices send. A form field is addressed exactly like a JSON field:
+
+```yaml
+# POST body: device_id=9876&user_id=42&confidence=93
+- trigger:
+    http:
+      path: "/new_user_identified.fcgi"
+      method: "POST"
+  conditions:
+    operator: and
+    items:
+      - field: "{confidence}"
+        operator: gte
+        value: 80
+  action:
+    nats:
+      subject: "access.{device_id}.identified"
+      payload: '{"userId": {user_id}, "confidence": "{confidence}"}'
+```
+
+Four things to know about form bodies:
+
+1. **Every value is a string.** Types are not inferred, because inferring them corrupts data — a PIN of `007` would become `7`. Conditions coerce transparently, so `gte: 80` above works against the string `"93"`.
+2. **Quote optional fields in payload templates.** An unresolved variable renders as an empty string, so `"card": {card_value}` on a request that omits `card_value` produces invalid JSON. Write `"card": "{card_value}"` for anything the sender may leave out.
+3. **A repeated field becomes an array,** reachable as `{tag.0}` or via `forEach`.
+4. **A malformed body is rejected** rather than partially parsed. This is stricter than the JSON path on purpose: a silently dropped field reads as absent and can flip a condition instead of raising an error.
+
+The `Content-Type` header must be present for form decoding — a form body sent without it is treated as a raw string. Test either shape with `rule-cli check --header 'Content-Type: application/x-www-form-urlencoded'`.
 
 ### Conditional ingestion
 

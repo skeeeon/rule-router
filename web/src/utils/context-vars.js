@@ -40,6 +40,7 @@ const HTTP_VARS = [
   { path: '@path.count',      type: 'number',  category: 'HTTP', sample: 'Path segment count' },
   { path: '@method',          type: 'string',  category: 'HTTP', sample: 'HTTP method' },
   { path: '@header.',         type: 'string',  category: 'HTTP', sample: 'Header by name (e.g. @header.X-Name)' },
+  { path: '@query.',          type: 'string',  category: 'HTTP', sample: 'Query param by name (e.g. @query.tenant)' },
 ]
 
 // Variables available inside forEach iteration. Always-on alongside message

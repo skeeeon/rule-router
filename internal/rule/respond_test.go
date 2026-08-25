@@ -23,7 +23,7 @@ func TestProcessHTTP_RespondAction(t *testing.T) {
 		t.Fatalf("LoadRules failed: %v", err)
 	}
 
-	actions, err := actionsOf(p.ProcessHTTP("/api/quote", "POST", []byte(`{"symbol":"ACME"}`), nil))
+	actions, err := actionsOf(p.ProcessHTTP("/api/quote", "POST", []byte(`{"symbol":"ACME"}`), nil, nil))
 	if err != nil {
 		t.Fatalf("ProcessHTTP failed: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestProcessHTTP_BridgePreservesRequest(t *testing.T) {
 		t.Fatalf("LoadRules failed: %v", err)
 	}
 
-	actions, err := actionsOf(p.ProcessHTTP("/api/geocode", "POST", []byte(`{"address":"x"}`), nil))
+	actions, err := actionsOf(p.ProcessHTTP("/api/geocode", "POST", []byte(`{"address":"x"}`), nil, nil))
 	if err != nil {
 		t.Fatalf("ProcessHTTP failed: %v", err)
 	}

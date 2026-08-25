@@ -157,6 +157,13 @@ func (t *Tester) scaffoldSingleRule(testDir string, r *rule.Rule) error {
 		testConfig.MockTrigger.NATS = r.Trigger.NATS
 	} else if r.Trigger.HTTP != nil {
 		testConfig.MockTrigger.HTTP = r.Trigger.HTTP
+		// Seed Content-Type so the body decoder is discoverable in the file the
+		// user actually edits. This is the engine default, so it changes no
+		// behavior; swapping it for application/x-www-form-urlencoded switches
+		// the message file from JSON to a URL-encoded form body. "query" is not
+		// seeded — an empty map is dropped by omitempty, and a placeholder
+		// parameter would silently change what the rule evaluates against.
+		testConfig.Headers["Content-Type"] = "application/json"
 	}
 
 	configBytes, _ := json.MarshalIndent(testConfig, "", "  ")
@@ -201,7 +208,7 @@ func (t *Tester) scaffoldSingleRule(testDir string, r *rule.Rule) error {
 	// Show directory structure
 	fmt.Printf("✓ Scaffolded test directory at: %s\n\n", testDir)
 	fmt.Println("Generated files:")
-	fmt.Println("  ├── _test_config.json        (mock trigger, time, headers)")
+	fmt.Println("  ├── _test_config.json        (mock trigger, time, headers, query)")
 	fmt.Println("  ├── match_1.json             (example matching input)")
 	fmt.Println("  ├── not_match_1.json         (example non-matching input)")
 	if features.UsesForEach {
@@ -227,6 +234,7 @@ type RuleFeatures struct {
 	HasKVLookups           bool
 	HasTimeConditions      bool
 	HasArrayOperators      bool
+	IsHTTPTrigger          bool
 	KVBuckets              []string
 	ComparisonFields       []string
 }
@@ -246,6 +254,8 @@ func analyzeRuleFeatures(r *rule.Rule) RuleFeatures {
 		features.UsesForEach = true
 		features.ForEachField = r.Action.HTTP.ForEach
 	}
+
+	features.IsHTTPTrigger = r.Trigger.HTTP != nil
 
 	// Analyze conditions
 	if r.Conditions != nil {
@@ -896,6 +906,13 @@ func (t *Tester) printScaffoldTips(features RuleFeatures) {
 		fmt.Println("   • Test with arrays of different sizes and match patterns")
 	}
 
+	if features.IsHTTPTrigger {
+		fmt.Println("   • HTTP trigger: set \"headers\" in _test_config.json to resolve {@header.Name}")
+		fmt.Println("     — and to pick the body decoder, e.g. \"Content-Type\": \"application/x-www-form-urlencoded\"")
+		fmt.Println("   • Set \"query\" (name → value) to resolve {@query.name}")
+		fmt.Println("   • A message file may hold a form body or plain text, not just JSON")
+	}
+
 	fmt.Println("\n📖 New v0.4 Syntax Reminders:")
 	fmt.Println("   • All condition fields use {braces}: {temperature}")
 	fmt.Println("   • System variables use {braces}: {@time.hour}, {@kv.bucket.key:field}")
@@ -905,7 +922,7 @@ func (t *Tester) printScaffoldTips(features RuleFeatures) {
 
 // QuickCheck runs the quick check mode for interactive testing.
 // ruleIndex selects which rule in a multi-rule file (-1 = auto, works for single-rule files).
-func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath string, ruleIndex int, headers map[string]string) error {
+func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath string, ruleIndex int, headers map[string]string, query rule.QueryParams) error {
 	rules, err := loadSingleRuleFile(rulePath)
 	if err != nil || len(rules) == 0 {
 		return fmt.Errorf("could not load or parse rule file %s: %w", rulePath, err)
@@ -937,7 +954,7 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 	if headers == nil {
 		headers = make(map[string]string)
 	}
-	testConfig := &Config{Headers: headers}
+	testConfig := &Config{Headers: headers, Query: query}
 	if r.Trigger.NATS != nil {
 		testConfig.MockTrigger.NATS = r.Trigger.NATS
 		if subjectOverride != "" {
@@ -970,7 +987,7 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 	if testConfig.MockTrigger.NATS != nil {
 		outcome, err = processor.ProcessNATS(testConfig.MockTrigger.NATS.Subject, msgBytes, testConfig.Headers)
 	} else {
-		outcome, err = processor.ProcessHTTP(testConfig.MockTrigger.HTTP.Path, testConfig.MockTrigger.HTTP.Method, msgBytes, testConfig.Headers)
+		outcome, err = processor.ProcessHTTP(testConfig.MockTrigger.HTTP.Path, testConfig.MockTrigger.HTTP.Method, msgBytes, testConfig.Headers, testConfig.Query)
 	}
 	actions := outcome.All()
 	duration := time.Since(start)
@@ -1198,7 +1215,7 @@ func (t *Tester) runSingleTestCase(processor *rule.Processor, messagePath string
 	if testConfig.MockTrigger.NATS != nil {
 		outcome, err = processor.ProcessNATS(testConfig.MockTrigger.NATS.Subject, msgBytes, testConfig.Headers)
 	} else if testConfig.MockTrigger.HTTP != nil {
-		outcome, err = processor.ProcessHTTP(testConfig.MockTrigger.HTTP.Path, testConfig.MockTrigger.HTTP.Method, msgBytes, testConfig.Headers)
+		outcome, err = processor.ProcessHTTP(testConfig.MockTrigger.HTTP.Path, testConfig.MockTrigger.HTTP.Method, msgBytes, testConfig.Headers, testConfig.Query)
 	} else {
 		result.Error = "no mock trigger specified in test config"
 		result.DurationMs = time.Since(start).Milliseconds()

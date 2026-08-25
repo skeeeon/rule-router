@@ -62,6 +62,7 @@ type webhookJob struct {
 	method  string
 	body    []byte
 	headers map[string]string
+	query   rule.QueryParams
 }
 
 // InboundServer handles HTTP requests and publishes to NATS.
@@ -233,7 +234,7 @@ func (s *InboundServer) startWorkers(_ context.Context) {
 				if s.metrics != nil {
 					s.metrics.SetMessageProcessingBacklog(float64(len(s.workQueue)))
 				}
-				s.processWebhookWithRecovery(context.Background(), job.path, job.method, job.body, job.headers, workerID)
+				s.processWebhookWithRecovery(context.Background(), job.path, job.method, job.body, job.headers, job.query, workerID)
 			}
 		}()
 	}
@@ -283,7 +284,7 @@ func (s *InboundServer) Stop(ctx context.Context) error {
 
 // processWebhookWithRecovery wraps processWebhook with panic recovery.
 // This ensures a single malformed request cannot crash the entire worker.
-func (s *InboundServer) processWebhookWithRecovery(ctx context.Context, path, method string, body []byte, headers map[string]string, workerID int) {
+func (s *InboundServer) processWebhookWithRecovery(ctx context.Context, path, method string, body []byte, headers map[string]string, query rule.QueryParams, workerID int) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.logger.Error("panic recovered in inbound HTTP worker",
@@ -299,13 +300,13 @@ func (s *InboundServer) processWebhookWithRecovery(ctx context.Context, path, me
 		}
 	}()
 
-	s.processWebhook(ctx, path, method, body, headers)
+	s.processWebhook(ctx, path, method, body, headers, query)
 }
 
 // processWebhook processes the webhook and publishes to NATS
-func (s *InboundServer) processWebhook(ctx context.Context, path, method string, body []byte, headers map[string]string) {
+func (s *InboundServer) processWebhook(ctx context.Context, path, method string, body []byte, headers map[string]string, query rule.QueryParams) {
 	// Process through rule engine
-	outcome, err := s.processor.ProcessHTTP(path, method, body, headers)
+	outcome, err := s.processor.ProcessHTTP(path, method, body, headers, query)
 	if err != nil {
 		s.logger.Error("failed to process webhook",
 			"path", path,
@@ -418,6 +419,20 @@ func (s *InboundServer) webhookHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Query names stay verbatim (HTTP treats them as case-sensitive, unlike
+	// header names) and only the first value of a repeated name is kept, the
+	// same rule the headers above follow. The query never affects rule matching
+	// or the metrics label — both key off r.URL.Path alone.
+	var query rule.QueryParams
+	if raw := r.URL.Query(); len(raw) > 0 {
+		query = make(rule.QueryParams, len(raw))
+		for key, values := range raw {
+			if len(values) > 0 {
+				query[key] = values[0]
+			}
+		}
+	}
+
 	// Fail-closed HMAC gate: if any rule matching this path/method declares an
 	// `hmac` block, the request must carry a valid HMAC over the raw body, or it
 	// is rejected here — before any rule fires (sync or fire-and-forget).
@@ -436,7 +451,7 @@ func (s *InboundServer) webhookHandler(w http.ResponseWriter, r *http.Request) {
 	// fire-and-forget worker queue. Plain webhook routes keep the bounded-queue
 	// fire-and-forget behavior below.
 	if s.processor.HasSyncHTTPPath(path, r.Method) {
-		s.handleSync(w, r, rt, body, headers, start)
+		s.handleSync(w, r, rt, body, headers, query, start)
 		return
 	}
 
@@ -445,6 +460,7 @@ func (s *InboundServer) webhookHandler(w http.ResponseWriter, r *http.Request) {
 		method:  r.Method,
 		body:    body,
 		headers: headers,
+		query:   query,
 	}
 
 	select {
@@ -480,8 +496,8 @@ func (s *InboundServer) webhookHandler(w http.ResponseWriter, r *http.Request) {
 //
 // The first respond/request action produced wins the response; any plain NATS
 // publish actions fire as side-effects. A context deadline bounds bridge calls.
-func (s *InboundServer) handleSync(w http.ResponseWriter, r *http.Request, rt routeInfo, body []byte, headers map[string]string, start time.Time) {
-	outcome, err := s.processor.ProcessHTTP(rt.path, rt.method, body, headers)
+func (s *InboundServer) handleSync(w http.ResponseWriter, r *http.Request, rt routeInfo, body []byte, headers map[string]string, query rule.QueryParams, start time.Time) {
+	outcome, err := s.processor.ProcessHTTP(rt.path, rt.method, body, headers, query)
 	if err != nil {
 		s.logger.Error("failed to process synchronous webhook", "path", rt.path, "method", rt.method, "error", err)
 		s.writeSyncError(w, rt, http.StatusInternalServerError, "Internal Server Error", start)

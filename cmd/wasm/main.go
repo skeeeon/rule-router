@@ -22,6 +22,7 @@ type evaluateOptions struct {
 	Path        string                    `json:"path"`
 	Method      string                    `json:"method"`
 	Headers     map[string]string         `json:"headers"`
+	Query       rule.QueryParams          `json:"query"`
 	KVMock      map[string]map[string]any `json:"kvMock"`
 	MockTime    string                    `json:"mockTime"`
 	Index       int                       `json:"ruleIndex"`
@@ -148,7 +149,7 @@ func evaluateRule(_ js.Value, args []js.Value) any {
 		if method == "" {
 			method = "POST"
 		}
-		outcome, err = processor.ProcessHTTP(path, method, msgBytes, headers)
+		outcome, err = processor.ProcessHTTP(path, method, msgBytes, headers, opts.Query)
 	default:
 		subject := opts.Subject
 		if subject == "" {

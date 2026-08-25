@@ -111,6 +111,72 @@
           "received_at": "{@timestamp()}"
         }
 
+# Example 4.6: Query parameters — {@query.name} reads the request URL's query
+# string. Names are case-sensitive, values are always strings, and a repeated
+# name keeps only its first value.
+#
+# Query data lives in its own namespace and is NEVER merged into the message, so
+# a caller cannot append ?device_id=x to shadow a body field. Query also has no
+# effect on which rule matches — routing keys off the path alone.
+#
+#   curl -X POST "http://localhost:8080/webhooks/acme?tenant=acme&source=edge" \
+#     -H 'Content-Type: application/json' -d '{"reading": 42}'
+- trigger:
+    http:
+      path: "/webhooks/acme"
+      method: "POST"
+  conditions:
+    operator: and
+    items:
+      - field: "{@query.tenant}"
+        operator: exists
+  action:
+    nats:
+      subject: "ingest.{@query.tenant}.readings"
+      payload: |
+        {
+          "tenant": "{@query.tenant}",
+          "source": "{@query.source}",
+          "reading": {reading},
+          "received_at": "{@timestamp()}"
+        }
+
+# Example 4.7: Form-encoded body — a Content-Type of
+# application/x-www-form-urlencoded decodes the body into normal message fields,
+# so {device_id} works exactly as it would for JSON. This is what HTML form
+# posts and many embedded/industrial devices send.
+#
+# Every value is a string (types are never inferred — a PIN of "007" must not
+# become 7), but conditions coerce, so `gte: 80` below works against "93".
+# Quote optional fields in templates: an unresolved variable renders empty, so
+# "card": {card_value} would produce invalid JSON when the field is omitted.
+#
+#   curl -X POST http://localhost:8080/devices/identified \
+#     -H 'Content-Type: application/x-www-form-urlencoded' \
+#     -d 'device_id=9876&user_id=42&user_name=Neal+Caffrey&confidence=93'
+- trigger:
+    http:
+      path: "/devices/identified"
+      method: "POST"
+  conditions:
+    operator: and
+    items:
+      - field: "{confidence}"
+        operator: gte
+        value: 80
+  action:
+    nats:
+      subject: "access.{device_id}.identified"
+      payload: |
+        {
+          "deviceId": {device_id},
+          "userId": {user_id},
+          "userName": "{user_name}",
+          "confidence": "{confidence}",
+          "cardValue": "{card_value}",
+          "receivedAt": "{@timestamp()}"
+        }
+
 # ============================================================================
 # SYNCHRONOUS HTTP RESPONSES (respond action)
 # ============================================================================

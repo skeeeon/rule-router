@@ -103,10 +103,10 @@ See `config/rule-router.yaml` for a fully documented example.
 
 The `rule-router` uses a powerful, shared rule engine. For detailed documentation on advanced features, please see the main documentation:
 
-*   **[Array Processing](./../../docs/03-array-processing.md)**: Guide to using `forEach` and array operators (`any`, `all`, `none`) for batch processing.
-*   **[Primitive & Array Root Messages](./../../docs/04-primitive-messages.md)**: How to handle non-object JSON payloads.
-*   **[System Variables & Functions](./../../docs/02-system-variables.md)**: Full reference for all `@` variables (including `@subject`) and functions.
-*   **[Security](./../../docs/05-security.md)**: Guide to Cryptographic Signature Verification.
+*   **[Array Processing](./../../docs/05-array-processing.md)**: Guide to using `forEach` and array operators (`any`, `all`, `none`) for batch processing.
+*   **[Primitive & Array Root Messages](./../../docs/06-primitive-messages.md)**: How to handle non-object JSON payloads.
+*   **[System Variables & Functions](./../../docs/04-system-variables.md)**: Full reference for all `@` variables (including `@subject`) and functions.
+*   **[Security](./../../docs/07-security.md)**: Guide to Cryptographic Signature Verification.
 
 ### Example: Batch Processing with `forEach`
 
@@ -273,7 +273,7 @@ With KV rules enabled, the router watches the configured bucket and hot-reloads 
 rule-cli kv push rules/ --url nats://localhost:4222
 ```
 
-For full details on KV rule storage, GitOps workflows, and the `rule-cli kv push` command, see the [KV Rule Store documentation](./../../docs/06-kv-rule-store.md).
+For full details on KV rule storage, GitOps workflows, and the `rule-cli kv push` command, see the [KV Rule Store documentation](./../../docs/08-kv-rule-store.md).
 
 ## Testing Rules
 

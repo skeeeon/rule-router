@@ -1,0 +1,56 @@
+# templates/http-form-webhook.yaml
+#
+# An inbound webhook whose body is a URL-encoded form rather than JSON, with
+# request routing driven by a query parameter.
+#
+# Example Use Case: an access-control reader, payment gateway, telephony
+# provider, or plain HTML form post — anything that sends
+# Content-Type: application/x-www-form-urlencoded.
+#
+# Try it:
+#   curl -X POST "http://localhost:8080/devices/identified?site=hq" \
+#     -H 'Content-Type: application/x-www-form-urlencoded' \
+#     -d 'device_id=9876&user_id=42&user_name=Neal+Caffrey&confidence=93'
+#
+# Test it offline:
+#   printf 'device_id=9876&user_id=42&user_name=Neal+Caffrey&confidence=93' > body.form
+#   rule-cli check --rule this-rule.yaml --message body.form --query 'site=hq' \
+#     --header 'Content-Type: application/x-www-form-urlencoded'
+#
+- trigger:
+    http:
+      path: "/devices/identified"
+      method: "POST"
+  conditions:
+    operator: and
+    items:
+      # Form fields are addressed exactly like JSON fields. Every value is a
+      # string — types are never inferred, because inference corrupts data (a
+      # PIN of "007" would become 7). Conditions coerce, so comparing against
+      # the YAML number 80 works against the string "93".
+      - field: "{confidence}"
+        operator: gte
+        value: 80
+      # Query parameters live in their own namespace: {@query.name}. Names are
+      # case-sensitive, and query values are NEVER merged into the message, so
+      # a caller cannot append ?user_id=1 to shadow a body field.
+      - field: "{@query.site}"
+        operator: exists
+  action:
+    nats:
+      subject: "access.{@query.site}.{device_id}.identified"
+      # Quote every field the sender may omit. An unresolved variable renders
+      # as an empty string, so an unquoted "cardValue": {card_value} would
+      # produce invalid JSON on a request that leaves the field out. Only
+      # fields the sender always supplies are safe to leave unquoted.
+      payload: |
+        {
+          "site": "{@query.site}",
+          "deviceId": {device_id},
+          "userId": {user_id},
+          "userName": "{user_name}",
+          "confidence": "{confidence}",
+          "cardValue": "{card_value}",
+          "qrcodeValue": "{qrcode_value}",
+          "receivedAt": "{@timestamp()}"
+        }
