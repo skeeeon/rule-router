@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-08-25
+
 ### Features
 - **Form-encoded request bodies decode into fields** — a request sent with `Content-Type: application/x-www-form-urlencoded` is now parsed into normal message fields, so `{device_id}` works exactly as it does for JSON. Previously the body failed JSON parsing and fell through to the raw-string path, arriving as `{"@value": "device_id=9876&user_id=42"}` with no way to address a field. This is what HTML form posts and many embedded and industrial devices send. Decoding lives in `NewEvaluationContext`, the single payload→fields boundary, so the gateway, `rule-cli check`, and the browser tester all pick it up.
   - Values stay strings. Types are never inferred, because inference corrupts data — a PIN of `007` would become `7`. Nothing downstream needs it: `Evaluator.toFloat` parses strings for the numeric operators and `compareValues` stringifies the other side for `eq`, so a condition written against a form field behaves identically to one against JSON.
@@ -257,6 +259,7 @@
 - Signature verification
 - Rule-cli utility
 
+[0.19.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.19.0
 [0.18.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.18.0
 [0.17.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.17.0
 [0.16.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.16.0
