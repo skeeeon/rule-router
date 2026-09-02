@@ -151,7 +151,8 @@ func (rb *RuleBuilder) getTrigger() (*rule.Trigger, error) {
 		fmt.Println("    */5 * * * *    → Every 5 minutes")
 		fmt.Println("    0 8 * * 1-5    → Weekdays at 8:00 AM")
 		fmt.Println("    0 0 1 * *      → First day of each month at midnight")
-		cron, err := rb.prompter.Ask("Enter cron expression (5 fields: min hour dom month dow):")
+		fmt.Println("    */5 * * * * *  → Every 5 seconds (6 fields: leading seconds)")
+		cron, err := rb.prompter.Ask("Enter cron expression (5 fields: min hour dom month dow; 6 to lead with seconds):")
 		if err != nil {
 			return nil, err
 		}

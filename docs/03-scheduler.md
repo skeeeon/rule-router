@@ -20,6 +20,48 @@ Use cases:
 
 The cron expression uses the standard 5-field format (minute, hour, day-of-month, month, day-of-week).
 
+### Sub-minute schedules
+
+The seconds field is optional. Supply a **6-field** expression and the leading field is seconds:
+
+```yaml
+- trigger:
+    schedule:
+      cron: "*/5 * * * * *"     # every 5 seconds
+      timezone: "America/New_York"   # still honoured
+```
+
+| Expression | Fires |
+|---|---|
+| `*/5 * * * *` | every 5 **minutes** (5 fields) |
+| `*/5 * * * * *` | every 5 **seconds** (6 fields) |
+| `* * * * * *` | every second — the fastest expressible schedule |
+| `30 * * * * *` | at 30 seconds past every minute |
+
+Descriptors (`@hourly`, `@daily`, `@every 1h30m`) are also accepted.
+
+**One second is the floor.** Cron cannot express anything shorter, so there is no separate limit to configure — if you need finer granularity than that, a cron trigger is the wrong tool.
+
+> **Watch the field count.** `*/5 * * * *` and `*/5 * * * * *` differ by one character and by a factor of 60, and both are valid, so no validator can flag the typo. Two things help:
+>
+> - The scheduler logs the resolved cadence for every rule at registration — look for `interval` in the `registered schedule rule` line:
+>   ```
+>   registered schedule rule cron="*/5 * * * * *" nextRun=2026-09-01T14:32:05Z interval=5s
+>   ```
+> - The web rule builder shows a plain-English description under the cron input ("Every 5 seconds"). Note that a 6-field expression is edited on the builder's **Advanced** tab — the Simple visual editor only round-trips 5-field expressions and shows an "unsupported" notice otherwise. The description and next-run preview work on both tabs.
+
+### Overlapping fires
+
+Each rule runs as a singleton: if a fire comes due while the previous one is still running, the new fire is **dropped**, not queued. This is what stops a slow HTTP action from stacking up jobs faster than they complete, and it matters much more at second granularity — a rule on `*/1 * * * * *` whose action takes two seconds loses roughly half its fires.
+
+Dropped fires are observable rather than silent:
+
+- The first drop for a given schedule logs a warning (later drops for that schedule are not logged, to keep a fast rule from flooding the log).
+- `scheduler_job_runs_total{cron, status}` counts every outcome; dropped fires appear as `status="singleton_rescheduled"`.
+- `scheduler_job_duration_seconds{cron}` records how long fires actually take — compare it against the interval to confirm the action is the cause.
+
+See [12 Observability](./12-observability.md) for the full metric list.
+
 ## What's available in scheduler trigger context
 
 Scheduler-triggered rules have **no incoming message**. This restricts what can appear in conditions and templates:

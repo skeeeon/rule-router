@@ -54,6 +54,10 @@ type Metrics struct {
 	// Array operator metrics (shared)
 	arrayOperatorEvaluations *prometheus.CounterVec
 
+	// Scheduler job metrics (scheduler only)
+	schedulerJobRunsTotal *prometheus.CounterVec
+	schedulerJobDuration  *prometheus.HistogramVec
+
 	// System metrics (shared)
 	goroutines  prometheus.Gauge
 	memoryBytes prometheus.Gauge
@@ -262,6 +266,24 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 			[]string{"operator", "result"},
 		),
 
+		// Scheduler job metrics. Labelled by cron expression, so cardinality is
+		// bounded by the number of distinct schedules in the rule set.
+		schedulerJobRunsTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "scheduler_job_runs_total",
+				Help: "Scheduled rule fires by cron expression and outcome. 'singleton_rescheduled' means a fire was dropped because the previous one was still running — the usual cause is a cron interval shorter than the action takes.",
+			},
+			[]string{"cron", "status"},
+		),
+		schedulerJobDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "scheduler_job_duration_seconds",
+				Help:    "Wall-clock duration of a scheduled rule fire. Compare against the cron interval to explain dropped fires.",
+				Buckets: prometheus.DefBuckets,
+			},
+			[]string{"cron"},
+		),
+
 		// System metrics
 		goroutines: prometheus.NewGauge(
 			prometheus.GaugeOpts{
@@ -340,6 +362,8 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 		m.throttleSuppressedTotal,
 		m.throttleDeferredTotal,
 		m.arrayOperatorEvaluations,
+		m.schedulerJobRunsTotal,
+		m.schedulerJobDuration,
 		m.goroutines,
 		m.memoryBytes,
 		m.httpInboundRequestsTotal,
@@ -486,6 +510,15 @@ func (m *Metrics) IncArrayOperatorEvaluations(operator string, result bool) {
 		resultStr = "true"
 	}
 	m.arrayOperatorEvaluations.WithLabelValues(operator, resultStr).Inc()
+}
+
+// Scheduler job metrics (scheduler only)
+func (m *Metrics) IncSchedulerJobRun(cronExpr, status string) {
+	m.schedulerJobRunsTotal.WithLabelValues(cronExpr, status).Inc()
+}
+
+func (m *Metrics) ObserveSchedulerJobDuration(cronExpr string, seconds float64) {
+	m.schedulerJobDuration.WithLabelValues(cronExpr).Observe(seconds)
 }
 
 // System metrics

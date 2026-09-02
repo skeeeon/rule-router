@@ -22,6 +22,23 @@ var envVarPattern = regexp.MustCompile(`\$\{([A-Za-z0-9_]+)\}`)
 // kvFieldPattern matches KV field references in templates: {@kv.bucket.key} or {@kv.bucket.key:path}
 var kvFieldPattern = regexp.MustCompile(`\{@kv\.(.+?)\}`)
 
+// CronParser is the cron dialect accepted by schedule triggers, and the single
+// definition of it. The option set must stay identical to the parser gocron
+// builds for withSeconds jobs (SecondOptional | Minute | Hour | Dom | Month |
+// Dow | Descriptor — gocron/v2 job.go, defaultCron.IsValid). Keeping the two in
+// sync is the correctness property here, and it matters in both directions:
+//
+//   - Anything gocron would run must parse here, because the loader is the only
+//     place that reports a useful error.
+//   - Anything the loader accepts must run, or a rule validates cleanly at
+//     startup and then fails at its first fire, when nobody is watching.
+//
+// SecondOptional (rather than Second) is what makes the leading seconds field
+// optional, so existing 5-field expressions keep parsing unchanged.
+var CronParser = cron.NewParser(
+	cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
+)
+
 // Loader handles loading and validating rule definitions from YAML files
 type Loader struct {
 	logger              *logger.Logger
@@ -523,9 +540,9 @@ func (l *Loader) validateScheduleTrigger(schedule *ScheduleTrigger) error {
 		return errors.New("schedule trigger cron expression cannot be empty")
 	}
 
-	// Validate cron expression is parseable (standard 5-field)
-	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-	if _, err := parser.Parse(schedule.Cron); err != nil {
+	// Validate the cron expression is parseable. 5-field (minute-granularity)
+	// and 6-field (leading seconds) expressions are both accepted; see CronParser.
+	if _, err := CronParser.Parse(schedule.Cron); err != nil {
 		return fmt.Errorf("invalid cron expression %q: %w", schedule.Cron, err)
 	}
 

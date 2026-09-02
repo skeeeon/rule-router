@@ -73,8 +73,11 @@ func NewSchedulerApp(base *BaseApp, cfg *config.Config) (*SchedulerApp, error) {
 		}
 	}
 
-	// Create gocron scheduler
-	s, err := gocron.NewScheduler()
+	// Create gocron scheduler. The monitor is what surfaces fires dropped by
+	// singleton mode; see scheduler_monitor.go.
+	s, err := gocron.NewScheduler(
+		gocron.WithMonitor(newScheduleMonitor(app.logger, app.metrics)),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create scheduler: %w", err)
 	}
@@ -114,13 +117,22 @@ func (app *SchedulerApp) registerScheduleRule(r *rule.Rule, opts ...gocron.JobOp
 	// LimitModeReschedule drops overlapping fires rather than queueing them, so a
 	// slow rule (e.g. HTTP action against a hanging endpoint) can't stack up jobs
 	// faster than they complete. Combined with the recover() below this keeps a
-	// single misbehaving rule from taking the whole scheduler down.
+	// single misbehaving rule from taking the whole scheduler down. The drop is
+	// silent inside gocron; scheduleMonitor is what makes it observable, which
+	// matters now that a rule can fire every second.
+	//
+	// WithName carries the raw cron expression through to the monitor, which uses
+	// it as the metric label and in its log lines.
 	jobOpts := append([]gocron.JobOption{
 		gocron.WithSingletonMode(gocron.LimitModeReschedule),
+		gocron.WithName(schedule.Cron),
 	}, opts...)
 
 	_, err := app.scheduler.NewJob(
-		gocron.CronJob(cronExpr, false), // false = standard 5-field cron (no seconds)
+		// true = allow an optional leading seconds field. gocron's withSeconds
+		// parser is SecondOptional-based, so 5-field expressions parse exactly as
+		// before and 6-field ones ("*/5 * * * * *") become expressible.
+		gocron.CronJob(cronExpr, true),
 		gocron.NewTask(func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -141,10 +153,47 @@ func (app *SchedulerApp) registerScheduleRule(r *rule.Rule, opts ...gocron.JobOp
 		return fmt.Errorf("failed to register cron job: %w", err)
 	}
 
-	app.logger.Info("registered schedule rule",
-		"cron", cronExpr)
+	// Log the resolved cadence, not just the expression. "*/5 * * * *" and
+	// "*/5 * * * * *" differ by one character and by a factor of 60, and both are
+	// valid, so no validator can catch the typo — the interval in this line is
+	// what makes a runaway rule identifiable without reading the YAML.
+	logArgs := []any{"cron", cronExpr}
+	if next, interval, ok := cronCadence(cronExpr); ok {
+		logArgs = append(logArgs, "nextRun", next.Format(time.RFC3339), "interval", interval.String())
+	}
+	app.logger.Info("registered schedule rule", logArgs...)
 
 	return nil
+}
+
+// cronCadence reports the next fire time for an expression and the gap between
+// that fire and the one after it.
+//
+// The gap is a true period only for uniform expressions ("*/5 * * * * *"). For a
+// calendar schedule like "0 9 * * 1-5" it is simply the distance to the following
+// run, which is the useful number to print anyway. ok is false when the
+// expression does not parse, in which case the caller just omits the fields —
+// gocron has already accepted the job by this point, so this is a logging
+// nicety, never a validation path.
+func cronCadence(cronExpr string) (time.Time, time.Duration, bool) {
+	// rule.CronParser also handles the CRON_TZ= prefix this function may be
+	// handed, and is the same option set gocron parses with.
+	schedule, err := rule.CronParser.Parse(cronExpr)
+	if err != nil {
+		return time.Time{}, 0, false
+	}
+
+	next := schedule.Next(time.Now())
+	if next.IsZero() {
+		return time.Time{}, 0, false
+	}
+
+	following := schedule.Next(next)
+	if following.IsZero() {
+		return next, 0, false
+	}
+
+	return next, following.Sub(next), true
 }
 
 // rebuildCronJobs removes all existing cron jobs and registers the provided rules.

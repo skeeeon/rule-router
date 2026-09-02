@@ -122,6 +122,22 @@ Useful derived signals:
 - `coalesced / (coalesced + emitted)` is how much churn trailing mode is absorbing. Near zero means the window is doing nothing and can be removed.
 - Any sustained `dropped` means shutdowns are losing settled values — raise the shutdown grace period or reconsider trailing mode for that rule.
 
+### Scheduler
+
+| Metric | Type | Labels | Feature | Description |
+|--------|------|--------|---------|-------------|
+| `scheduler_job_runs_total` | C | `cron`, `status` = `success` \| `fail` \| `singleton_rescheduled` | scheduler | Scheduled rule fires by outcome. `singleton_rescheduled` means a fire was **dropped** because the previous run of that rule had not finished. |
+| `scheduler_job_duration_seconds` | H | `cron` | scheduler | Wall-clock duration of a scheduled rule fire. |
+
+Each rule runs as a singleton, so a fire that comes due while the previous one is still running is discarded rather than queued. That is deliberate — it stops a slow action from stacking up jobs — but it becomes easy to hit with [sub-minute schedules](./03-scheduler.md#sub-minute-schedules), where an action slower than the interval quietly loses most of its fires. The first drop per schedule also logs a warning; subsequent drops are counted here only.
+
+Useful derived signals:
+
+- `rate(scheduler_job_runs_total{status="singleton_rescheduled"}[5m]) > 0` means a rule is firing faster than it can complete. Either lengthen the cron interval or speed up the action.
+- `histogram_quantile(0.95, rate(scheduler_job_duration_seconds_bucket[5m])) by (cron)` against the `interval` in the rule's `registered schedule rule` startup log confirms the diagnosis.
+
+> Both metrics label `cron` with the rule's raw cron expression, so cardinality is bounded by the number of distinct schedules in the rule set. Rules sharing an expression aggregate into one series.
+
 ### HTTP gateway — inbound
 
 | Metric | Type | Labels | Feature | Description |
