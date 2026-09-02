@@ -2060,3 +2060,103 @@ func TestOperatorWhitelist_IncludesArrayOperators(t *testing.T) {
 		})
 	}
 }
+
+// TestRandomCall_LoadTimeValidation covers the load-time scan. The point of
+// scanning raw source rather than walking fields is that no one has to maintain
+// a list of the fields a template may appear in — so the coverage cases below
+// deliberately hide a call in a different field each time.
+func TestRandomCall_LoadTimeValidation(t *testing.T) {
+	loader := newTestLoader()
+
+	t.Run("rejects a malformed call, naming it", func(t *testing.T) {
+		tempDir := t.TempDir()
+		createTempRuleFile(t, tempDir, "bad.yaml", `
+- trigger: { nats: { subject: a } }
+  action:
+    nats:
+      subject: b
+      payload: '{"celsius":{@random.int(a,100)}}'`)
+
+		_, err := loader.LoadFromDirectory(tempDir)
+		if err == nil {
+			t.Fatal("load succeeded, want an error")
+		}
+		if !strings.Contains(err.Error(), "{@random.int(a,100)}") {
+			t.Errorf("error = %q, want it to quote the offending call", err)
+		}
+		if !strings.Contains(err.Error(), "min") {
+			t.Errorf("error = %q, want it to say which argument is wrong", err)
+		}
+	})
+
+	t.Run("finds calls in fields nobody enumerated", func(t *testing.T) {
+		fields := map[string]string{
+			"nats subject": `
+- trigger: { nats: { subject: a } }
+  action: { nats: { subject: "out.{@random.choice()}", payload: "{}" } }`,
+			"http url": `
+- trigger: { nats: { subject: a } }
+  action: { http: { url: "https://x.test/{@random.int(1)}", method: GET } }`,
+			"http header": `
+- trigger: { nats: { subject: a } }
+  action:
+    http:
+      url: "https://x.test/"
+      method: POST
+      headers: { X-Seed: "{@random.float(0,1)}" }`,
+			"condition value": `
+- trigger: { nats: { subject: a } }
+  conditions:
+    operator: and
+    items:
+      - field: "{temp}"
+        operator: gt
+        value: "{@random.nope(1)}"
+  action: { nats: { subject: b, payload: "{}" } }`,
+			"respond payload": `
+- trigger: { http: { path: /x } }
+  action: { respond: { payload: '{"v":{@random.int(1,2,3)}}' } }`,
+		}
+
+		for name, content := range fields {
+			t.Run(name, func(t *testing.T) {
+				tempDir := t.TempDir()
+				createTempRuleFile(t, tempDir, "rule.yaml", content)
+
+				if _, err := loader.LoadFromDirectory(tempDir); err == nil {
+					t.Errorf("load succeeded, want the call in the %s to be caught", name)
+				}
+			})
+		}
+	})
+
+	t.Run("accepts valid calls", func(t *testing.T) {
+		tempDir := t.TempDir()
+		createTempRuleFile(t, tempDir, "good.yaml", `
+- trigger: { schedule: { cron: "*/5 * * * * *" } }
+  action:
+    nats:
+      subject: "telemetry.probe"
+      payload: '{"celsius":{@random.float(-19.4,-17.2,1)},"n":{@random.int(1,100)},"state":"{@random.choice(open,closed)}"}'`)
+
+		if _, err := loader.LoadFromDirectory(tempDir); err != nil {
+			t.Errorf("load failed: %v", err)
+		}
+	})
+
+	// A call whose arguments contain a nested template can't be checked
+	// statically, so randomCallPattern doesn't match it and it's left to runtime.
+	t.Run("skips a call with a runtime-resolved argument", func(t *testing.T) {
+		tempDir := t.TempDir()
+		createTempRuleFile(t, tempDir, "nested.yaml", `
+- trigger: { nats: { subject: a } }
+  action:
+    nats:
+      subject: b
+      payload: '{"n":{@random.int(1,{max})}}'`)
+
+		if _, err := loader.LoadFromDirectory(tempDir); err != nil {
+			t.Errorf("load failed on a runtime-resolved argument: %v", err)
+		}
+	})
+}

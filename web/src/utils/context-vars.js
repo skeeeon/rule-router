@@ -24,6 +24,12 @@ const ALWAYS_AVAILABLE = [
   { path: '@timestamp()',     type: 'func',    category: 'Func', sample: 'Current RFC3339 timestamp' },
   { path: '@uuid4()',         type: 'func',    category: 'Func', sample: 'Random UUID v4' },
   { path: '@uuid7()',         type: 'func',    category: 'Func', sample: 'Time-based UUID v7' },
+
+  // Random functions produce synthetic/fixture data. Samples show the argument
+  // shape, since these are the only variables the user has to fill in.
+  { path: '@random.int(1,100)',           type: 'func', category: 'Func', sample: 'Random integer, inclusive (unquoted)' },
+  { path: '@random.float(0,1,2)',         type: 'func', category: 'Func', sample: 'Random float, 3rd arg = decimals (unquoted)' },
+  { path: '@random.choice(open,closed)',  type: 'func', category: 'Func', sample: 'One of the listed values (quote it)' },
 ]
 
 // Variables tied to a NATS-triggered rule.

@@ -77,7 +77,17 @@ onUnmounted(() => { document.removeEventListener('keydown', onEscape) })
             <tr><td class="mono">{@timestamp()}</td><td>Current RFC3339 timestamp</td></tr>
             <tr><td class="mono">{@uuid4()}</td><td>Random UUID v4</td></tr>
             <tr><td class="mono">{@uuid7()}</td><td>Time-based UUID v7</td></tr>
+            <tr><td class="mono">{@random.int(1,100)}</td><td>Random integer, both ends inclusive &mdash; write it <em>unquoted</em></td></tr>
+            <tr><td class="mono">{@random.float(-19.4,-17.2,1)}</td><td>Random float, 3rd arg = decimal places &mdash; write it <em>unquoted</em></td></tr>
+            <tr><td class="mono">{@random.choice(open,closed)}</td><td>One of the listed values &mdash; write it <em>quoted</em></td></tr>
           </tbody></table>
+          <div class="help-note">
+            The <span class="mono">random.*</span> functions are for synthetic and fixture data
+            (demo telemetry, simulated readings). Use <span class="mono">{@uuid4()}</span> for
+            nonces and <span class="mono">{@uuid7()}</span> for correlation ids. Arguments are
+            plain literals separated by commas &mdash; no quoting or escaping, so a value cannot
+            contain a comma or a space.
+          </div>
 
           <h3>forEach Context</h3>
           <table class="help-table"><tbody>

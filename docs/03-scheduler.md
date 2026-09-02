@@ -71,6 +71,7 @@ Scheduler-triggered rules have **no incoming message**. This restricts what can 
 | `{@time.*}`, `{@day.*}`, `{@date.*}`, `{@timestamp.*}` | Message fields (`{fieldName}`) |
 | `{@kv.bucket.key}` lookups | `{@subject.*}` subject tokens |
 | `{@timestamp()}`, `{@uuid4()}`, `{@uuid7()}` | `{@path.*}`, `{@method}` HTTP context |
+| `{@random.int/float/choice(...)}` | |
 | Environment variables (`${VAR}`) | `{@header.*}` headers |
 
 The full variable reference is in [04 System Variables](./04-system-variables.md). The scheduler-relevant subset is **time and date**, **KV**, **environment**, and **template functions**.

@@ -126,6 +126,47 @@ field: "{@kv.config.app:database.connection.host}"
 | `{@timestamp()}` | Generate current timestamp (RFC3339) | `2025-10-29T17:30:00Z` |
 | `{@uuid7()}` | Generate time-ordered UUID v7 | `018b7e5a-f3c2-7000-8000-0123456789ab` |
 | `{@uuid4()}` | Generate random UUID v4 | `550e8400-e29b-41d4-a716-446655440000` |
+| `{@random.int(min,max)}` | Random integer, both ends inclusive | `42` |
+| `{@random.float(min,max,decimals)}` | Random float at a fixed number of decimal places | `-18.3` |
+| `{@random.choice(a,b,...)}` | One of the listed values | `open` |
+
+### Random functions are for synthetic data
+
+```yaml
+- trigger:
+    schedule:
+      cron: "*/5 * * * * *"
+  action:
+    nats:
+      subject: "telemetry.probe.TP-001"
+      payload: |
+        {
+          "celsius": {@random.float(-19.4,-17.2,1)},
+          "battery": {@random.int(80,100)},
+          "door": "{@random.choice(open,closed)}"
+        }
+```
+
+These generate **fixture data** — demo telemetry, simulated readings, placeholder payloads. They are not general-purpose:
+
+| If you want | Use |
+|---|---|
+| A nonce | `{@uuid4()}` |
+| A correlation id | `{@uuid7()}` |
+| A/B bucketing | A hash of a stable field — a random draw re-buckets on retry |
+| Retry jitter | Already built into the publisher and HTTP client |
+
+Four things to know:
+
+**Quoting differs, and it has to.** `random.int` and `random.float` render bare numbers, so write them **unquoted** in JSON. `random.choice` renders a string and must be **quoted**. This is the same split as `{@time.hour}` (bare) versus `{@uuid7()}` (quoted) and is not new behaviour.
+
+**Arguments are literals, separated by commas, with no quoting or escaping.** A value cannot contain a comma or a space: `{@random.choice(open,closed)}` works, `{@random.choice(door open,door closed)}` cannot be expressed. Nested templates *are* allowed — `{@random.int(1,{max})}` resolves `{max}` first — but a call written that way is checked at runtime rather than at load.
+
+**Malformed calls are rejected at load.** `{@random.int(a,100)}` fails at startup (or on KV hot-reload) with the offending call quoted, rather than rendering an empty string mid-payload and producing invalid JSON at runtime.
+
+**A redelivered message re-evaluates.** For a JetStream router rule, a redelivery renders a *new* random value, so a redelivered temperature reading differs from the first attempt. Schedule rules have no redelivery and are unaffected — which is the intended use case, so this is a footnote rather than a warning. Publish retries are also unaffected: the payload is rendered once, before the retry loop, so every attempt sends identical bytes.
+
+**Not** an expression language: there is no arithmetic (`{@time.minute * 2}`), no random in condition evaluation, and no stateful signals (random walks, hysteresis). `random.float` over a tight range produces *bounded noise*, not a trend — right for a probe that jitters, wrong for anything expected to show a shape. That needs a device simulator, not a template function.
 
 ## Condition Operators
 

@@ -22,6 +22,14 @@ var envVarPattern = regexp.MustCompile(`\$\{([A-Za-z0-9_]+)\}`)
 // kvFieldPattern matches KV field references in templates: {@kv.bucket.key} or {@kv.bucket.key:path}
 var kvFieldPattern = regexp.MustCompile(`\{@kv\.(.+?)\}`)
 
+// randomCallPattern matches a {@random.*} call in raw rule text.
+//
+// The body excludes braces, which is load-bearing rather than incidental: a call
+// whose arguments contain a nested template — {@random.int(1,{max})} — simply
+// does not match, and is therefore left to runtime, where it can actually be
+// resolved. The same exclusion skips ${VAR} env refs for free.
+var randomCallPattern = regexp.MustCompile(`\{@(random\.[^{}]*)\}`)
+
 // CronParser is the cron dialect accepted by schedule triggers, and the single
 // definition of it. The option set must stay identical to the parser gocron
 // builds for withSeconds jobs (SecondOptional | Minute | Hour | Dom | Month |
@@ -141,6 +149,10 @@ func (l *Loader) ParseAndValidateYAML(data []byte, source string) ([]Rule, error
 	l.logger.Debug("parsed rules from source",
 		"source", source,
 		"ruleCount", len(rules))
+
+	if err := l.validateRandomCalls(data, source); err != nil {
+		return nil, err
+	}
 
 	// Fold the deprecated `debounce` spelling onto `throttle` before anything
 	// else reads it, so env expansion and validation only ever see one field.
@@ -529,6 +541,42 @@ func (l *Loader) validateTrigger(trigger *Trigger, filePath string, ruleIndex in
 
 	if triggerCount > 1 {
 		return errors.New("rule must have exactly one trigger type")
+	}
+
+	return nil
+}
+
+// validateRandomCalls rejects a malformed {@random.*} call at load time.
+//
+// Without this, a bad call renders as an empty string mid-payload — turning
+// `"celsius":{@random.int(a,b)}` into `"celsius":` — so the first symptom is
+// invalid JSON arriving at a consumer, at runtime, with nothing pointing back at
+// the rule. A startup error naming the call is worth the scan.
+//
+// It scans the raw source text rather than walking rule fields, because a
+// template can appear in a NATS payload or subject, an HTTP url, payload, or
+// header, a respond action, a forEach expression, or a condition value.
+// Enumerating those and keeping the list current forever is the fragile version;
+// one pass over the source covers every field without naming any of them, and
+// ParseAndValidateYAML is the single funnel that file, KV, rule-cli, and the
+// WASM tester all load through.
+//
+// Two consequences of scanning text, both accepted:
+//
+//   - A malformed call inside a YAML comment fails the load. Rare, and the error
+//     quotes the offending call, so it is self-explaining.
+//   - Errors name the source rather than the rule index. Quoting the call finds
+//     it faster than an index would anyway.
+//
+// The value generated here is discarded; only the error matters. Sharing
+// randomValue with the template engine is the point — two implementations of
+// "is this call well-formed" would eventually disagree about a rule.
+func (l *Loader) validateRandomCalls(data []byte, source string) error {
+	for _, match := range randomCallPattern.FindAllSubmatch(data, -1) {
+		call := string(match[1])
+		if _, err := randomValue(call); err != nil {
+			return fmt.Errorf("%s: invalid random function {@%s}: %w", source, call, err)
+		}
 	}
 
 	return nil
