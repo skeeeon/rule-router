@@ -2160,3 +2160,26 @@ func TestRandomCall_LoadTimeValidation(t *testing.T) {
 		}
 	})
 }
+
+// TestRandomCall_CommentsAreNotCalls pins the reason validation walks the parsed
+// rule rather than the raw YAML. Rule files in the wild document the template
+// syntax in their own header comments, and a comment is not a call — an earlier
+// raw-text scan failed the load on the first heavily commented file it met.
+func TestRandomCall_CommentsAreNotCalls(t *testing.T) {
+	loader := newTestLoader()
+	tempDir := t.TempDir()
+
+	createTempRuleFile(t, tempDir, "documented.yaml", `
+# The random functions are {@random.int(min,max)},
+# {@random.float(min,max,decimals)} and {@random.choice(a,b)}.
+# A wildcard reference like {@random.*} is not a call either.
+- trigger: { nats: { subject: a } }
+  action:
+    nats:
+      subject: b   # e.g. {@random.nope(1)} in a trailing comment
+      payload: '{"n":{@random.int(1,10)}}'`)
+
+	if _, err := loader.LoadFromDirectory(tempDir); err != nil {
+		t.Errorf("load failed on syntax documented in comments: %v", err)
+	}
+}

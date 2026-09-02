@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -22,7 +23,7 @@ var envVarPattern = regexp.MustCompile(`\$\{([A-Za-z0-9_]+)\}`)
 // kvFieldPattern matches KV field references in templates: {@kv.bucket.key} or {@kv.bucket.key:path}
 var kvFieldPattern = regexp.MustCompile(`\{@kv\.(.+?)\}`)
 
-// randomCallPattern matches a {@random.*} call in raw rule text.
+// randomCallPattern matches a {@random.*} call inside a rule's string field.
 //
 // The body excludes braces, which is load-bearing rather than incidental: a call
 // whose arguments contain a nested template — {@random.int(1,{max})} — simply
@@ -150,10 +151,6 @@ func (l *Loader) ParseAndValidateYAML(data []byte, source string) ([]Rule, error
 		"source", source,
 		"ruleCount", len(rules))
 
-	if err := l.validateRandomCalls(data, source); err != nil {
-		return nil, err
-	}
-
 	// Fold the deprecated `debounce` spelling onto `throttle` before anything
 	// else reads it, so env expansion and validation only ever see one field.
 	for i := range rules {
@@ -173,6 +170,11 @@ func (l *Loader) ParseAndValidateYAML(data []byte, source string) ([]Rule, error
 	for i := range rules {
 		if err := l.validateRule(&rules[i], source, i); err != nil {
 			return nil, fmt.Errorf("rule %d in %s is invalid: %w", i, source, err)
+		}
+		// Separate from validateRule because it walks the whole rule rather than
+		// inspecting one part of it, and its error is already fully qualified.
+		if err := l.validateRandomCalls(&rules[i], source, i); err != nil {
+			return nil, err
 		}
 	}
 
@@ -551,35 +553,75 @@ func (l *Loader) validateTrigger(trigger *Trigger, filePath string, ruleIndex in
 // Without this, a bad call renders as an empty string mid-payload — turning
 // `"celsius":{@random.int(a,b)}` into `"celsius":` — so the first symptom is
 // invalid JSON arriving at a consumer, at runtime, with nothing pointing back at
-// the rule. A startup error naming the call is worth the scan.
+// the rule. A startup error naming the call is worth the walk.
 //
-// It scans the raw source text rather than walking rule fields, because a
-// template can appear in a NATS payload or subject, an HTTP url, payload, or
-// header, a respond action, a forEach expression, or a condition value.
-// Enumerating those and keeping the list current forever is the fragile version;
-// one pass over the source covers every field without naming any of them, and
-// ParseAndValidateYAML is the single funnel that file, KV, rule-cli, and the
-// WASM tester all load through.
+// It walks every string reachable from the parsed rule rather than naming the
+// fields to check, because a template can appear in a NATS payload or subject,
+// an HTTP url, payload or header, a respond action, a forEach expression, or a
+// condition value. Enumerating those and keeping the list current forever is the
+// fragile version; walkStrings covers all of them and stays correct when a field
+// is added.
 //
-// Two consequences of scanning text, both accepted:
-//
-//   - A malformed call inside a YAML comment fails the load. Rare, and the error
-//     quotes the offending call, so it is self-explaining.
-//   - Errors name the source rather than the rule index. Quoting the call finds
-//     it faster than an index would anyway.
+// It walks the PARSED rule rather than the raw YAML, which an earlier version
+// did. Raw text also sees comments, and a comment documenting the syntax —
+// "{@random.int(min,max)}" written to explain the feature — is not a call and
+// must not fail a load. That is not hypothetical: it broke the first heavily
+// commented rule file it met. Nothing is lost by parsing first, since a template
+// that no field holds is a template that can never execute.
 //
 // The value generated here is discarded; only the error matters. Sharing
 // randomValue with the template engine is the point — two implementations of
 // "is this call well-formed" would eventually disagree about a rule.
-func (l *Loader) validateRandomCalls(data []byte, source string) error {
-	for _, match := range randomCallPattern.FindAllSubmatch(data, -1) {
-		call := string(match[1])
-		if _, err := randomValue(call); err != nil {
-			return fmt.Errorf("%s: invalid random function {@%s}: %w", source, call, err)
+func (l *Loader) validateRandomCalls(rule *Rule, source string, ruleIndex int) error {
+	var err error
+
+	walkStrings(reflect.ValueOf(rule), func(s string) {
+		if err != nil {
+			return
+		}
+		for _, match := range randomCallPattern.FindAllStringSubmatch(s, -1) {
+			if _, callErr := randomValue(match[1]); callErr != nil {
+				err = fmt.Errorf("rule %d in %s: invalid random function {@%s}: %w",
+					ruleIndex, source, match[1], callErr)
+				return
+			}
+		}
+	})
+
+	return err
+}
+
+// walkStrings calls fn for every string reachable from v, following pointers,
+// interfaces, structs, slices, arrays and maps.
+//
+// Reflection rather than a hand-written field list: the list is what goes stale.
+// Unexported fields are skipped — Rule.index is the only one, and it holds no
+// template.
+func walkStrings(v reflect.Value, fn func(string)) {
+	switch v.Kind() {
+	case reflect.String:
+		fn(v.String())
+	case reflect.Pointer, reflect.Interface:
+		if !v.IsNil() {
+			walkStrings(v.Elem(), fn)
+		}
+	case reflect.Struct:
+		t := v.Type()
+		for i := 0; i < v.NumField(); i++ {
+			if t.Field(i).IsExported() {
+				walkStrings(v.Field(i), fn)
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			walkStrings(v.Index(i), fn)
+		}
+	case reflect.Map:
+		for _, key := range v.MapKeys() {
+			walkStrings(key, fn)
+			walkStrings(v.MapIndex(key), fn)
 		}
 	}
-
-	return nil
 }
 
 // validateScheduleTrigger validates a schedule trigger configuration
