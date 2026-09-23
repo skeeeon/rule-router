@@ -85,7 +85,7 @@ export function createThrottle() {
 }
 
 export function createHMAC() {
-  return { header: '', secret: '', algorithm: 'sha256', encoding: 'hex', prefix: '' }
+  return { scheme: '', header: '', secret: '', algorithm: 'sha256', encoding: 'hex', prefix: '' }
 }
 
 export function createRetry() {

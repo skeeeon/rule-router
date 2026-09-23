@@ -175,12 +175,38 @@ func (rb *RuleBuilder) getHMAC() (*rule.HMACConfig, error) {
 		return nil, err
 	}
 
+	// A named scheme fixes the header and encoding, so it needs only a secret.
+	schemes := []struct{ scheme, label, secretDefault string }{
+		{"", "generic (GitHub, Shopify, …)", "${WEBHOOK_SECRET}"},
+		{"stripe", "stripe", "${STRIPE_WEBHOOK_SECRET}"},
+		{"slack", "slack", "${SLACK_SIGNING_SECRET}"},
+		{"standardwebhooks", "standardwebhooks (Svix, Clerk, Resend, …)", "${WEBHOOK_SECRET}"},
+	}
+	labels := make([]string, len(schemes))
+	for i, s := range schemes {
+		labels[i] = s.label
+	}
+	schemeIdx, err := rb.prompter.Select("  Signature scheme:", labels)
+	if err != nil {
+		return nil, err
+	}
+	chosen := schemes[schemeIdx]
+
+	if chosen.scheme != "" {
+		fmt.Println("  Secret accepts a literal, an env ref ${VAR}, or a KV ref {@kv.bucket.key}.")
+		secret, err := rb.prompter.AskWithDefault("  Signing secret:", chosen.secretDefault)
+		if err != nil {
+			return nil, err
+		}
+		return &rule.HMACConfig{Scheme: chosen.scheme, Secret: strings.TrimSpace(secret)}, nil
+	}
+
 	header, err := rb.prompter.AskWithDefault("  Signature header:", "X-Hub-Signature-256")
 	if err != nil {
 		return nil, err
 	}
 	fmt.Println("  Secret accepts a literal, an env ref ${VAR}, or a KV ref {@kv.bucket.key}.")
-	secret, err := rb.prompter.AskWithDefault("  Shared secret:", "${WEBHOOK_SECRET}")
+	secret, err := rb.prompter.AskWithDefault("  Shared secret:", chosen.secretDefault)
 	if err != nil {
 		return nil, err
 	}

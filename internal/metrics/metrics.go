@@ -178,7 +178,7 @@ func NewMetrics(registry *prometheus.Registry) (*Metrics, error) {
 		webhookHMACVerificationsTotal: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "webhook_hmac_verifications_total",
-				Help: "Total inbound webhook HMAC verifications by result (valid/invalid/missing/error)",
+				Help: "Total inbound webhook HMAC verifications by result (valid/invalid/missing/expired/error)",
 			},
 			[]string{"result"},
 		),

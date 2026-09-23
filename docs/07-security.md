@@ -165,8 +165,20 @@ The generic scheme covers the common case:
 | Shopify | `X-Shopify-Hmac-Sha256` | `sha256` | `base64` | — |
 | Generic | (your header) | `sha256`/`sha1` | `hex`/`base64` | (optional) |
 
-**Not covered:** timestamp-signed schemes that sign `timestamp.body` and enforce a replay window — Stripe (`Stripe-Signature: t=…,v1=…`) and Slack (`v0:ts:body`). Verify those in a downstream service.
+Providers that sign a timestamp with the body use a named `scheme` instead, with only `secret` set:
+
+| Provider | `scheme` | Signed content |
+|----------|----------|----------------|
+| Stripe | `stripe` | `{t}.{body}` |
+| Slack | `slack` | `v0:{ts}:{body}` |
+| Svix, Clerk, Resend, OpenAI, … ([Standard Webhooks](https://www.standardwebhooks.com/)) | `standardwebhooks` | `{id}.{ts}.{body}` |
+
+See [Gateway: timestamped schemes](./02-gateway.md#timestamped-schemes-stripe-slack-standard-webhooks) for examples.
+
+**Replay window.** Timestamped schemes reject a timestamp more than 5 minutes from the gateway's clock, in either direction. That bounds a replayed request to a 5-minute window; it does not stop a replay inside the window. If duplicates matter, dedupe downstream on the provider's event ID. The server clock must be NTP-synced: a clock more than 5 minutes off rejects every timestamped webhook.
+
+**Not covered:** providers that sign more than the body (Twilio, Square, HubSpot, Mailgun), and public-key signatures (Discord Ed25519, SendGrid ECDSA, AWS SNS, PayPal). Verify those in a downstream service.
 
 ### Observability
 
-Outcomes are exported as `webhook_hmac_verifications_total{result}` with `result` ∈ `valid` / `invalid` / `missing` / `error` (`error` = misconfiguration such as an empty secret or unknown algorithm). Rejections also surface as `http_inbound_requests_total{status="401"}`.
+Outcomes are exported as `webhook_hmac_verifications_total{result}` with `result` ∈ `valid` / `invalid` / `missing` / `expired` / `error` (`expired` = the signature matched but its timestamp is outside the 5-minute window — clock skew or a delayed/replayed delivery; `error` = misconfiguration such as an empty secret or unknown algorithm). Rejections also surface as `http_inbound_requests_total{status="401"}`.

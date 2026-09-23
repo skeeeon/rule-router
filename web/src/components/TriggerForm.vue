@@ -19,6 +19,13 @@ function toggleThrottle(target) {
 function toggleHMAC(target) {
   target.hmac = target.hmac ? null : createHMAC()
 }
+
+// Mirrors the secret defaults offered by rule-cli's getHMAC.
+const SECRET_PLACEHOLDERS = {
+  stripe: '${STRIPE_WEBHOOK_SECRET}',
+  slack: '${SLACK_SIGNING_SECRET}',
+  standardwebhooks: '${WEBHOOK_SECRET}',
+}
 </script>
 
 <template>
@@ -112,9 +119,19 @@ function toggleHMAC(target) {
         <input type="checkbox" :checked="!!trigger.http.hmac" @change="toggleHMAC(trigger.http)">
         HMAC verification
       </label>
-      <span class="field-hint">Verify a shared-secret HMAC over the raw body before the rule fires. Invalid or missing signature → 401.</span>
+      <span class="field-hint">Verify a shared-secret HMAC signature before the rule fires. Invalid, missing, or expired signature → 401.</span>
       <div v-if="trigger.http.hmac" class="fields hmac-fields">
         <div class="field">
+          <label>Scheme</label>
+          <select v-model="trigger.http.hmac.scheme">
+            <option value="">Generic (GitHub, Shopify, …)</option>
+            <option value="stripe">Stripe</option>
+            <option value="slack">Slack</option>
+            <option value="standardwebhooks">Standard Webhooks (Svix, Clerk, Resend, …)</option>
+          </select>
+          <span class="field-hint" v-if="trigger.http.hmac.scheme">Headers and encoding are fixed by the scheme. Timestamps more than 5 minutes off are rejected.</span>
+        </div>
+        <div class="field" v-if="!trigger.http.hmac.scheme">
           <label>Signature header</label>
           <input
             v-model="trigger.http.hmac.header"
@@ -133,7 +150,7 @@ function toggleHMAC(target) {
           <label>Secret</label>
           <input
             v-model="trigger.http.hmac.secret"
-            placeholder="${GITHUB_WEBHOOK_SECRET}"
+            :placeholder="SECRET_PLACEHOLDERS[trigger.http.hmac.scheme] || '${GITHUB_WEBHOOK_SECRET}'"
             :class="{ error: errorFor('trigger.http.hmac.secret') }"
             autocapitalize="off"
             autocorrect="off"
@@ -142,21 +159,21 @@ function toggleHMAC(target) {
           >
           <span class="field-hint">Literal, env <code>${VAR}</code>, or KV <code>{@kv.bucket.key}</code></span>
         </div>
-        <div class="field">
+        <div class="field" v-if="!trigger.http.hmac.scheme">
           <label>Algorithm</label>
           <select v-model="trigger.http.hmac.algorithm">
             <option value="sha256">sha256</option>
             <option value="sha1">sha1</option>
           </select>
         </div>
-        <div class="field">
+        <div class="field" v-if="!trigger.http.hmac.scheme">
           <label>Encoding</label>
           <select v-model="trigger.http.hmac.encoding">
             <option value="hex">hex</option>
             <option value="base64">base64</option>
           </select>
         </div>
-        <div class="field">
+        <div class="field" v-if="!trigger.http.hmac.scheme">
           <label>Prefix <span class="optional">(optional)</span></label>
           <input
             v-model="trigger.http.hmac.prefix"

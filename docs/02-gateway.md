@@ -151,9 +151,40 @@ The HMAC is computed over the **exact received bytes**, before any JSON parsing.
 
 An unset env var or unresolvable KV reference yields an empty secret, which **fails closed** (every request → `401`) rather than silently accepting unverified payloads.
 
-**Provider coverage.** The generic scheme covers GitHub (`X-Hub-Signature-256`, `sha256=` prefix, hex), Shopify (`X-Shopify-Hmac-Sha256`, base64), and most HMAC webhooks. Timestamp-signed schemes that sign `timestamp.body` with a replay window (Stripe `t=…,v1=…`, Slack `v0:ts:body`) are **not** covered — verify those in a downstream service.
+**Provider coverage.** The generic scheme covers GitHub (`X-Hub-Signature-256`, `sha256=` prefix, hex), Shopify (`X-Shopify-Hmac-Sha256`, base64), and most HMAC webhooks. Providers that sign a timestamp along with the body use a named scheme (next).
 
-Outcomes are exported as `webhook_hmac_verifications_total{result}` (`valid`/`invalid`/`missing`/`error`); rejections also appear as `http_inbound_requests_total{status="401"}`. See [Observability](./12-observability.md#http-gateway--inbound).
+#### Timestamped schemes (Stripe, Slack, Standard Webhooks)
+
+Some providers sign `timestamp + body` so a captured request can't be replayed later. Set `scheme` and the gateway uses that vendor's exact format. The only other field is `secret`. Setting `header`, `algorithm`, `encoding`, or `prefix` alongside `scheme` is a load error.
+
+```yaml
+# Stripe — Stripe-Signature: t=…,v1=…
+hmac:
+  scheme: stripe
+  secret: "${STRIPE_WEBHOOK_SECRET}"     # the whsec_… value, used as-is
+
+# Slack — X-Slack-Request-Timestamp + X-Slack-Signature: v0=…
+hmac:
+  scheme: slack
+  secret: "${SLACK_SIGNING_SECRET}"
+
+# Standard Webhooks (Svix, Clerk, Resend, OpenAI, …) — webhook-id / webhook-timestamp / webhook-signature
+hmac:
+  scheme: standardwebhooks
+  secret: "${WEBHOOK_SECRET}"            # the whsec_<base64> value
+```
+
+| `scheme` | Signed content | Notes |
+|----------|----------------|-------|
+| `stripe` | `{t}.{body}` | Any `v1` signature may match (Stripe sends several while a secret is being rolled). `v0` test signatures are ignored. |
+| `slack` | `v0:{ts}:{body}` | Slash commands and interactivity send form-encoded bodies; the signature is checked over the raw bytes before decoding, so they work. |
+| `standardwebhooks` | `{id}.{ts}.{body}` | Any `v1,` signature may match. The secret is base64-decoded after stripping `whsec_`. |
+
+All three reject a timestamp more than **5 minutes** from the gateway's clock, in either direction. This bounds replays to a 5-minute window; it doesn't prevent a replay inside that window. Keep the server clock NTP-synced — a clock more than 5 minutes off rejects every request, visible as `result="expired"`.
+
+Slack's `url_verification` challenge is signed too, so it passes the gate; answer it with a synchronous `respond` rule that returns `{challenge}`.
+
+Outcomes are exported as `webhook_hmac_verifications_total{result}` (`valid`/`invalid`/`missing`/`expired`/`error`); rejections also appear as `http_inbound_requests_total{status="401"}`. See [Observability](./12-observability.md#http-gateway--inbound).
 
 ## Outbound: NATS → HTTP
 

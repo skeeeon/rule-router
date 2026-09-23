@@ -220,10 +220,19 @@ function validateConditionItem(item, prefix, errors) {
   }
 }
 
+const HMAC_SCHEMES = ['stripe', 'slack', 'standardwebhooks']
+
 // Mirrors loader.validateHMACConfig: syntax only. The secret is deliberately
 // NOT required — an unset ${ENV} fails closed at the gateway gate (401)
 // rather than refusing to load the rule.
 function validateHMAC(hmac, prefix, errors) {
+  if (hmac.scheme) {
+    // A named scheme fixes header/algorithm/encoding/prefix; yaml.js omits them.
+    if (!HMAC_SCHEMES.includes(hmac.scheme)) {
+      errors.push({ path: `${prefix}.scheme`, message: `Scheme must be one of ${HMAC_SCHEMES.join(', ')}` })
+    }
+    return
+  }
   if (!hmac.header) {
     errors.push({ path: `${prefix}.header`, message: 'Signature header is required' })
   }

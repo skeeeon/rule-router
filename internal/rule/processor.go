@@ -798,7 +798,7 @@ func (p *Processor) CheckHTTPHMAC(path, method string, body []byte, headers map[
 
 		result := hmacError
 		if secret, secretOK := p.resolveHMACSecret(cfg.Secret); secretOK {
-			result = verifyHMAC(cfg, secret, body, headers)
+			result = verifyHMAC(cfg, secret, body, headers, time.Now())
 		}
 
 		if p.metrics != nil {
@@ -807,7 +807,7 @@ func (p *Processor) CheckHTTPHMAC(path, method string, body []byte, headers map[
 
 		if result != hmacValid {
 			p.logger.Warn("inbound HMAC verification failed",
-				"path", path, "method", method, "header", cfg.Header, "result", result)
+				"path", path, "method", method, "scheme", cfg.Scheme, "header", cfg.Header, "result", result)
 			return true, false
 		}
 	}

@@ -194,12 +194,18 @@ type HTTPTrigger struct {
 }
 
 // HMACConfig configures fail-closed HMAC verification for an inbound webhook.
-// Covers the generic HMAC scheme used by GitHub, Shopify, and most providers:
-// the signature is HMAC(secret, rawBody), carried in a header. Timestamp-signed
-// variants (Stripe, Slack) are intentionally out of scope.
+// With no Scheme it is the generic HMAC(secret, rawBody) carried in a header,
+// used by GitHub, Shopify, and most providers. A named Scheme ("stripe",
+// "slack", "standardwebhooks") selects a timestamp-signed vendor format with
+// its headers and encoding fixed; only Secret is then set.
 type HMACConfig struct {
-	// Header is the request header carrying the signature (e.g. "X-Hub-Signature-256"). Required.
-	Header string `json:"header" yaml:"header"`
+	// Scheme selects a named signature format: "stripe", "slack", or
+	// "standardwebhooks". Empty means the generic scheme configured by
+	// Header/Algorithm/Encoding/Prefix, which must be unset with a named scheme.
+	Scheme string `json:"scheme,omitempty" yaml:"scheme,omitempty"`
+	// Header is the request header carrying the signature (e.g. "X-Hub-Signature-256").
+	// Required for the generic scheme.
+	Header string `json:"header,omitempty" yaml:"header,omitempty"`
 	// Secret is the shared secret. Accepts a literal, an env reference
 	// "${VAR}" (expanded at load time), or a KV reference "{@kv.bucket.key}"
 	// (resolved at request time). Required.

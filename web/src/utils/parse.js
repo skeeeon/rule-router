@@ -30,6 +30,7 @@ function rawToRule(raw, file) {
     if (raw.trigger.http.hmac) {
       const h = raw.trigger.http.hmac
       rule.trigger.http.hmac = {
+        scheme: h.scheme || '',
         header: h.header || '',
         secret: h.secret || '',
         algorithm: h.algorithm || 'sha256',

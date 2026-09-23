@@ -972,15 +972,31 @@ func (l *Loader) validateHMACConfig(cfg *HMACConfig) error {
 		return nil
 	}
 
-	if cfg.Header == "" {
-		return errors.New("trigger.http.hmac.header cannot be empty")
+	if !isHMACScheme(cfg.Scheme) {
+		return fmt.Errorf("trigger.http.hmac.scheme %q is not supported (use 'stripe', 'slack', or 'standardwebhooks')", cfg.Scheme)
 	}
 
-	if _, ok := hmacHash(cfg.Algorithm); !ok {
-		return fmt.Errorf("trigger.http.hmac.algorithm %q is not supported (use 'sha256' or 'sha1')", cfg.Algorithm)
-	}
-	if _, ok, _ := hmacDecode(cfg.Encoding, ""); !ok {
-		return fmt.Errorf("trigger.http.hmac.encoding %q is not supported (use 'hex' or 'base64')", cfg.Encoding)
+	if cfg.Scheme != "" {
+		// A named scheme fixes the header, algorithm, encoding, and prefix.
+		// Setting them anyway is an error rather than a silent override.
+		fixed := []struct{ field, value string }{
+			{"header", cfg.Header}, {"algorithm", cfg.Algorithm}, {"encoding", cfg.Encoding}, {"prefix", cfg.Prefix},
+		}
+		for _, f := range fixed {
+			if f.value != "" {
+				return fmt.Errorf("trigger.http.hmac.%s cannot be set with scheme %q", f.field, cfg.Scheme)
+			}
+		}
+	} else {
+		if cfg.Header == "" {
+			return errors.New("trigger.http.hmac.header cannot be empty")
+		}
+		if _, ok := hmacHash(cfg.Algorithm); !ok {
+			return fmt.Errorf("trigger.http.hmac.algorithm %q is not supported (use 'sha256' or 'sha1')", cfg.Algorithm)
+		}
+		if _, ok, _ := hmacDecode(cfg.Encoding, ""); !ok {
+			return fmt.Errorf("trigger.http.hmac.encoding %q is not supported (use 'hex' or 'base64')", cfg.Encoding)
+		}
 	}
 
 	// A KV-referenced secret must be a well-formed, static {@kv.bucket.key}.

@@ -219,6 +219,12 @@ function pushHeaders(lines, headers, indent) {
 function pushHMAC(lines, hmac, indent) {
   const pad = ' '.repeat(indent)
   lines.push(`${pad}hmac:`)
+  if (hmac.scheme) {
+    // A named scheme fixes header/algorithm/encoding/prefix; only the secret is set.
+    lines.push(`${pad}  scheme: ${yamlString(hmac.scheme)}`)
+    lines.push(`${pad}  secret: ${yamlString(hmac.secret)}`)
+    return
+  }
   lines.push(`${pad}  header: ${yamlString(hmac.header)}`)
   lines.push(`${pad}  secret: ${yamlString(hmac.secret)}`)
   if (hmac.algorithm && hmac.algorithm !== 'sha256') {
