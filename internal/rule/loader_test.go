@@ -2183,3 +2183,114 @@ func TestRandomCall_CommentsAreNotCalls(t *testing.T) {
 		t.Errorf("load failed on syntax documented in comments: %v", err)
 	}
 }
+
+// TestTriggerPattern_RejectsTemplates pins that a brace in a trigger subject or
+// path is a load error. Triggers are matched literally — templates are only
+// expanded in actions — so "events.location.{user_id}" would subscribe to the
+// literal token "{user_id}" and never fire, with nothing at runtime saying why.
+func TestTriggerPattern_RejectsTemplates(t *testing.T) {
+	loader := newTestLoader()
+
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr bool
+		// wantIn are substrings the error must contain: the field, the fix, and
+		// the suggested rewrite with its token index.
+		wantIn []string
+	}{
+		{
+			name: "nats subject with a field template",
+			yaml: `
+- trigger: { nats: { subject: "events.location.{user_id}" } }
+  action: { nats: { subject: out, payload: "{}" } }`,
+			wantErr: true,
+			wantIn: []string{"rule 0 in", "trigger.nats.subject", `"events.location.{user_id}"`,
+				"'*' or '>'", `"events.location.*"`, "{@subject.2}"},
+		},
+		{
+			name: "nats subject with a subject-token template",
+			yaml: `
+- trigger: { nats: { subject: "sensors.{@subject.1}.temp" } }
+  action: { nats: { subject: out, payload: "{}" } }`,
+			wantErr: true,
+			wantIn:  []string{"trigger.nats.subject", `"sensors.*.temp"`, "{@subject.1}"},
+		},
+		{
+			name: "nats subject with several templates points at the first",
+			yaml: `
+- trigger: { nats: { subject: "a.{x}.b.{y}" } }
+  action: { nats: { subject: out, payload: "{}" } }`,
+			wantErr: true,
+			wantIn:  []string{`"a.*.b.*"`, "{@subject.1}"},
+		},
+		{
+			name: "nats subject with a lone closing brace",
+			yaml: `
+- trigger: { nats: { subject: "a.b}" } }
+  action: { nats: { subject: out, payload: "{}" } }`,
+			wantErr: true,
+			wantIn:  []string{"trigger.nats.subject", `"a.*"`},
+		},
+		{
+			name: "nats reply trigger with a template",
+			yaml: `
+- trigger: { nats: { subject: "rpc.{method}", reply: true } }
+  action: { respond: { payload: "{}" } }`,
+			wantErr: true,
+			wantIn:  []string{"trigger.nats.subject", `"rpc.*"`, "{@subject.1}"},
+		},
+		{
+			name: "http path with a field template",
+			yaml: `
+- trigger: { http: { path: "/webhooks/{provider}/events" } }
+  action: { nats: { subject: out, payload: "{}" } }`,
+			wantErr: true,
+			wantIn: []string{"rule 0 in", "trigger.http.path", `"/webhooks/{provider}/events"`,
+				`"/webhooks/*/events"`, "{@path.1}"},
+		},
+		{
+			name: "http path with a trailing slash",
+			yaml: `
+- trigger: { http: { path: "/users/{id}/" } }
+  action: { nats: { subject: out, payload: "{}" } }`,
+			wantErr: true,
+			wantIn:  []string{`"/users/*"`, "{@path.1}"},
+		},
+		{
+			name: "templates in the action are still fine",
+			yaml: `
+- trigger: { nats: { subject: "events.location.*" } }
+  action:
+    nats:
+      subject: "users.{@subject.2}.location"
+      payload: '{"user":"{@subject.2}"}'`,
+		},
+		{
+			name: "wildcard http path with a templated action",
+			yaml: `
+- trigger: { http: { path: "/webhooks/*/events" } }
+  action: { nats: { subject: "webhooks.{@path.1}", payload: "{}" } }`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := loader.ParseAndValidateYAML([]byte(tt.yaml), "test.yaml")
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("load failed: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("load succeeded, want an error")
+			}
+			for _, want := range tt.wantIn {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want it to contain %q", err, want)
+				}
+			}
+		})
+	}
+}

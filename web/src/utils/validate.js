@@ -44,7 +44,7 @@ function validateTrigger(trigger, errors) {
   if (trigger.type === 'nats') {
     if (!trigger.nats.subject) {
       errors.push({ path: 'trigger.nats.subject', message: 'Subject is required' })
-    } else {
+    } else if (!rejectTriggerTemplate(trigger.nats.subject, 'trigger.nats.subject', '.', '@subject', errors)) {
       validateNATSSubject(trigger.nats.subject, 'trigger.nats.subject', errors)
     }
     if (trigger.nats.mode && !['jetstream', 'core'].includes(trigger.nats.mode)) {
@@ -62,7 +62,7 @@ function validateTrigger(trigger, errors) {
   } else if (trigger.type === 'http') {
     if (!trigger.http.path) {
       errors.push({ path: 'trigger.http.path', message: 'Path is required' })
-    } else {
+    } else if (!rejectTriggerTemplate(trigger.http.path, 'trigger.http.path', '/', '@path', errors)) {
       validateHTTPPath(trigger.http.path, 'trigger.http.path', errors)
     }
     if (trigger.http.method && !HTTP_METHODS.includes(trigger.http.method.toUpperCase())) {
@@ -265,6 +265,35 @@ function validateForEach(forEach, path, errors) {
   if (!isTemplateField(forEach)) {
     errors.push({ path, message: 'forEach must use template syntax: {field}' })
   }
+}
+
+// Mirrors internal/rule/loader.go::validateNoTriggerTemplate. Triggers are
+// matched literally — templates only expand in actions — so a brace in a
+// trigger subject or path is a rule that can never fire. Returns true when it
+// pushed an error, so the caller can skip the syntax checks that would follow.
+function rejectTriggerTemplate(pattern, path, sep, ctxVar, errors) {
+  if (!/[{}]/.test(pattern)) return false
+
+  // Collapse each {...} span first so a template's own dots don't split tokens.
+  let body = pattern.replace(/\{[^{}]*\}/g, '{}')
+  let prefix = ''
+  if (sep === '/') {
+    prefix = '/'
+    body = body.replace(/^\/+/, '').replace(/\/+$/, '')
+  }
+  let first = -1
+  const tokens = body.split(sep).map((t, i) => {
+    if (!/[{}]/.test(t)) return t
+    if (first < 0) first = i
+    return '*'
+  })
+  const example = prefix + tokens.join(sep)
+
+  errors.push({
+    path,
+    message: `Templates aren't expanded in triggers — use a wildcard (e.g. ${example}) and read the token with {${ctxVar}.${first}} in the action`,
+  })
+  return true
 }
 
 function validateNATSSubject(subject, path, errors) {

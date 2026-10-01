@@ -489,6 +489,9 @@ func (l *Loader) validateTrigger(trigger *Trigger, filePath string, ruleIndex in
 		if trigger.NATS.Subject == "" {
 			return errors.New("NATS trigger subject cannot be empty")
 		}
+		if err := validateNoTriggerTemplate(trigger.NATS.Subject, "trigger.nats.subject", ".", "@subject"); err != nil {
+			return err
+		}
 		if err := l.validateWildcardPattern(trigger.NATS.Subject); err != nil {
 			return fmt.Errorf("invalid NATS subject pattern: %w", err)
 		}
@@ -508,6 +511,9 @@ func (l *Loader) validateTrigger(trigger *Trigger, filePath string, ruleIndex in
 
 	if trigger.HTTP != nil {
 		triggerCount++
+		if err := validateNoTriggerTemplate(trigger.HTTP.Path, "trigger.http.path", "/", "@path"); err != nil {
+			return err
+		}
 		if err := ValidatePathPattern(trigger.HTTP.Path); err != nil {
 			return fmt.Errorf("HTTP trigger path: %w", err)
 		}
@@ -546,6 +552,49 @@ func (l *Loader) validateTrigger(trigger *Trigger, filePath string, ruleIndex in
 	}
 
 	return nil
+}
+
+// validateNoTriggerTemplate rejects a brace in a trigger subject or path.
+//
+// Templates are expanded in actions, never in triggers: a trigger is the
+// pattern a message is matched against, so "events.location.{user_id}"
+// subscribes to the literal token "{user_id}" and silently never fires. It
+// parses, passes every other check, and nothing at runtime says why the rule
+// is dead — so it is caught here, with the fix spelled out. The example in the
+// error swaps each offending token for '*' and points the action at the first
+// one, which is the rewrite the author almost always meant.
+//
+// sep is the token separator ("." for subjects, "/" for paths) and ctxVar the
+// matching context variable ("@subject" or "@path"), whose indexes are 0-based
+// over the same tokens.
+var triggerTemplateSpan = regexp.MustCompile(`\{[^{}]*\}`)
+
+func validateNoTriggerTemplate(pattern, field, sep, ctxVar string) error {
+	if !strings.ContainsAny(pattern, "{}") {
+		return nil
+	}
+
+	// Collapse each {...} span to a brace-only marker before splitting, so a
+	// template's own dots ({@subject.1}) don't count as token separators.
+	prefix, body := "", triggerTemplateSpan.ReplaceAllString(pattern, "{}")
+	if sep == "/" {
+		prefix, body = "/", strings.Trim(body, "/")
+	}
+	tokens := strings.Split(body, sep)
+	first := -1
+	for i, tok := range tokens {
+		if strings.ContainsAny(tok, "{}") {
+			tokens[i] = "*"
+			if first < 0 {
+				first = i
+			}
+		}
+	}
+	example := prefix + strings.Join(tokens, sep)
+
+	return fmt.Errorf("%s %q contains a template, but trigger patterns are matched literally and never expanded "+
+		"— use a wildcard ('*' or '>') and read the token with {%s.N} in the action (e.g. %q with {%s.%d})",
+		field, pattern, ctxVar, example, ctxVar, first)
 }
 
 // validateRandomCalls rejects a malformed {@random.*} call at load time.
