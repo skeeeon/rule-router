@@ -179,7 +179,8 @@ All system variables can be used in conditions with these operators:
 - `lt` - Less than
 - `gte` - Greater than or equal
 - `lte` - Less than or equal
-- `exists` - Field exists (not null)
+- `exists` - Field is present and not null
+- `not_exists` - Field is missing or null
 
 **String/Array:**
 - `contains` - String contains substring or array contains element
@@ -215,6 +216,31 @@ All system variables can be used in conditions with these operators:
 - Invalid duration strings or unparseable timestamps cause the condition to evaluate `false` (not error).
 
 This is most commonly used to drop stale events from queue backlogs (`recent: "1m"` to ignore anything older than a minute).
+
+### `exists` / `not_exists` Details
+
+Both take no `value`. They answer one question — is the field there? — and are exact inverses:
+
+| Field in message | `exists` | `not_exists` |
+|---|---|---|
+| Missing (`{}`) | false | **true** |
+| `null` | false | **true** |
+| Present, even `""`, `0`, `false`, or `[]` | **true** | false |
+
+The same holds for nested paths (`{device.location.zone}` is missing if any step is), header and query lookups, and KV lookups (a missing key or JSON path counts as missing).
+
+`not_exists` is the only way to act on a field's **absence**. Every other operator — including `neq` and `not_in` — is `false` on a missing field, and condition groups have no `not`. Many sources signal state by omission: OwnTracks drops `inregions` when you are outside every region, many devices drop a sensor key when the sensor is unplugged. Pair the two operators to give each case its own rule:
+
+```yaml
+# In a region: copy the array
+- field: "{inregions}"
+  operator: exists
+# Outside every region: the rule writes [] instead
+- field: "{inregions}"
+  operator: not_exists
+```
+
+See [`rules/router/owntracks.yaml`](../rules/router/owntracks.yaml) for the full pair, and [09 Patterns — Writing to KV](./09-patterns.md#11-writing-to-kv-event--state) for why an optional array needs it.
 
 ## Worked examples
 

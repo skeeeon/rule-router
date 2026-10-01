@@ -18,6 +18,9 @@ named 'my_rule_test/' that corresponds to a 'my_rule.yaml' file. It runs all
 'match_*.json' and 'not_match_*.json' files within the suite, validating
 conditions, templates, and forEach logic.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Flags parsed; from here an error is a result (failing tests, lint
+		// findings, no match), not misuse, so the usage text would only bury it.
+		cmd.SilenceUsage = true
 		rulesDir, _ := cmd.Flags().GetString("rules")
 		outputFormat, _ := cmd.Flags().GetString("output")
 		verbose, _ := cmd.Flags().GetBool("verbose")

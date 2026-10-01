@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Features
+- **`not_exists` condition operator** — true when a field is missing or `null`, the exact inverse of `exists`. It is the only way to act on a field's *absence*: every other operator (including `neq`, `not_in`, `not_contains`) is `false` on a missing field, and condition groups have no `not`. Sources often signal state by omission — OwnTracks drops `inregions` outside every region — and without this a rule copying that state into KV either rendered invalid JSON (`"inregions": ,`) or, gated on `exists`, never fired on exit and left the last value standing. Works on message paths, headers, query parameters, and KV lookups. Available in `rule-cli new`, the web rule builder, and the help text.
+- **New example: `rules/router/owntracks.yaml`** — OwnTracks location messages into a per-person KV entry (`$KV.owntracks.<user>`: lat/lon, accuracy, SSID, regions), as an `exists` / `not_exists` pair so exactly one write lands per message.
+- **Verify Stripe, Slack, and Standard Webhooks signatures** — an `hmac` block takes `scheme: stripe | slack | standardwebhooks` plus a `secret`, covering providers that sign a timestamp with the body (Svix, Clerk, Resend, OpenAI, …) and could previously only be verified downstream. Presets are hardcoded per vendor rather than a configurable template; setting `header`/`algorithm`/`encoding`/`prefix` alongside a scheme is a load error. The timestamp tolerance is a fixed five minutes. `webhook_hmac_verifications_total` gains an `expired` result for a valid signature with a stale timestamp, so clock drift is distinguishable from a wrong secret. A block without `scheme` behaves as before.
+- **Random value functions** — `{@random.int(min,max)}`, `{@random.float(min,max,decimals)}`, and `{@random.choice(a,b,…)}` for synthetic and fixture data. Not for nonces or IDs (`uuid4()`/`uuid7()` remain the answer). Calls are validated at load against the parsed rule, so a malformed call fails the load instead of rendering an empty hole mid-payload, while a comment *documenting* the syntax is ignored. `,` is now allowed inside a template token, so `{foo,bar}` renders empty rather than literally.
+- **6-field cron expressions** — schedules accept an optional leading seconds field for sub-minute intervals; 5-field expressions are unchanged. The loader and scheduler now share one parser (`rule.CronParser`), so they can no longer disagree about a rule. Dropped fires (a fire arriving while the previous run is still going) are now counted in `scheduler_job_runs_total{status="singleton_rescheduled"}` with run time in `scheduler_job_duration_seconds`, and each job logs its resolved cadence at registration.
+
+### Fixes
+- **`rule-cli check -n` and `_rule_N/` test groups evaluated the whole file** — the rule index only chose which trigger to mock; every rule in the file was loaded into the processor. When rules shared a trigger subject, a check reported a sibling's match as the selected rule's, and a `not_match` test failed because a *different* rule fired. Both paths now load only the selected rule, as the browser tester already did.
+- **`exists` logged a warning on every message missing the field** — a missing field was handled as a resolve failure and logged at `warn` before evaluating to `false`. Absence is the answer an existence check asks for, so `exists` and `not_exists` no longer log it.
+- **Pattern 11 in the patterns guide never matched** — its trigger subject was `events.location.{user_id}`; templates are not expanded in trigger subjects, so it subscribed to that literal token. It now uses `events.location.*` and `{@subject.2}`.
+
+### Improvements
+- **`rule-cli test` names failures by rule** — results in a multi-rule suite read `_rule_1/not_match_1.json` instead of a bare `not_match_1.json` repeated once per group.
+- **`rule-cli check`, `test`, and `lint` no longer print usage after a runtime failure** — failing tests or a non-matching check were followed by the full flag reference, burying the result. Usage still prints for flag errors.
+- **`rule-cli scaffold` recognizes existence checks** and suggests a test with the field removed. Scaffold tips and generated READMEs drop the stale "New v0.4 syntax" wording.
+- **Documentation** — an `exists` / `not_exists` reference with a missing / null / present table, an optional-fields section in the KV-write pattern, and troubleshooting entries for negative operators on missing fields and for unquotable optional arrays.
+
 ## [0.19.0] - 2026-08-25
 
 ### Features

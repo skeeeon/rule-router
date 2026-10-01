@@ -87,7 +87,7 @@ HTTP paths support the same wildcard syntax as NATS subjects, with `/` as the se
 ```yaml
 trigger:
   schedule:
-    cron: "0 8 * * 1-5"           # Standard 5-field cron expression
+    cron: "0 8 * * 1-5"           # 5-field cron; prefix a seconds field for sub-minute ("*/10 * * * * *")
     timezone: "America/New_York"   # Optional IANA timezone, defaults to system local
 ```
 

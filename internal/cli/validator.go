@@ -42,6 +42,6 @@ Available Operators:
   Comparison:  gt, lt, gte, lte
   String:      contains, not_contains
   Membership:  in, not_in
-  Special:     exists, recent
+  Special:     exists, not_exists, recent
   Array:       any, all, none (require nested conditions)
 --------------------`

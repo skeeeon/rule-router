@@ -188,6 +188,9 @@ func (t *Tester) scaffoldSingleRule(testDir string, r *rule.Rule) error {
 	if features.HasArrayOperators {
 		fmt.Printf("   ✓ Array operators (any/all/none) detected\n")
 	}
+	if features.HasExistenceChecks {
+		fmt.Printf("   ✓ Existence checks (exists/not_exists) detected\n")
+	}
 	fmt.Println()
 
 	// Generate examples based on detected features
@@ -234,6 +237,8 @@ type RuleFeatures struct {
 	HasKVLookups           bool
 	HasTimeConditions      bool
 	HasArrayOperators      bool
+	HasExistenceChecks     bool
+	ExistenceFields        []string
 	IsHTTPTrigger          bool
 	KVBuckets              []string
 	ComparisonFields       []string
@@ -244,6 +249,7 @@ func analyzeRuleFeatures(r *rule.Rule) RuleFeatures {
 	features := RuleFeatures{
 		KVBuckets:        make([]string, 0),
 		ComparisonFields: make([]string, 0),
+		ExistenceFields:  make([]string, 0),
 	}
 
 	// Check for forEach
@@ -275,6 +281,11 @@ func analyzeConditions(conds *rule.Conditions, features *RuleFeatures) {
 				analyzeConditions(item.Conditions, features)
 			}
 			continue
+		}
+
+		if item.Operator == "exists" || item.Operator == "not_exists" {
+			features.HasExistenceChecks = true
+			features.ExistenceFields = appendUnique(features.ExistenceFields, item.Field)
 		}
 
 		// Check for time-based conditions
@@ -429,12 +440,12 @@ This is a basic rule test suite. Update the example files to match your rule's c
 2. Add match_1_output.json to validate the generated action
 3. Create additional test cases for edge cases
 
-## New v0.4 Syntax
+## Template Syntax
 
-This rule uses the new {braces} syntax:
+This rule uses {braces} template syntax:
 - All condition fields use {braces}: {temperature}, {@time.hour}
 - Template variables use {braces}: {field}
-- Variable comparisons are now supported: field: "{a}" value: "{b}"
+- Compare against another variable: field: "{a}" value: "{b}"
 `
 
 	writeOrWarn(filepath.Join(testDir, "README.md"), []byte(readme))
@@ -612,9 +623,9 @@ This rule uses forEach on the field: %s
 3. The output file should match the EXACT subject/URL and payload your rule generates
 4. Add more test cases for edge cases specific to your rule
 
-## v0.4 Syntax Features
+## Template Syntax
 
-This rule uses the new {braces} syntax:
+This rule uses {braces} template syntax:
 - **Condition fields**: {field}
 - **ForEach fields**: {arrayField}
 - **Template variables**: {variable}
@@ -692,9 +703,9 @@ func (t *Tester) generateVariableComparisonExamples(testDir string, r *rule.Rule
 
 This rule uses variable-to-variable comparisons in conditions.
 
-## v0.4 Syntax Features
+## Template Syntax
 
-This rule demonstrates the new {braces} syntax for variable comparisons:
+This rule uses {braces} templates on both sides of a comparison:
 
 ` + "```yaml" + `
 conditions:
@@ -906,6 +917,11 @@ func (t *Tester) printScaffoldTips(features RuleFeatures) {
 		fmt.Println("   • Test with arrays of different sizes and match patterns")
 	}
 
+	if features.HasExistenceChecks {
+		fmt.Printf("   • This rule checks whether fields are present: %s\n", strings.Join(features.ExistenceFields, ", "))
+		fmt.Println("   • Add a test with each field removed — a null value counts as missing too")
+	}
+
 	if features.IsHTTPTrigger {
 		fmt.Println("   • HTTP trigger: set \"headers\" in _test_config.json to resolve {@header.Name}")
 		fmt.Println("     — and to pick the body decoder, e.g. \"Content-Type\": \"application/x-www-form-urlencoded\"")
@@ -913,10 +929,10 @@ func (t *Tester) printScaffoldTips(features RuleFeatures) {
 		fmt.Println("   • A message file may hold a form body or plain text, not just JSON")
 	}
 
-	fmt.Println("\n📖 New v0.4 Syntax Reminders:")
+	fmt.Println("\n📖 Template Syntax Reminders:")
 	fmt.Println("   • All condition fields use {braces}: {temperature}")
 	fmt.Println("   • System variables use {braces}: {@time.hour}, {@kv.bucket.key:field}")
-	fmt.Println("   • Variable comparisons are now supported: value: \"{threshold}\"")
+	fmt.Println("   • Compare against another variable: value: \"{threshold}\"")
 	fmt.Println("   • ForEach fields use {braces}: forEach: \"{items}\"")
 }
 
@@ -969,7 +985,7 @@ func (t *Tester) QuickCheck(rulePath, messagePath, subjectOverride, kvMockPath s
 	}
 
 	kvData := loadMockKV(kvMockPath)
-	processor, err := setupTestProcessor(rulePath, kvData, testConfig, t.Verbose)
+	processor, err := setupTestProcessor(rulePath, ruleIndex, kvData, testConfig, t.Verbose)
 	if err != nil {
 		return err
 	}
@@ -1083,7 +1099,7 @@ func (t *Tester) runTestsSequential(groups []Group) Summary {
 				fmt.Printf("=== RULE: %s ===\n", group.RulePath)
 			}
 		}
-		processor, err := setupTestProcessor(group.RulePath, group.KVData, group.Config, false)
+		processor, err := setupTestProcessor(group.RulePath, group.Index, group.KVData, group.Config, false)
 		if err != nil {
 			// A rule that fails to load must surface as failures, not silent "no match".
 			if !t.Quiet {
@@ -1093,7 +1109,7 @@ func (t *Tester) runTestsSequential(groups []Group) Summary {
 				summary.Total++
 				summary.Failed++
 				summary.Results = append(summary.Results, Result{
-					File:   filepath.Base(testFile),
+					File:   testDisplayName(testFile),
 					Passed: false,
 					Error:  err.Error(),
 				})
@@ -1146,12 +1162,12 @@ func (t *Tester) runTestsParallel(groups []Group) Summary {
 	}
 	go func() {
 		for _, group := range groups {
-			processor, err := setupTestProcessor(group.RulePath, group.KVData, group.Config, false)
+			processor, err := setupTestProcessor(group.RulePath, group.Index, group.KVData, group.Config, false)
 			if err != nil {
 				// A rule that fails to load surfaces as a failed result per test file.
 				for _, testFile := range group.TestFiles {
 					results <- Result{
-						File:   filepath.Base(testFile),
+						File:   testDisplayName(testFile),
 						Passed: false,
 						Error:  err.Error(),
 					}
@@ -1199,7 +1215,7 @@ func (t *Tester) runSingleTestCase(processor *rule.Processor, messagePath string
 	start := time.Now()
 	baseName := filepath.Base(messagePath)
 	shouldMatch := strings.HasPrefix(baseName, "match_")
-	result := Result{File: baseName}
+	result := Result{File: testDisplayName(messagePath)}
 
 	msgBytes, err := os.ReadFile(messagePath)
 	if err != nil {
@@ -1457,7 +1473,12 @@ func (t *Tester) collectTestGroups(rulesDir string) ([]Group, error) {
 	return testGroups, err
 }
 
-func setupTestProcessor(rulePath string, kvData map[string]map[string]any, testConfig *Config, verbose bool) (*rule.Processor, error) {
+// setupTestProcessor builds a processor from rulePath. ruleIndex >= 0 loads only
+// that rule, so a check or a _rule_N/ test group sees the selected rule alone —
+// with the whole file loaded, any sibling rule on the same subject would also
+// fire and its actions would be reported as the selected rule's. -1 loads every
+// rule (single-rule files and flat test layouts).
+func setupTestProcessor(rulePath string, ruleIndex int, kvData map[string]map[string]any, testConfig *Config, verbose bool) (*rule.Processor, error) {
 	log := logger.NewNop()
 	var bucketNames []string
 	for bucket := range kvData {
@@ -1468,6 +1489,12 @@ func setupTestProcessor(rulePath string, kvData map[string]map[string]any, testC
 	rules, err := loader.LoadFromFile(rulePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load rules from %s: %w", rulePath, err)
+	}
+	if ruleIndex >= 0 {
+		if ruleIndex >= len(rules) {
+			return nil, fmt.Errorf("rule index %d out of range (%s has %d rules)", ruleIndex, rulePath, len(rules))
+		}
+		rules = rules[ruleIndex : ruleIndex+1]
 	}
 
 	var procOpts []rule.Option
@@ -1620,4 +1647,16 @@ func collectTestFiles(dir string) []string {
 		}
 	}
 	return valid
+}
+
+// testDisplayName names a test file in results. Files in a _rule_N/ group keep
+// that prefix: a multi-rule suite repeats names like match_1.json in every
+// group, and parallel runs interleave groups, so the bare name can't say which
+// rule failed.
+func testDisplayName(testFile string) string {
+	base := filepath.Base(testFile)
+	if dir := filepath.Base(filepath.Dir(testFile)); parseRuleIndex(dir) >= 0 {
+		return dir + "/" + base
+	}
+	return base
 }

@@ -247,7 +247,7 @@ rule-cli check --rule webhook.yaml --message msg.json \
 rule-cli check --rule webhook.yaml --message msg.json --query '?tenant=acme&page=2'
 ```
 
-For multi-rule files, omitting `--rule-index` will list all rules with their triggers so you can pick one.
+For multi-rule files, omitting `--rule-index` will list all rules with their triggers so you can pick one. The selected rule is checked **alone** — its siblings are not loaded — so when several rules share a trigger subject, the result is that rule's match and actions, not whichever sibling also fired.
 
 #### Testing non-JSON bodies
 
@@ -350,7 +350,7 @@ rules/
       match_1.json
 ```
 
-Each `_rule_N/` directory has the same structure as a standard flat test directory — its own `_test_config.json`, `mock_kv_data.json`, match/not_match files, and output files.
+Each `_rule_N/` directory has the same structure as a standard flat test directory — its own `_test_config.json`, `mock_kv_data.json`, match/not_match files, and output files. Each group runs against **only its own rule**, so a `not_match` file for rule 1 fails only if rule 1 matches — a sibling rule on the same subject cannot make it pass or fail. Results are reported as `_rule_N/match_1.json`, since every group has its own `match_1.json`.
 
 **Single-rule files** continue to use the flat layout with no subdirectories (fully backward compatible).
 

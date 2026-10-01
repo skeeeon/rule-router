@@ -51,7 +51,7 @@ The core of the system. Key types and flow:
 1. **Loader** parses YAML rules from filesystem or NATS KV bucket
 2. **Index** maps NATS subject patterns to rules for O(1) lookup. Wildcard patterns (`*`, `>`) compile through `pattern.go`; HTTP path patterns reuse the same machinery via `path_matcher.go` (slash-separated).
 3. **Processor** orchestrates rule evaluation on incoming messages
-4. **Evaluator** resolves template variables and checks condition operators (`eq`, `gt`, `lt`, `gte`, `lte`, `contains`, `not_contains`, `any`, `all`, `none`); `condition_resolver.go` holds shared helpers
+4. **Evaluator** resolves template variables and checks condition operators (`eq`, `gt`, `lt`, `gte`, `lte`, `contains`, `not_contains`, `exists`, `not_exists`, `any`, `all`, `none`); `condition_resolver.go` holds shared helpers
 5. **ThrottleManager** (`throttle.go`) — per-rule leading-edge suppression with a configurable window; state resets naturally when Processor is rebuilt on reload. See Throttle below for the trailing-mode path, which does *not* live here.
 6. **Signature verification** (`signature.go` + `signature_verify.go`) — nkey-based payload signature checks (stubbed out in the WASM build)
 
@@ -60,7 +60,7 @@ Template syntax:
 - Subject tokens: `{@subject.0}`, `{@subject.1}`, …
 - HTTP request: `{@path}`, `{@path.0}`, `{@path.count}`, `{@method}`, `{@header.X-Name}` (case-insensitive), `{@query.name}` (case-sensitive)
 - KV lookups: `{@kv.bucket.key}` (supports nested template substitution inside the key)
-- System functions: `{@timestamp()}`, `{@uuid4()}`, `{@uuid7()}`
+- System functions: `{@timestamp()}`, `{@uuid4()}`, `{@uuid7()}`; random fixture data via `{@random.int(min,max)}`, `{@random.float(min,max,decimals)}`, `{@random.choice(a,b,…)}` (validated at load by `random.go::randomValue`, the single definition of a valid call)
 - Time context (pre-computed per evaluation): `{@time.hour}`, `{@time.minute}`, `{@day.name}`, `{@day.number}`, `{@date.year}`, `{@date.month}`, `{@date.day}`, `{@date.iso}`, `{@timestamp.unix}`, `{@timestamp.iso}`
 
 Body decoding (`context.go::NewEvaluationContext`) is the single payload→fields boundary — the gateway, `rule-cli`, and WASM all route through it. It picks a decoder from the canonicalized `Content-Type` header (canonicalization therefore runs *before* the decode):
@@ -86,7 +86,7 @@ Each feature is a separate `lifecycle.Application` wired up by the AppBuilder:
 
 - **RouterApp** (`router.go`) — subscribes to NATS subjects and runs the rule engine per message
 - **GatewayApp** (`gateway.go`) — inbound HTTP→NATS + outbound NATS→HTTP (handlers in `internal/gateway/`)
-- **SchedulerApp** (`scheduler.go`) — cron jobs via `go-co-op/gocron/v2` that publish to NATS or HTTP; KV-loaded jobs are tagged (`kv-rule`) so they can be swapped on hot-reload without touching file-loaded jobs
+- **SchedulerApp** (`scheduler.go`) — cron jobs via `go-co-op/gocron/v2` that publish to NATS or HTTP (5- or 6-field cron; `rule.CronParser` is the one dialect shared by loader and scheduler); KV-loaded jobs are tagged (`kv-rule`) so they can be swapped on hot-reload without touching file-loaded jobs
 
 ### Shared Infrastructure
 
@@ -98,7 +98,7 @@ Each feature is a separate `lifecycle.Application` wired up by the AppBuilder:
 - **Gateway** (`internal/gateway/`) — HTTP handlers for inbound (fire-and-forget by default, or synchronous when a matched rule has a `respond`/`request` action — see Request/Reply below) and outbound (ACK-on-success with retry) routes. The inbound server uses a single catch-all handler that delegates path matching to the Processor; both file-loaded and KV-loaded rules support exact paths and NATS-style wildcard paths (`/webhooks/*/events`, `/api/>`). Exact and wildcard rules both fire when both match. Wildcards are validated by `rule.ValidatePathPattern`. An HTTP trigger may declare an `hmac` block — generic (`header`/`secret`/`algorithm`/`encoding`/`prefix`) or a named `scheme` (`stripe`/`slack`/`standardwebhooks`, timestamp-signed with a fixed 5-minute tolerance; only `secret` is set) — which the handler enforces as a **fail-closed gate** via `Processor.CheckHTTPHMAC` before any rule fires: a bad/missing/unverifiable HMAC over the raw body → 401. The secret accepts a literal, an env ref `${VAR}` (expanded at load), or a KV ref `{@kv.bucket.key}` (resolved per request). This is transport auth, not a rule condition — it touches no evaluation/condition machinery (`hmac.go` + `verifyHMAC`, stdlib crypto, WASM-safe so no build-tag stub).
 - **Deferred** (`internal/deferred/`) — the execution half of a trailing-edge action throttle. See Throttle below.
 - **HTTPClient** (`internal/httpclient/`) — shared HTTP client (with retry/backoff) used by GatewayApp and SchedulerApp
-- **Tester** (`internal/tester/`) — shared rule-evaluation harness used by both `rule-cli check` and the WASM build
+- **Tester** (`internal/tester/`) — shared rule-evaluation harness used by both `rule-cli check` and the WASM build. A selected rule index (`check -n`, a `_rule_N/` test group, the WASM `ruleIndex`) loads **only that rule** into the processor (`setupTestProcessor`); loading the whole file lets a sibling rule on the same subject answer for the selected one (test-pinned by `TestSetupTestProcessor_RuleIndex`)
 - **CLI helpers** (`internal/cli/`) — prompt, renderer, and validator helpers backing `rule-cli`. `rule-cli check` takes repeatable `--header 'Name: value'` so a quick check can set the `Content-Type` that selects the payload decoder; `rule-cli test` reads the same headers from `_test_config.json`
 - **Auth Manager** (`internal/authmgr/`, with providers under `internal/authmgr/providers/`) — OAuth2 / custom-HTTP token provider layer backing `cmd/nats-auth-manager`
 

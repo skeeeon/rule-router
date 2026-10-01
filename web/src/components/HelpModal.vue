@@ -136,6 +136,7 @@ onUnmounted(() => { document.removeEventListener('keydown', onEscape) })
           <h3>Special</h3>
           <table class="help-table"><tbody>
             <tr><td class="mono">exists</td><td>Field exists (no value needed)</td></tr>
+            <tr><td class="mono">not_exists</td><td>Field is missing or null (no value needed)</td></tr>
             <tr><td class="mono">recent</td><td>Timestamp within N seconds of now</td></tr>
           </tbody></table>
 

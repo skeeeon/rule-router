@@ -300,10 +300,10 @@ A rule action can update a KV bucket by publishing to the bucket's underlying su
 ```yaml
 - trigger:
     nats:
-      subject: "events.location.{user_id}"
+      subject: "events.location.*"
   action:
     nats:
-      subject: "$KV.user_locations.{user_id}"
+      subject: "$KV.user_locations.{@subject.2}"
       payload: |
         {
           "region": "{region}",
@@ -314,6 +314,27 @@ A rule action can update a KV bucket by publishing to the bucket's underlying su
 ```
 
 **When to reach for it:** Promoting an event stream into a "current state" view. Subsequent rules read the latest value with `{@kv.user_locations.{user_id}:region}`. The bucket's history setting (`nats kv add ... --history=N`) controls how much past state is retained.
+
+**Optional fields.** A missing field renders as an empty string. Inside quotes that is harmless (`"region": ""`), but an unquoted number, array, or object leaves a hole — `"lat": ,` — and the KV value stops being JSON, so every later `{@kv...:path}` lookup on it fails. Worse, dropping the field from the payload instead doesn't help when its *absence is the news*: a rule gated on `exists` never fires when the field disappears, so the KV entry keeps the last value forever. Split on presence instead, with an `exists` rule that copies the field and a `not_exists` rule that writes an explicit empty value:
+
+```yaml
+- trigger:
+    nats:
+      subject: "owntracks.*.*"
+  conditions:
+    operator: and
+    items:
+      - field: "{inregions}"
+        operator: not_exists
+  action:
+    nats:
+      subject: "$KV.owntracks.{@subject.1}"
+      payload: |
+        {"lat": {lat}, "lon": {lon}, "inregions": []}
+# ...plus the same rule with operator: exists and "inregions": {inregions}
+```
+
+Exactly one of the pair fires per message, so each update is a single write. [`rules/router/owntracks.yaml`](../rules/router/owntracks.yaml) is the complete version.
 
 ### 12. Cross-source correlation
 

@@ -295,7 +295,7 @@ func (rb *RuleBuilder) getConditionsRecursive(indent string) (*rule.Conditions, 
 			item.Conditions = nested
 		} else {
 			// Handle all other (non-array) operators
-			if operator != "exists" {
+			if operator != "exists" && operator != "not_exists" {
 				// Get value with variable comparison support
 				valueStr, valueType, err := rb.getConditionValue(indent+"  - ", field)
 				if err != nil {

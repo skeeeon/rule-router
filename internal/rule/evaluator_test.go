@@ -164,6 +164,79 @@ func TestEvaluateCondition_Exists(t *testing.T) {
 	}
 }
 
+// TestEvaluateCondition_NotExists pins not_exists as the exact inverse of
+// exists, including null — it must not fall into the missing-field
+// short-circuit that makes every other operator false.
+func TestEvaluateCondition_NotExists(t *testing.T) {
+	evaluator := newTestEvaluator()
+
+	tests := []struct {
+		name      string
+		condition Condition
+		data      map[string]any
+		want      bool
+	}{
+		{
+			name:      "field missing",
+			condition: Condition{Field: "{inregions}", Operator: "not_exists"},
+			data:      map[string]any{"lat": 39.3},
+			want:      true,
+		},
+		{
+			name:      "field null",
+			condition: Condition{Field: "{inregions}", Operator: "not_exists"},
+			data:      map[string]any{"inregions": nil},
+			want:      true,
+		},
+		{
+			name:      "field present",
+			condition: Condition{Field: "{inregions}", Operator: "not_exists"},
+			data:      map[string]any{"inregions": []any{"home"}},
+			want:      false,
+		},
+		{
+			name:      "field present but empty string",
+			condition: Condition{Field: "{ssid}", Operator: "not_exists"},
+			data:      map[string]any{"ssid": ""},
+			want:      false,
+		},
+		{
+			name:      "field present but empty array",
+			condition: Condition{Field: "{inregions}", Operator: "not_exists"},
+			data:      map[string]any{"inregions": []any{}},
+			want:      false,
+		},
+		{
+			name:      "field present but zero",
+			condition: Condition{Field: "{count}", Operator: "not_exists"},
+			data:      map[string]any{"count": 0},
+			want:      false,
+		},
+		{
+			name:      "field present but false",
+			condition: Condition{Field: "{armed}", Operator: "not_exists"},
+			data:      map[string]any{"armed": false},
+			want:      false,
+		},
+		{
+			name:      "nested path missing",
+			condition: Condition{Field: "{device.location.zone}", Operator: "not_exists"},
+			data:      map[string]any{"device": map[string]any{"id": "d1"}},
+			want:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			context := newTestContext(tt.data, "test.subject")
+			got := evaluator.evaluateCondition(&tt.condition, context)
+			if got != tt.want {
+				t.Errorf("evaluateCondition() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestEvaluateCondition_NestedFields tests nested field access
 func TestEvaluateCondition_NestedFields(t *testing.T) {
 	evaluator := newTestEvaluator()

@@ -1,0 +1,78 @@
+# OwnTracks → KV: keep each person's latest location as current state
+#
+# OwnTracks publishes on owntracks.<user>.<device> (MQTT owntracks/<user>/<device>
+# bridged into NATS). Only "location" messages carry position; lwt, card,
+# transition, and waypoint messages are skipped.
+#
+# The KV key is the user token, so the entry always holds the person's most
+# recent fix regardless of which of their devices reported it. Read it back
+# from other rules with {@kv.owntracks.<user>:lat}, :ssid, :inregions, etc.
+#
+# Prerequisite: nats kv add owntracks --history=5
+#
+# Absent fields carry meaning in OwnTracks: no "inregions" means outside every
+# region, no "ssid" means off Wi-Fi. A missing ssid already renders as "", but a
+# missing array would render as nothing and corrupt the JSON, so the two rules
+# below split on inregions — exactly one fires per location message, and
+# leaving a region overwrites the entry with [] instead of leaving it stale.
+#
+# Sample subject: owntracks.brian.3C2CAFDE-AE65-4001-8EEB-2311CCC45B6D
+# Sample message:
+# {"_type":"location","acc":14,"lat":39.297782,"lon":-94.560702,
+#  "inregions":["home"],"ssid":"AirForceWAN","tst":1790891750, ...}
+
+# In one or more regions
+- trigger:
+    nats:
+      subject: owntracks.*.*
+  conditions:
+    operator: and
+    items:
+      - field: "{_type}"
+        operator: eq
+        value: location
+      - field: "{inregions}"
+        operator: exists
+  action:
+    nats:
+      subject: "$KV.owntracks.{@subject.1}"
+      payload: |
+        {
+          "user": "{@subject.1}",
+          "device": "{@subject.2}",
+          "lat": {lat},
+          "lon": {lon},
+          "acc": {acc},
+          "ssid": "{ssid}",
+          "inregions": {inregions},
+          "tst": {tst},
+          "updated_at": "{@timestamp.iso}"
+        }
+
+# Outside every region
+- trigger:
+    nats:
+      subject: owntracks.*.*
+  conditions:
+    operator: and
+    items:
+      - field: "{_type}"
+        operator: eq
+        value: location
+      - field: "{inregions}"
+        operator: not_exists
+  action:
+    nats:
+      subject: "$KV.owntracks.{@subject.1}"
+      payload: |
+        {
+          "user": "{@subject.1}",
+          "device": "{@subject.2}",
+          "lat": {lat},
+          "lon": {lon},
+          "acc": {acc},
+          "ssid": "{ssid}",
+          "inregions": [],
+          "tst": {tst},
+          "updated_at": "{@timestamp.iso}"
+        }

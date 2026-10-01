@@ -27,6 +27,7 @@ const OPERATOR_GROUPS = [
   ]},
   { label: 'Special', ops: [
     { value: 'exists', label: 'exists' },
+    { value: 'not_exists', label: 'not_exists' },
     { value: 'recent', label: 'recent (seconds)' },
   ]},
   { label: 'Array', ops: [
@@ -105,6 +106,7 @@ function onOperatorChange() {
           v-model="item.field"
           placeholder="{field}"
           :error="!!errorFor(`${prefix}.field`)"
+          :warn-missing="item.operator !== 'not_exists'"
         />
         <span class="field-error" v-if="errorFor(`${prefix}.field`)">
           {{ errorFor(`${prefix}.field`).message }}
@@ -131,7 +133,7 @@ function onOperatorChange() {
       </div>
 
       <!-- Standard value input -->
-      <div v-else-if="!isArrayOp && item.operator !== 'exists'" class="field compact">
+      <div v-else-if="!isArrayOp && !['exists', 'not_exists'].includes(item.operator)" class="field compact">
         <FieldSuggestInput
           v-model="item.value"
           :placeholder="OPERATOR_PLACEHOLDERS[item.operator] || 'value'"

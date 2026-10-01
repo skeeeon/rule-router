@@ -5,6 +5,9 @@ const props = defineProps({
   modelValue: String,
   placeholder: { type: String, default: '' },
   error: { type: Boolean, default: false },
+  // Off when absence is what the user is testing for (not_exists), where a
+  // field missing from the sample is the matching case, not a typo.
+  warnMissing: { type: Boolean, default: true },
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -57,7 +60,7 @@ const visible = computed(() => showSuggestions.value && suggestions.value.length
 // Show a soft warning when the field has a completed {path} that doesn't match any inspected field
 const fieldWarning = computed(() => {
   const val = props.modelValue || ''
-  if (!val || inspectedFields.value.length === 0) return false
+  if (!props.warnMissing || !val || inspectedFields.value.length === 0) return false
   // Extract all completed {path} references (not system @ vars)
   const refs = [...val.matchAll(/\{([^}@][^}]*)\}/g)]
   if (refs.length === 0) return false

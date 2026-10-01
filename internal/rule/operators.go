@@ -16,6 +16,7 @@ var validOperators = map[string]bool{
 	"in":           true,
 	"not_in":       true,
 	"exists":       true,
+	"not_exists":   true,
 	"recent":       true,
 	"any":          true,
 	"all":          true,

@@ -84,6 +84,19 @@ func (e *Evaluator) evaluateOR(conditions *Conditions, context *EvaluationContex
 func (e *Evaluator) evaluateCondition(cond *Condition, context *EvaluationContext) bool {
 	// Resolve LEFT side (field) - uses pre-computed path when available
 	leftValue, err := resolveConditionValueFast(cond.Field, cond.fieldVarName, cond.fieldPath, context)
+
+	// A resolve error means the field is absent (missing key, or a path through
+	// a non-object). For the existence operators that is the answer rather than
+	// a fault, so they run first and don't log it. not_exists is the only way to
+	// act on absence: every other operator is false on a missing field, and
+	// condition groups have no "not".
+	switch cond.Operator {
+	case "exists":
+		return err == nil && leftValue != nil
+	case "not_exists":
+		return err != nil || leftValue == nil
+	}
+
 	if err != nil {
 		e.logger.Warn("failed to resolve condition field",
 			"field", cond.Field,
@@ -92,14 +105,8 @@ func (e *Evaluator) evaluateCondition(cond *Condition, context *EvaluationContex
 		return false
 	}
 
-	// Check existence before proceeding (except for 'exists' operator)
-	if leftValue == nil && cond.Operator != "exists" {
+	if leftValue == nil {
 		return false
-	}
-
-	// Handle 'exists' operator specially
-	if cond.Operator == "exists" {
-		return leftValue != nil
 	}
 
 	// Handle array operators (any/all/none) - pass through to existing handler

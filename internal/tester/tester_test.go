@@ -477,6 +477,33 @@ func TestAnalyzeRuleFeatures(t *testing.T) {
 			},
 		},
 		{
+			name: "existence checks detected, including inside groups",
+			rule: rule.Rule{
+				Conditions: &rule.Conditions{
+					Items: []rule.Condition{
+						{Field: "{inregions}", Operator: "exists"},
+					},
+					Groups: []rule.Conditions{{
+						Items: []rule.Condition{
+							{Field: "{ssid}", Operator: "not_exists"},
+							{Field: "{inregions}", Operator: "not_exists"},
+						},
+					}},
+				},
+			},
+			validate: func(t *testing.T, features RuleFeatures) {
+				if !features.HasExistenceChecks {
+					t.Error("HasExistenceChecks should be true")
+				}
+				if len(features.ExistenceFields) != 2 {
+					t.Errorf("ExistenceFields = %v, want 2 unique fields", features.ExistenceFields)
+				}
+				if features.HasVariableComparisons {
+					t.Error("an existence check has no value, so it is not a variable comparison")
+				}
+			},
+		},
+		{
 			name: "variable comparisons tracked in ComparisonFields",
 			rule: rule.Rule{
 				Conditions: &rule.Conditions{

@@ -13,6 +13,9 @@ var lintCmd = &cobra.Command{
 It parses each file to ensure it conforms to the valid rule structure, including
 triggers, actions, and conditions. This is a great first step for CI/CD pipelines.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Flags parsed; from here an error is a result (failing tests, lint
+		// findings, no match), not misuse, so the usage text would only bury it.
+		cmd.SilenceUsage = true
 		rulesDir, _ := cmd.Flags().GetString("rules")
 		if rulesDir == "" {
 			return cmd.Help()

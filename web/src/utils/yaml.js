@@ -106,7 +106,7 @@ function pushConditionItem(lines, item, indent) {
   if (isArrayOp && item.conditions && hasConditions(item.conditions)) {
     lines.push(`${pad}  conditions:`)
     pushConditions(lines, item.conditions, indent + 4)
-  } else if (item.operator !== 'exists') {
+  } else if (!['exists', 'not_exists'].includes(item.operator)) {
     lines.push(`${pad}  value: ${yamlValue(item.value)}`)
   }
 }

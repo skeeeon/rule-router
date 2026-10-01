@@ -43,6 +43,9 @@ the engine decodes it.`,
   # Resolve {@kv.bucket.key} lookups from a mock KV file
   rule-cli check --rule enrich.yaml --message msg.json --kv-mock mock_kv.json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Flags parsed; from here an error is a result (failing tests, lint
+		// findings, no match), not misuse, so the usage text would only bury it.
+		cmd.SilenceUsage = true
 		rulePath, _ := cmd.Flags().GetString("rule")
 		messagePath, _ := cmd.Flags().GetString("message")
 		subjectOverride, _ := cmd.Flags().GetString("subject")

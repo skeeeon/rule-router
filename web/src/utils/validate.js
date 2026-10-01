@@ -6,7 +6,7 @@ export const VALID_OPERATORS = [
   'eq', 'neq', 'gt', 'lt', 'gte', 'lte',
   'contains', 'not_contains',
   'in', 'not_in',
-  'exists', 'recent',
+  'exists', 'not_exists', 'recent',
   'any', 'all', 'none',
 ]
 
@@ -213,7 +213,7 @@ function validateConditionItem(item, prefix, errors) {
     if (!Array.isArray(item.value) || item.value.length === 0) {
       errors.push({ path: `${prefix}.value`, message: `${item.operator} requires a comma-separated list of values` })
     }
-  } else if (item.operator !== 'exists') {
+  } else if (!['exists', 'not_exists'].includes(item.operator)) {
     if (item.value === '' || item.value === null || item.value === undefined) {
       errors.push({ path: `${prefix}.value`, message: 'Value is required' })
     }

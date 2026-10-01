@@ -41,7 +41,9 @@ echo '{"temperature": 35}' > msg.json
 rule-cli check --rule rules/sensors/temp.yaml --message msg.json --subject sensors.temperature
 ```
 
-This runs the real rule engine and shows whether each condition passed or failed and what the final action would be. Most subtle bugs (type mismatch, missing field, wrong operator) surface here.
+This runs the real rule engine and shows whether each condition passed or failed and what the final action would be. Most subtle bugs (type mismatch, missing field, wrong operator) surface here. In a multi-rule file, `-n <index>` checks that rule alone — its siblings are not loaded, so one of them matching cannot pass for the rule you picked.
+
+One trap that looks like a broken condition: **`neq`, `not_in`, and `not_contains` are `false` on a missing field**, not true. "Status is not `active`" does not match a message with no `status` at all. To act on absence, use `not_exists` — it is the only operator that does.
 
 ### 4. Is a throttle suppressing it?
 
@@ -73,7 +75,7 @@ rule-cli check --rule idface.yaml --message body.form
 
 Two adjacent symptoms:
 
-- **The rendered payload is invalid JSON.** An unresolved variable renders as an empty string, so `"card": {card_value}` becomes `"card": ` when the sender omits that field. Quote every optional field: `"card": "{card_value}"`.
+- **The rendered payload is invalid JSON.** An unresolved variable renders as an empty string, so `"card": {card_value}` becomes `"card": ` when the sender omits that field. Quote every optional scalar: `"card": "{card_value}"`. An optional array or object cannot be quoted — split the rule on `exists` / `not_exists` instead ([09 Patterns — Writing to KV](./09-patterns.md#11-writing-to-kv-event--state)).
 - **The request returns 500 with `parsing form body`.** The body has a malformed percent-escape. This is rejected rather than partially parsed on purpose — a silently dropped field reads as absent and can flip a condition instead of raising an error.
 
 ## Query parameter is always empty
@@ -96,7 +98,7 @@ Note that a query string never affects *routing* — if the path matches, the ru
 4. **The KV value isn't JSON** but you used a JSON path. Without a colon, the whole value is returned as a string.
 5. **Template substitution inside the key didn't resolve.** If `{customer_id}` isn't in the message, `{@kv.customers.{customer_id}:tier}` becomes `{@kv.customers.:tier}` and looks up an empty key.
 
-For conditions that depend on KV values, missing values evaluate to empty strings — which usually fails the comparison silently. Add an `exists` check first if missing-vs-mismatched matters:
+In a payload template a missing KV value renders as an empty string. In a condition it counts as missing, so every comparison on it is `false` — silently. Add an `exists` check first if missing-vs-mismatched matters, or a `not_exists` rule to handle the miss explicitly:
 
 ```yaml
 - field: "{@kv.customers.{customer_id}:tier}"
