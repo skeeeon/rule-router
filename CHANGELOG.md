@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-04
+
 ### Features
 - **`not_exists` condition operator** — true when a field is missing or `null`, the exact inverse of `exists`. It is the only way to act on a field's *absence*: every other operator (including `neq`, `not_in`, `not_contains`) is `false` on a missing field, and condition groups have no `not`. Sources often signal state by omission — OwnTracks drops `inregions` outside every region — and without this a rule copying that state into KV either rendered invalid JSON (`"inregions": ,`) or, gated on `exists`, never fired on exit and left the last value standing. Works on message paths, headers, query parameters, and KV lookups. Available in `rule-cli new`, the web rule builder, and the help text.
 - **New example: `rules/router/owntracks.yaml`** — OwnTracks location messages into a per-person KV entry (`$KV.owntracks.<user>`: lat/lon, accuracy, SSID, regions), as an `exists` / `not_exists` pair so exactly one write lands per message.
@@ -20,6 +22,9 @@
 - **`rule-cli check`, `test`, and `lint` no longer print usage after a runtime failure** — failing tests or a non-matching check were followed by the full flag reference, burying the result. Usage still prints for flag errors.
 - **`rule-cli scaffold` recognizes existence checks** and suggests a test with the field removed. Scaffold tips and generated READMEs drop the stale "New v0.4 syntax" wording.
 - **Documentation** — an `exists` / `not_exists` reference with a missing / null / present table, an optional-fields section in the KV-write pattern, and troubleshooting entries for negative operators on missing fields and for unquotable optional arrays.
+
+### Security
+- Bumped the transitive `nanoid` dev/build dependency to 3.3.19 to clear GHSA-2v37-7h3g-55p8 / CVE-2026-67213 (infinite loop when `customAlphabet` or `customRandom` is called with size 0). Build-time only — it reaches the web rule-builder through vite → postcss, which never calls the custom generators, so the bug was not reachable; bumped to clear the Dependabot alert.
 
 ## [0.19.0] - 2026-08-25
 
@@ -278,6 +283,7 @@
 - Signature verification
 - Rule-cli utility
 
+[0.20.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.20.0
 [0.19.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.19.0
 [0.18.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.18.0
 [0.17.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.17.0
