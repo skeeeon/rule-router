@@ -1,6 +1,6 @@
 # Metrics & Observability
 
-`rule-router` exposes Prometheus metrics, structured logs, and basic HTTP health endpoints. This page is the canonical catalogue of every metric the application emits, plus the health-check surface and example queries/alerts.
+`rule-router` exposes Prometheus metrics, structured logs, and basic HTTP health endpoints, and announces itself on NATS service discovery. This page is the canonical catalogue of every metric the application emits, plus the health-check surface and example queries/alerts.
 
 For the config knobs referenced here, see [11 Configuration — metrics](./11-configuration.md#metrics).
 
@@ -39,6 +39,21 @@ The metrics-port `/health` and `/ready` are the recommended probe targets for **
 > **Note:** `/health` and `/ready` live on the metrics server, so they require `metrics.enabled: true` (the default). With metrics disabled there is no HTTP probe target; fall back to alerting on the `nats_connection_status` gauge (`1` = connected).
 
 > **TLS:** health and metrics endpoints, like the inbound gateway, are plain HTTP. Terminate TLS at a proxy/load balancer — see [02 Gateway — TLS termination](./02-gateway.md#tls--https-termination).
+
+---
+
+## Service discovery
+
+Every `rule-router` process registers on the NATS micro discovery protocol (`$SRV`) as `rule-router`, so one query lists every running instance, whatever its features:
+
+```bash
+nats micro ls
+nats micro info rule-router
+```
+
+It is identity only, with no endpoints. `$SRV.PING`, `$SRV.INFO`, and `$SRV.STATS` report the name, the version (a build without a version stamp reports `0.0.0-dev`), the start time, and two metadata keys: `host` (the hostname) and `features` (the enabled features, e.g. `router,gateway`). A SIGHUP reload replaces the NATS connection, so the instance re-registers with a new id and start time. The `nats-auth-manager` binary does not register.
+
+**Permissions.** The credential needs to subscribe to `$SRV.>` and to publish replies to the requester's inbox (`_INBOX.>`, or `allow_responses`). Discovery is never fatal: without the permission the process runs normally and is simply not listed, but the server's refusals are logged as `NATS asynchronous error` lines at startup and after every reconnect, and counted in `nats_async_errors_total{kind="permissions_violation"}`. Either grant `$SRV.>` or expect them.
 
 ---
 

@@ -62,7 +62,7 @@ Detailed documentation on the rule engine's features can be found in the `docs/`
 *   **[09 - Patterns](./docs/09-patterns.md)**: Recipe catalogue from simple routing through stateful cross-source correlation.
 *   **[10 - Troubleshooting](./docs/10-troubleshooting.md)**: Common failure modes and how to diagnose them.
 *   **[11 - Configuration Reference](./docs/11-configuration.md)**: Every config section, field, default, and validation bound.
-*   **[12 - Metrics & Observability](./docs/12-observability.md)**: Full Prometheus metric catalogue, health checks, example queries and alerts.
+*   **[12 - Metrics & Observability](./docs/12-observability.md)**: Full Prometheus metric catalogue, health checks, NATS service discovery, example queries and alerts.
 *   **[Rule Builder Web UI](./web/README.md)**: Visual rule creation, live YAML preview, in-browser rule testing via WASM, and NATS KV push/pull.
 *   **[Docker Deployment](#quick-start)**: Docker Compose setup for local development and deployment.
 

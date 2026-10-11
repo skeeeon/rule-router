@@ -107,6 +107,11 @@ func run() error {
 			}
 		}
 
+		// Announce the process on NATS micro discovery ($SRV): identity only,
+		// never fatal. The broker stops it on Close, so a SIGHUP reload, which
+		// replaces the connection, registers afresh.
+		baseApp.Broker.RegisterService(version, features)
+
 		// Startup is complete: broker connected and initial KV sync (if any) done.
 		// The /ready probe now reports ready (and tracks the live NATS connection).
 		baseApp.MarkReady()

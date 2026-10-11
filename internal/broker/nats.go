@@ -23,6 +23,7 @@ import (
 	json "github.com/goccy/go-json"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/nats-io/nats.go/micro"
 	"rule-router/config"
 	"rule-router/internal/logger"
 	"rule-router/internal/metrics"
@@ -107,6 +108,10 @@ type NATSBroker struct {
 	// Consumer management - track created consumers
 	consumersMu sync.RWMutex
 	consumers   map[string]string // subject -> consumer name
+
+	// NATS micro discovery registration (see RegisterService); nil until
+	// registered, and left nil if registration failed.
+	service micro.Service
 
 	// Context for managing watchers and long-running operations
 	ctx    context.Context
@@ -820,6 +825,9 @@ func asyncErrorKind(err error) string {
 //
 // Without a handler installed, nats.go discards both.
 func (b *NATSBroker) handleAsyncError(_ *nats.Conn, sub *nats.Subscription, err error) {
+	// nats.go passes a nil subscription for a permissions violation (a
+	// credential refused $SRV.> included), and runs this callback with no
+	// recover, so an unguarded sub.Subject would kill the process.
 	subject := ""
 	if sub != nil {
 		subject = sub.Subject
@@ -1078,6 +1086,14 @@ func (b *NATSBroker) Close() error {
 	consumerCount := len(b.consumers)
 	b.consumersMu.RUnlock()
 	b.logger.Info("durable consumers remain in NATS for next startup", "consumerCount", consumerCount)
+
+	// Leave discovery before the drain. Logged, not returned: discovery is
+	// never a reason for shutdown to report failure.
+	if b.service != nil {
+		if err := b.service.Stop(); err != nil {
+			b.logger.Warn("failed to stop NATS service discovery", "error", err)
+		}
+	}
 
 	if b.natsConn != nil {
 		b.logger.Info("draining NATS connection (publishing pending messages)")

@@ -87,6 +87,8 @@ nats:
 
 > **At most one** authentication method may be set (`username`, `token`, `nkeySeedFile`, `credsFile`). Setting more than one is a validation error. `password` is paired with `username` and does not count as a separate method.
 
+> **Permissions:** besides the subjects your rules use, the credential should be allowed to subscribe to `$SRV.>` for [service discovery](./12-observability.md#service-discovery). Without it everything else works; the process just is not listed.
+
 ### `nats.tls`
 
 | Field | Type | Default | Description |
