@@ -83,9 +83,16 @@ func NewSchedulerApp(base *BaseApp, cfg *config.Config) (*SchedulerApp, error) {
 	}
 	app.scheduler = s
 
-	// Register each schedule rule as a cron job
+	// Register each schedule rule as a cron job. In KV mode these rules came
+	// from the bucket, so they carry the tag rebuildCronJobs removes by;
+	// untagged, a rule present at startup could never be stopped by a KV
+	// delete and would run twice after the first rebuild.
+	var jobOpts []gocron.JobOption
+	if cfg.KV.Rules.Enabled {
+		jobOpts = append(jobOpts, gocron.WithTags(kvScheduleTag))
+	}
 	for _, r := range scheduleRules {
-		if err := app.registerScheduleRule(r); err != nil {
+		if err := app.registerScheduleRule(r, jobOpts...); err != nil {
 			return nil, fmt.Errorf("failed to register schedule rule (cron=%s): %w", r.Trigger.Schedule.Cron, err)
 		}
 	}

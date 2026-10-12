@@ -111,7 +111,9 @@ type Rule struct {
 	Conditions *Conditions `json:"conditions,omitempty" yaml:"conditions,omitempty"`
 	Action     Action      `json:"action" yaml:"action"`
 
-	// index is assigned during LoadRules for throttle key scoping (not serialized)
+	// index scopes throttle keys to this rule (not serialized): its position
+	// for file-loaded rules (LoadRules), a never-reused number for KV-loaded
+	// ones (ReplaceKVRuleSet)
 	index int
 }
 

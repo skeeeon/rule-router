@@ -77,7 +77,7 @@ Types: **C** = Counter, **G** = Gauge, **H** = Histogram. "Feature" indicates wh
 
 | Metric | Type | Labels | Feature | Description |
 |--------|------|--------|---------|-------------|
-| `nats_connection_status` | G | — | all | `1` = connected, `0` = disconnected — but it is only set by connection *events*: it reads `0` from startup until the first disconnect/reconnect cycle, even while connected. Until then use `/ready` for live connectivity. |
+| `nats_connection_status` | G | — | all | `1` = connected, `0` = disconnected. Set when the initial connect succeeds, then on every disconnect, reconnect, and close. |
 | `nats_reconnects_total` | C | — | all | Cumulative reconnect events. |
 | `nats_async_errors_total` | C | `kind` | all | Errors NATS reports outside any request. `kind="slow_consumer"`: a subscription fell behind and messages were **dropped** — on a core subject, usually a rule whose actions are too slow (see [Core concepts](01-core-concepts.md)). `kind="permissions_violation"`: the account may not publish or subscribe on a subject; a denied publish never acks, so this is the only signal. `kind="other"`: everything else. Any non-zero value deserves a look. |
 
@@ -230,9 +230,6 @@ rate(foreach_iterations_total{rule_file="nats"}[5m])
 groups:
   - name: rule-router
     rules:
-      # nats_connection_status reads 0 from startup until the first reconnect
-      # (see the catalogue), so this also fires on a healthy instance that has
-      # never reconnected. Probe /ready for live connectivity.
       - alert: RuleRouterNATSDisconnected
         expr: nats_connection_status == 0
         for: 1m
@@ -285,7 +282,7 @@ Logs are structured (slog-style key/value) via the `logging` config block ([refe
 | Field | Meaning |
 |-------|---------|
 | `subject` / `path` | The NATS subject or HTTP path of the trigger. |
-| `ruleIndex` | Which rule was evaluated (`evaluating rule`, debug level) — its position among all loaded rules. |
+| `ruleIndex` | Which rule was evaluated (`evaluating rule`, debug level) — its position among all loaded rules; with the KV rule store, a number assigned when the rule loads. |
 | `field` / `operator` | A condition whose field could not be resolved (`failed to resolve condition field`, warn level). |
 | `variable` | A template variable that rendered empty (debug level). |
 | `kind` | The class of a `NATS asynchronous error` (`slow_consumer`, `permissions_violation`, `other`). |

@@ -28,11 +28,15 @@ var kvPushCmd = &cobra.Command{
 	Use:   "push <file-or-dir>",
 	Short: "Push rule files to a NATS KV bucket",
 	Long: `Reads YAML rule files and writes them to the configured NATS KV bucket.
-File paths are converted to dotted KV keys:
+The KV key is the file name without its extension; the directory is not
+part of the key:
 
-  sensors/tank.yaml       -> sensors.tank
-  alerts/critical.yml     -> alerts.critical
+  sensors/tank.yaml       -> tank
+  alerts/critical.yml     -> critical
   routing.yaml            -> routing
+
+Keep file names unique across the directories you push to one bucket, or a
+later push overwrites an earlier one. --dry-run prints the file -> key mapping.
 
 When given a directory, pushes all *.yaml and *.yml files in that directory
 (non-recursive). To push a nested structure, push each directory separately.`,
@@ -182,14 +186,15 @@ func collectFiles(target string) ([]string, string, error) {
 	return files, target, nil
 }
 
-// pathToKey converts a file path to a dotted KV key.
-// Strips the extension and replaces path separators with dots.
-//
-// Examples:
+// pathToKey derives a file's KV key: its path relative to baseDir, extension
+// stripped, any separators turned into dots. collectFiles always passes the
+// file's own directory as baseDir (pushes are non-recursive), so the key is
+// the bare file name and the dotting never applies:
 //
 //	pathToKey("sensors/tank.yaml", "sensors") -> "tank"
-//	pathToKey("sensors/tank.yaml", ".") -> "sensors.tank"
-//	pathToKey("alerts/critical.yml", ".") -> "alerts.critical"
+//	pathToKey("alerts/critical.yml", "alerts") -> "critical"
+//
+// Putting the directory into the key would rename every key already pushed.
 func pathToKey(filePath, baseDir string) string {
 	rel, err := filepath.Rel(baseDir, filePath)
 	if err != nil {

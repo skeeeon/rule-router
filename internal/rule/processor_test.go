@@ -822,6 +822,10 @@ func TestProcessNATSActionWithForEach_IterationLimit(t *testing.T) {
 	if !strings.Contains(err.Error(), "exceeds limit") {
 		t.Errorf("Expected 'exceeds limit' error, got: %v", err)
 	}
+	// The hint must name the real config key.
+	if !strings.Contains(err.Error(), "forEach.maxIterations") {
+		t.Errorf("Expected the error to name forEach.maxIterations, got: %v", err)
+	}
 }
 
 func TestProcessNATSActionWithForEach_NestedFields(t *testing.T) {
@@ -2377,6 +2381,47 @@ func TestProcessor_Throttle_NoThrottleUnaffected(t *testing.T) {
 	if len(actions1) == 0 || len(actions2) == 0 {
 		t.Fatal("rules without throttle should always produce actions")
 	}
+}
+
+// TestProcessor_Throttle_KVUpdateKeepsStateWithItsRule pins that a KV rule
+// update cannot hand one rule's open throttle window to another. Throttle keys
+// carry the rule's index, and every update used to renumber all KV rules, so
+// here the new rule inherited the window and was suppressed while the throttled
+// rule fired again inside its own window.
+func TestProcessor_Throttle_KVUpdateKeepsStateWithItsRule(t *testing.T) {
+	processor := newTestProcessor()
+	throttledRule := func(out string) *Rule {
+		return &Rule{
+			Trigger: Trigger{NATS: &NATSTrigger{
+				Subject:  "sensors.temp",
+				Throttle: &ThrottleConfig{Window: "1h"},
+			}},
+			Action: Action{NATS: &NATSAction{Subject: out, Payload: `{}`}},
+		}
+	}
+	ruleA := throttledRule("alerts.a")
+	ruleB := throttledRule("alerts.b")
+	fire := func() []*Action {
+		t.Helper()
+		actions, err := actionsOf(processor.ProcessForSubscription("sensors.temp", "sensors.temp", []byte(`{}`), nil, nil))
+		if err != nil {
+			t.Fatalf("ProcessForSubscription: %v", err)
+		}
+		return actions
+	}
+
+	processor.ReplaceKVRuleSet(&KVRuleSet{
+		NATS: map[string][]*Rule{"sensors.temp": {ruleA}},
+		HTTP: &HTTPKVRuleSet{Exact: map[string][]*Rule{}},
+	})
+	assertActionSubjects(t, fire(), "alerts.a") // opens A's window
+
+	// A KV update adds B ahead of A on the same subject.
+	processor.ReplaceKVRuleSet(&KVRuleSet{
+		NATS: map[string][]*Rule{"sensors.temp": {ruleB, ruleA}},
+		HTTP: &HTTPKVRuleSet{Exact: map[string][]*Rule{}},
+	})
+	assertActionSubjects(t, fire(), "alerts.b") // B is new; A is still in its window
 }
 
 func TestProcessor_Throttle_WindowExpiry(t *testing.T) {

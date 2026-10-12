@@ -127,7 +127,8 @@ func (b *AppBuilder) WithMetrics() *AppBuilder {
 
 	// Liveness + readiness probes on the always-on ops surface, so router-only and
 	// scheduler-only deployments (which run no gateway HTTP server) still expose a
-	// probe target. Available whenever metrics are enabled (the default).
+	// probe target. Available only when metrics are enabled, which is off by
+	// default (the shipped config files turn it on).
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)

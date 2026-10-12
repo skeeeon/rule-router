@@ -324,12 +324,10 @@ metrics:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | bool | `false` | Start the Prometheus metrics server (which also serves `/health` and `/ready`). |
-| `address` | string | — *(see note)* | Metrics server listen address, e.g. `":2112"`. |
-| `path` | string | — *(see note)* | Metrics endpoint path, e.g. `"/metrics"`. |
-| `updateInterval` | duration string | — *(see note)* | How often system gauges (goroutines, memory) refresh, e.g. `"15s"`. Must parse as a Go duration. |
-
-> **Set `address`, `path`, and `updateInterval` whenever you enable metrics.** The `:2112` / `/metrics` / `15s` defaults are not applied at load time, so `enabled: true` (or `RR_METRICS_ENABLED=true`) on its own fails startup with `invalid metrics update interval`. The shipped config files set all three.
+| `enabled` | bool | `false` | Start the Prometheus metrics server (which also serves `/health` and `/ready`). The address/path/interval defaults below apply **only when enabled**, so `enabled: true` (or `RR_METRICS_ENABLED=true`) on its own is enough. |
+| `address` | string | `":2112"` | Metrics server listen address. |
+| `path` | string | `"/metrics"` | Metrics endpoint path. |
+| `updateInterval` | duration string | `"15s"` | How often system gauges (goroutines, memory) refresh. Must parse as a Go duration. |
 
 Full metric catalogue and health-check details are in [12 Observability](./12-observability.md).
 

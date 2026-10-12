@@ -852,6 +852,15 @@ func (b *NATSBroker) buildNATSOptions() ([]nats.Option, error) {
 		nats.ReconnectWait(b.config.NATS.Connection.ReconnectWait),
 		nats.MaxReconnects(b.config.NATS.Connection.MaxReconnects),
 		nats.ErrorHandler(b.handleAsyncError),
+		// The initial connect fires none of the handlers below, so without this
+		// the gauge read 0 on a healthy instance until its first reconnect.
+		// nats.go queues it on the same dispatcher as the disconnect/reconnect
+		// callbacks, so it cannot land after a disconnect that followed it.
+		nats.ConnectHandler(func(*nats.Conn) {
+			if b.metrics != nil {
+				b.metrics.SetNATSConnectionStatus(true)
+			}
+		}),
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
 			b.logger.Warn("NATS client disconnected", "error", err)
 			if b.metrics != nil {

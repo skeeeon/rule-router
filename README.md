@@ -138,6 +138,8 @@ echo 'NATS_URLS=nats://your-nats-host:4222' > .env
 docker compose up -d
 ```
 
+With either NATS, the `nats-auth-manager` service starts only once its `tokens` KV bucket exists (`nats kv add tokens`) and every variable its providers reference is set: edit the providers in `config/auth-manager.yaml` to your own, and put their variables in `.env`. The compose file passes through the ones the shipped example uses (`STRIPE_CLIENT_ID`, `STRIPE_CLIENT_SECRET`, `PB_EMAIL`, `PB_PASSWORD`, `SERVICE_USER`, `SERVICE_PASS`). Until then it exits with an error naming what is missing.
+
 #### Building Docker Images
 
 The repository uses a single parameterized `Dockerfile`. The `rule-router` image includes all three features (router, gateway, scheduler) — select which to enable at runtime via config or environment variables:

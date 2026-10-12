@@ -7,10 +7,8 @@ nats:
   urls:
     - nats://localhost:4222
   
-  # Choose one authentication method:
-  credsFile: "/etc/nats/rule-router.creds"
-  
-  # Alternative auth methods (choose one):
+  # Authentication (choose one; none is needed for the bundled docker compose NATS)
+  # credsFile: "/etc/nats/rule-router.creds"
   # username: "auth-manager"
   # password: "secret"
   # token: "mytoken"

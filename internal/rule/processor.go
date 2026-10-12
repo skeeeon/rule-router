@@ -57,6 +57,7 @@ type Processor struct {
 	// separate Stores (the old layout) left a window where readers could see
 	// new NATS rules but old HTTP rules (or vice versa) during reload.
 	kvRuleSet atomic.Value // holds *KVRuleSet
+	kvRuleSeq atomic.Int64 // last index given to a KV-loaded rule; see ReplaceKVRuleSet
 }
 
 // KVRuleSet is the unit of atomic rule reload: NATS, HTTP, and Schedule rules
@@ -187,7 +188,7 @@ func (p *Processor) extractForEachArray(forEachTemplate string, precomputedPath 
 
 	// Enforce iteration limit
 	if p.maxForEachIters > 0 && len(arrayItems) > p.maxForEachIters {
-		return nil, fmt.Errorf("forEach array exceeds limit: %d elements > %d max iterations (configure maxForEachIterations to increase)",
+		return nil, fmt.Errorf("forEach array exceeds limit: %d elements > %d max iterations (configure forEach.maxIterations to increase)",
 			len(arrayItems), p.maxForEachIters)
 	}
 
@@ -521,30 +522,35 @@ func (p *Processor) ScheduleRules() []*Rule {
 // and Schedule) in one operation. Called by RuleKVManager on every KV change.
 // Caller must pass a non-nil *KVRuleSet with a non-nil HTTP field.
 func (p *Processor) ReplaceKVRuleSet(set *KVRuleSet) {
-	// Assign each rule a unique index so throttle/debounce keys
-	// ({phase}:{index}:{key}) can't collide across KV-loaded rules. The
-	// file-load path does this in LoadRules; KV rules need it here. Each *Rule
-	// lives in exactly one bucket (one trigger type), so a single counter suffices.
-	idx := 0
+	// Give each newly arrived rule an index for its throttle keys
+	// ({phase}:{index}:{key}). A rule keeps its index for as long as it is
+	// loaded and indexes are never reused, so throttle state stays with the
+	// rule that created it. Renumbering every rule on each update, as this
+	// once did, let an open window from one rule suppress another (map
+	// iteration order alone reshuffled the numbers), and wrote to rules that
+	// workers were still reading. RuleKVManager re-parses a key on every put,
+	// so the rules of a rewritten key start with fresh throttle state while
+	// other keys keep theirs. Zero means not yet numbered.
+	number := func(r *Rule) {
+		if r.index == 0 {
+			r.index = int(p.kvRuleSeq.Add(1))
+		}
+	}
 	for _, rs := range set.NATS {
 		for _, r := range rs {
-			r.index = idx
-			idx++
+			number(r)
 		}
 	}
 	for _, rs := range set.HTTP.Exact {
 		for _, r := range rs {
-			r.index = idx
-			idx++
+			number(r)
 		}
 	}
 	for _, pr := range set.HTTP.Patterns {
-		pr.Rule.index = idx
-		idx++
+		number(pr.Rule)
 	}
 	for _, r := range set.Schedule {
-		r.index = idx
-		idx++
+		number(r)
 	}
 
 	p.kvRuleSet.Store(set)

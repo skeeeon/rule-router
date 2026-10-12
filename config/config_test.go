@@ -142,38 +142,6 @@ func TestSetDefaults(t *testing.T) {
 			},
 		},
 		{
-			name: "metrics defaults only when enabled",
-			initial: Config{
-				Metrics: MetricsConfig{
-					Enabled: true,
-				},
-			},
-			validate: func(t *testing.T, cfg *Config) {
-				if cfg.Metrics.Address != ":2112" {
-					t.Errorf("Metrics.Address = %s, want :2112", cfg.Metrics.Address)
-				}
-				if cfg.Metrics.Path != "/metrics" {
-					t.Errorf("Metrics.Path = %s, want /metrics", cfg.Metrics.Path)
-				}
-				if cfg.Metrics.UpdateInterval != "15s" {
-					t.Errorf("Metrics.UpdateInterval = %s, want 15s", cfg.Metrics.UpdateInterval)
-				}
-			},
-		},
-		{
-			name: "metrics disabled leaves address empty",
-			initial: Config{
-				Metrics: MetricsConfig{
-					Enabled: false,
-				},
-			},
-			validate: func(t *testing.T, cfg *Config) {
-				if cfg.Metrics.Address != "" {
-					t.Errorf("Metrics.Address should be empty when disabled, got %s", cfg.Metrics.Address)
-				}
-			},
-		},
-		{
 			name: "KV local cache not set by setDefaults (applied after unmarshal)",
 			initial: Config{
 				KV: KVConfig{
@@ -624,6 +592,76 @@ kv:
 				if got.KeyFilter != want.KeyFilter {
 					t.Errorf("bucket[%d].KeyFilter = %q, want %q", i, got.KeyFilter, want.KeyFilter)
 				}
+			}
+		})
+	}
+}
+
+// TestLoadMetricsDefaults goes through Load rather than setDefaults: the
+// metrics defaults depend on metrics.enabled, which is only known after
+// unmarshal. Applying them in setDefaults made `enabled: true` on its own fail
+// startup with "invalid metrics update interval", and a test that called
+// setDefaults with Enabled pre-set could not see it.
+func TestLoadMetricsDefaults(t *testing.T) {
+	tests := []struct {
+		name         string
+		yaml         string
+		env          map[string]string
+		wantAddress  string
+		wantPath     string
+		wantInterval string
+	}{
+		{
+			name:         "enabled alone gets the endpoint defaults",
+			yaml:         "metrics:\n  enabled: true\n",
+			wantAddress:  ":2112",
+			wantPath:     "/metrics",
+			wantInterval: "15s",
+		},
+		{
+			name:         "enabled by env var alone gets the endpoint defaults",
+			yaml:         "logging:\n  level: info\n",
+			env:          map[string]string{"RR_METRICS_ENABLED": "true"},
+			wantAddress:  ":2112",
+			wantPath:     "/metrics",
+			wantInterval: "15s",
+		},
+		{
+			name:         "explicit values are kept",
+			yaml:         "metrics:\n  enabled: true\n  address: \":9090\"\n  path: /m\n  updateInterval: 30s\n",
+			wantAddress:  ":9090",
+			wantPath:     "/m",
+			wantInterval: "30s",
+		},
+		{
+			name: "disabled leaves the endpoint unset",
+			yaml: "metrics:\n  enabled: false\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+			cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(cfgPath, []byte(tt.yaml), 0644); err != nil {
+				t.Fatalf("failed to write temp config: %v", err)
+			}
+
+			cfg, err := Load(cfgPath)
+			if err != nil {
+				t.Fatalf("Load() error: %v", err)
+			}
+
+			if cfg.Metrics.Address != tt.wantAddress {
+				t.Errorf("Metrics.Address = %q, want %q", cfg.Metrics.Address, tt.wantAddress)
+			}
+			if cfg.Metrics.Path != tt.wantPath {
+				t.Errorf("Metrics.Path = %q, want %q", cfg.Metrics.Path, tt.wantPath)
+			}
+			if cfg.Metrics.UpdateInterval != tt.wantInterval {
+				t.Errorf("Metrics.UpdateInterval = %q, want %q", cfg.Metrics.UpdateInterval, tt.wantInterval)
 			}
 		})
 	}

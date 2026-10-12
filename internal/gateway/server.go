@@ -316,7 +316,7 @@ func (s *InboundServer) processWebhook(ctx context.Context, path, method string,
 	}
 
 	// Trailing-throttle batches publish when their window closes. The webhook
-	// was already answered 202, so nothing waits on them.
+	// was already answered 200, so nothing waits on them.
 	for _, batch := range outcome.Deferred {
 		s.coalescer.Submit(batch)
 	}

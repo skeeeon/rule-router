@@ -52,7 +52,7 @@ The core of the system. Key types and flow:
 2. **Index** maps NATS subject patterns to rules for O(1) lookup. Wildcard patterns (`*`, `>`) compile through `pattern.go`; HTTP path patterns reuse the same machinery via `path_matcher.go` (slash-separated).
 3. **Processor** orchestrates rule evaluation on incoming messages
 4. **Evaluator** resolves template variables and checks condition operators (`eq`, `neq`, `gt`, `lt`, `gte`, `lte`, `contains`, `not_contains`, `in`, `not_in`, `exists`, `not_exists`, `recent`, `any`, `all`, `none` — the single list lives in `operators.go`); `condition_resolver.go` holds shared helpers
-5. **ThrottleManager** (`throttle.go`) — per-rule leading-edge suppression with a configurable window; state resets naturally when Processor is rebuilt on reload. See Throttle below for the trailing-mode path, which does *not* live here.
+5. **ThrottleManager** (`throttle.go`) — per-rule leading-edge suppression with a configurable window; state resets naturally when Processor is rebuilt on reload. Keys carry `Rule.index`, so a KV update must never renumber a loaded rule: `ReplaceKVRuleSet` numbers each KV rule once from a counter and never reuses a number, which keeps a window with the rule that opened it (test-pinned by `TestProcessor_Throttle_KVUpdateKeepsStateWithItsRule`). See Throttle below for the trailing-mode path, which does *not* live here.
 6. **Signature verification** (`signature.go` + `signature_verify.go`) — nkey-based payload signature checks (stubbed out in the WASM build)
 
 Template syntax:

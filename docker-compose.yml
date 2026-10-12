@@ -105,8 +105,17 @@ services:
       - "2115:2113"
     volumes:
       - ./config/auth-manager.yaml:/config/auth-manager.yaml:ro
+    # Before it can start: create its KV bucket (`nats kv add tokens`), and set
+    # the variables its providers reference in .env. Unset, startup fails and
+    # names them. Edit the providers in config/auth-manager.yaml to your own.
     environment:
-      RR_NATS_URLS: "${NATS_URLS:-nats://nats:4222}"
+      AUTH_MGR_NATS_URLS: "${NATS_URLS:-nats://nats:4222}"
+      STRIPE_CLIENT_ID: "${STRIPE_CLIENT_ID:-}"
+      STRIPE_CLIENT_SECRET: "${STRIPE_CLIENT_SECRET:-}"
+      PB_EMAIL: "${PB_EMAIL:-}"
+      PB_PASSWORD: "${PB_PASSWORD:-}"
+      SERVICE_USER: "${SERVICE_USER:-}"
+      SERVICE_PASS: "${SERVICE_PASS:-}"
     networks:
       - rule-router-net
     healthcheck:

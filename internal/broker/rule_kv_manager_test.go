@@ -10,6 +10,7 @@ import (
 
 	"github.com/nats-io/nats.go/jetstream"
 
+	"rule-router/config"
 	"rule-router/internal/logger"
 	"rule-router/internal/rule"
 )
@@ -176,4 +177,116 @@ func TestRuleKVManagerCleanShutdownNoRecreate(t *testing.T) {
 	if got := atomic.LoadInt32(&calls); got != 0 {
 		t.Fatalf("expected no re-establishment on clean shutdown, got %d", got)
 	}
+}
+
+// noStreamsJS is a jetstream.JetStream that lists no streams, which is all
+// handleRulePut asks of it (via RefreshStreams). Any other method panics on the
+// nil embedded interface, so an unexpected call surfaces.
+type noStreamsJS struct{ jetstream.JetStream }
+
+func (noStreamsJS) ListStreams(context.Context, ...jetstream.StreamListOpt) jetstream.StreamInfoLister {
+	return emptyStreamLister{}
+}
+
+type emptyStreamLister struct{}
+
+func (emptyStreamLister) Info() <-chan *jetstream.StreamInfo {
+	ch := make(chan *jetstream.StreamInfo)
+	close(ch)
+	return ch
+}
+
+func (emptyStreamLister) Err() error { return nil }
+
+// newScheduleTestManager returns a RuleKVManager whose puts and deletes run
+// without a NATS server, and a func reporting the size of each rule set the
+// schedule rebuild callback received, in order.
+func newScheduleTestManager() (*RuleKVManager, func() []int) {
+	log := logger.NewNop()
+	b := &NATSBroker{
+		ctx:            context.Background(),
+		logger:         log,
+		config:         &config.Config{},
+		streamResolver: &StreamResolver{jetStream: noStreamsJS{}, logger: log},
+	}
+	m := NewRuleKVManager("rules", false, rule.NewProcessor(log), b, rule.NewLoader(log, nil), log)
+
+	var mu sync.Mutex
+	var rebuilds []int
+	m.SetScheduleRebuildFunc(func(rules []*rule.Rule) {
+		mu.Lock()
+		rebuilds = append(rebuilds, len(rules))
+		mu.Unlock()
+	})
+	return m, func() []int {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]int(nil), rebuilds...)
+	}
+}
+
+const (
+	scheduleRuleYAML = `
+- trigger:
+    schedule:
+      cron: "*/5 * * * *"
+  action:
+    nats:
+      subject: "out.tick"
+      payload: "{}"
+`
+	httpRuleYAML = `
+- trigger:
+    http:
+      path: "/hook"
+  action:
+    nats:
+      subject: "out.hook"
+      payload: "{}"
+`
+)
+
+func assertRebuilds(t *testing.T, got []int, want ...int) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("schedule rebuilds (rule counts) = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("schedule rebuilds (rule counts) = %v, want %v", got, want)
+		}
+	}
+}
+
+// TestRuleKVManager_PutRemovingLastScheduleRuleRebuilds pins that a put which
+// replaces a key's only schedule rule rebuilds the cron jobs with an empty
+// set. The rebuild used to be skipped whenever no schedule rules remained,
+// which is exactly when the removed rule's job needed stopping.
+func TestRuleKVManager_PutRemovingLastScheduleRuleRebuilds(t *testing.T) {
+	m, rebuilds := newScheduleTestManager()
+
+	m.handleRulePut("jobs", []byte(scheduleRuleYAML), 1)
+	assertRebuilds(t, rebuilds(), 1)
+
+	// A key with no schedule rules, before or after, leaves cron jobs alone.
+	m.handleRulePut("hooks", []byte(httpRuleYAML), 2)
+	assertRebuilds(t, rebuilds(), 1)
+
+	// The last schedule rule is overwritten by a non-schedule rule.
+	m.handleRulePut("jobs", []byte(httpRuleYAML), 3)
+	assertRebuilds(t, rebuilds(), 1, 0)
+
+	if n := len(m.processor.ScheduleRules()); n != 0 {
+		t.Fatalf("processor still holds %d schedule rules", n)
+	}
+}
+
+// TestRuleKVManager_DeleteLastScheduleRuleRebuilds covers the delete path to
+// the same end state.
+func TestRuleKVManager_DeleteLastScheduleRuleRebuilds(t *testing.T) {
+	m, rebuilds := newScheduleTestManager()
+
+	m.handleRulePut("jobs", []byte(scheduleRuleYAML), 1)
+	m.handleRuleDelete("jobs")
+	assertRebuilds(t, rebuilds(), 1, 0)
 }

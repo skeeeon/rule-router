@@ -150,7 +150,7 @@ A `forEach` over an array longer than `forEach.maxIterations` (default 100) does
 
 ## Throttle state resets after reload
 
-A SIGHUP reload rebuilds the rule processor, which clears all in-memory **leading-mode** throttle state. If you reload and a rule fires immediately on the next matching message — even though you expected the window to still be active — that's why. A KV-driven rule update does not rebuild the processor and does not clear this state.
+A SIGHUP reload rebuilds the rule processor, which clears all in-memory **leading-mode** throttle state. If you reload and a rule fires immediately on the next matching message — even though you expected the window to still be active — that's why. With the KV rule store, writing a key clears the throttle state of that key's rules, including a re-push of unchanged content; rules under other keys are not affected. When the KV watcher reconnects after an outage it re-reads every key, which clears it for all of them.
 
 There is no on-disk throttle persistence. If you need durable suppression across reloads, use a KV-backed counter or last-fired timestamp instead.
 
@@ -189,7 +189,7 @@ The application uses structured slog output. Key log fields when triaging:
 | Field | Meaning |
 |-------|---------|
 | `subject` / `path` | The NATS subject or HTTP path of the trigger |
-| `ruleIndex` | Which rule was evaluated (`evaluating rule`, debug level) — its position among all loaded rules, not within one file |
+| `ruleIndex` | Which rule was evaluated (`evaluating rule`, debug level) — its position among all loaded rules, not within one file. With the KV rule store it is a number assigned when the rule loads, kept until its key is written again. |
 | `field` / `operator` | A condition whose field could not be resolved (`failed to resolve condition field`, warn level) |
 | `variable` | A template variable that rendered empty (`template variable did not resolve; rendering empty`, debug level) |
 | `key` | The KV rule key (KV rule store messages) or the throttle key (`... throttle suppressed rule`, debug level) |

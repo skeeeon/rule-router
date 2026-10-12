@@ -317,6 +317,7 @@ func (m *RuleKVManager) handleRulePut(key string, value []byte, revision uint64)
 
 	previousSubjects := m.collectNATSTriggerSubjects(m.currentRules[key])
 	prevHadCore := m.hasCoreRules(m.currentRules[key])
+	prevHadSchedule := m.hasScheduleRules(m.currentRules[key])
 	m.currentRules[key] = rules
 	scheduleRules, coreRules := m.pushRulesToProcessor()
 
@@ -326,8 +327,10 @@ func (m *RuleKVManager) handleRulePut(key string, value []byte, revision uint64)
 
 	m.mu.Unlock()
 
-	// Notify scheduler to rebuild cron jobs if schedule rules changed
-	if rebuildFunc != nil && len(scheduleRules) > 0 {
+	// Rebuild cron jobs if this key had or now has schedule rules. Testing the
+	// resulting set for emptiness instead skipped the rebuild exactly when the
+	// last schedule rule went, leaving its job firing.
+	if rebuildFunc != nil && (prevHadSchedule || m.hasScheduleRules(rules)) {
 		rebuildFunc(scheduleRules)
 	}
 

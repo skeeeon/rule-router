@@ -531,7 +531,7 @@ If you need per-element rate limiting, split the fan-out into its own subject an
 
 ### State and reloads
 
-Leading-mode state lives in memory on the Processor. A SIGHUP reload rebuilds the Processor and therefore clears it — worth knowing if you are watching for an alert right after a rule change. A KV-driven rule update does not rebuild the Processor, so it leaves this state in place.
+Leading-mode state lives in memory on the Processor. A SIGHUP reload rebuilds the Processor and therefore clears it — worth knowing if you are watching for an alert right after a rule change. With the [KV rule store](./08-kv-rule-store.md), writing a key (even with unchanged content) clears the state of that key's rules only; rules under other keys keep their open windows.
 
 Trailing-mode pending batches live in the executing layer instead, so they survive a reload and still fire. They are fully evaluated by the time they are pending, so a rule change mid-window does not alter what gets emitted.
 

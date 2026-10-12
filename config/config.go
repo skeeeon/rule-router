@@ -149,6 +149,9 @@ const (
 	// DefaultMetricsPath is the default metrics endpoint path
 	DefaultMetricsPath = "/metrics"
 
+	// DefaultMetricsUpdateInterval is how often the system gauges refresh
+	DefaultMetricsUpdateInterval = "15s"
+
 	// DefaultHTTPServerAddress is the default HTTP server address
 	DefaultHTTPServerAddress = ":8080"
 
@@ -404,6 +407,21 @@ func Load(path string) (*Config, error) {
 		config.HTTP.Server.Address = DefaultHTTPServerAddress
 	}
 
+	// Default the metrics endpoint only when metrics are enabled. This cannot
+	// live in setDefaults: Enabled is still false there, so `metrics.enabled:
+	// true` alone used to start with no update interval and fail.
+	if config.Metrics.Enabled {
+		if config.Metrics.Address == "" {
+			config.Metrics.Address = DefaultMetricsAddress
+		}
+		if config.Metrics.Path == "" {
+			config.Metrics.Path = DefaultMetricsPath
+		}
+		if config.Metrics.UpdateInterval == "" {
+			config.Metrics.UpdateInterval = DefaultMetricsUpdateInterval
+		}
+	}
+
 	// Default localCache to enabled when KV is enabled, unless explicitly set to false.
 	if config.KV.Enabled && !v.IsSet("kv.localCache.enabled") {
 		config.KV.LocalCache.Enabled = true
@@ -521,20 +539,7 @@ func setDefaults(cfg *Config) {
 		cfg.Logging.OutputPath = DefaultLogOutput
 	}
 
-	// Metrics defaults
-	if !cfg.Metrics.Enabled {
-		// If metrics are disabled, don't set address/path defaults
-	} else {
-		if cfg.Metrics.Address == "" {
-			cfg.Metrics.Address = DefaultMetricsAddress
-		}
-		if cfg.Metrics.Path == "" {
-			cfg.Metrics.Path = DefaultMetricsPath
-		}
-		if cfg.Metrics.UpdateInterval == "" {
-			cfg.Metrics.UpdateInterval = "15s"
-		}
-	}
+	// Metrics defaults are applied after unmarshal, conditional on metrics.enabled
 
 	// Security defaults
 	if cfg.Security.Verification.PublicKeyHeader == "" {
