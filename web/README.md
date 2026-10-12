@@ -103,6 +103,7 @@ These stubs only affect the WASM build target (`GOOS=js GOARCH=wasm`). The norma
 - **KV lookups** use mock data provided in the test panel (same format as `rule-cli check --kv-mock`). Live NATS KV is not available during testing.
 - **Signature verification** (`@signature.valid`) is a no-op in the browser — it always returns false.
 - **Throttle** state is not simulated — rules are evaluated as single messages. A trailing-mode action is shown tagged as deferred (with its window and key) rather than actually held.
+- **Schedule rules** cannot be evaluated — the tester runs NATS and HTTP triggers only, so a schedule-triggered rule always reports no match.
 
 ## Rule Testing
 
@@ -111,7 +112,7 @@ The **Test Rule** panel appears below the Action section in the rule editor. The
 1. Expand the "Test Rule" section
 2. Make sure the **Sample Message** inspector has a JSON payload (or paste one into the tester's message field)
 3. The subject/path is auto-populated from your trigger (editable for wildcard subjects)
-4. Optionally provide mock headers or KV data
+4. Optionally provide headers, query parameters (HTTP triggers), mock KV data, or a mock time
 5. Click **Run Test**
 
 The result shows:

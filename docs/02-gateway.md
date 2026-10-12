@@ -13,6 +13,8 @@ The gateway handles these flows:
 
 Both flows use the same rule format. The trigger and action types determine which direction a rule operates in. The last two flows are covered under [Request/reply](#requestreply-synchronous-responses-and-the-httpnats-bridge).
 
+An `http` trigger with an `http` action is not one of these flows: the rule loads, but the inbound server never executes the HTTP action — it logs a warning and skips it. To call an API from a webhook, publish to NATS and let an outbound rule make the call.
+
 ## Inbound: HTTP → NATS
 
 An HTTP trigger evaluates an incoming HTTP request and publishes a NATS message if conditions pass.
@@ -316,7 +318,8 @@ An HTTP-triggered rule with `action.nats` and `request: true` turns the request 
 - **Inline, not queued.** A path is treated as synchronous when its matched rule has a `respond` or `request: true` action. Such requests are handled inline in the request goroutine with a context deadline — they bypass the fire-and-forget worker queue (which exists to absorb webhook bursts and return `200` immediately). Ordinary webhook routes are unaffected.
 - **First match wins.** If multiple rules match, the first (in load order) with a respond/request action produces the single HTTP response; other matching rules' plain NATS publishes still fire as side-effects.
 - **No match this time.** If the path has a synchronous rule but conditions don't match on this request (so no respond/request action fires), the gateway returns `404 Not Found`.
-- **Status mapping for the bridge:** a successful reply → `200` with the reply body; no responder on the subject → `503 Service Unavailable`; timeout (per `timeout`, default `5s`) → `504 Gateway Timeout`.
+- **Status mapping for the bridge:** a successful reply → `200` with the reply body (and the reply's `Content-Type` header, defaulting to `application/json`); no responder on the subject → `503 Service Unavailable`; timeout (per `timeout`, default `5s`) → `504 Gateway Timeout`; any other request failure → `502 Bad Gateway`.
+- **Evaluation errors:** if the request cannot be evaluated at all (for example a malformed form body), a synchronous route returns `500 Internal Server Error`.
 
 > **Deployment note:** the HTTP server's `writeTimeout` must exceed the bridge `timeout`, or a slow responder's reply can be cut off before it is written. Size `http.server.writeTimeout` accordingly.
 
@@ -329,7 +332,7 @@ headers:
   Authorization: "Bearer ${API_TOKEN}"
 ```
 
-For tokens that refresh (OAuth2, time-limited API keys), pair with the `nats-auth-manager` companion binary. It manages token refresh, stores them in NATS KV, and rules read them with `{@kv.tokens.<provider>:access_token}`. See the [nats-auth-manager README](../README.md) for setup.
+For tokens that refresh (OAuth2, time-limited API keys), pair with the `nats-auth-manager` companion binary. It manages token refresh and stores each token as the bare string under its provider's `kvKey`, and rules read it with `{@kv.tokens.<kvKey>}`. See the [nats-auth-manager README](../cmd/nats-auth-manager/README.md) for setup.
 
 ## TLS / HTTPS termination
 
@@ -366,7 +369,7 @@ Notes:
 
 ## Path matching
 
-Inbound requests flow through a single catch-all handler that delegates path matching to the rule engine. This applies uniformly to file-loaded and KV-loaded rules: a new rule path becomes live on the next KV update (or process restart for file-loaded rules) with no `ServeMux` re-registration.
+Inbound requests flow through a single catch-all handler that delegates path matching to the rule engine. This applies uniformly to file-loaded and KV-loaded rules: a new rule path becomes live on the next KV update (or SIGHUP reload / restart for file-loaded rules) with no `ServeMux` re-registration.
 
 Paths can be exact or contain NATS-style wildcards:
 
@@ -390,13 +393,13 @@ Wildcards play directly with the `{@path.N}` template variables: a rule on `/web
   action:
     nats:
       subject: "tenants.{@path.1}.events"
-      payload: "{@passthrough}"
+      passthrough: true
 ```
 
 ### Unknown paths and metric cardinality
 
 Requests with no matching rule receive `404 Not Found`. The path-existence check happens **before** the request body is read or enqueued, so path-scan traffic does not consume queue capacity or worker time.
 
-To bound Prometheus metric cardinality under path-scan traffic, 404 responses are recorded with the sentinel path label `_unknown_` rather than the actual request path. Matched responses (2xx, 503) use the real request path, so wildcard rules that match high-cardinality URLs (e.g. UUIDs in segments) can grow metric series — use wildcards judiciously or scope them tightly.
+To bound Prometheus metric cardinality under path-scan traffic, 404 responses are recorded with the sentinel path label `_unknown_` rather than the actual request path. Matched responses are labelled with the **rule route that matched**, not the request path, so a wildcard rule reports its pattern (`path="/webhooks/*/events"`) however many distinct URLs it serves — UUIDs in segments do not grow metric series. See [12 Observability — Cardinality guidance](./12-observability.md#cardinality-guidance).
 
 Outbound rules (NATS trigger + HTTP action) benefit from KV mode similarly: a new NATS trigger gets its JetStream consumer created automatically on KV update, no restart required. See [08 KV Rule Store](./08-kv-rule-store.md) for the full reload mechanics.

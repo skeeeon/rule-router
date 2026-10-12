@@ -156,7 +156,7 @@ nats:
   # username: "auth-manager"
   # password: "secret"
   # token: "mytoken"
-  # nkey: "seed..."
+  # nkeySeedFile: "/path/to/nkey.seed"
   
   # Optional TLS
   tls:
@@ -171,7 +171,7 @@ nats:
 
 ```yaml
 storage:
-  bucket: "tokens"      # KV bucket name (required)
+  bucket: "tokens"      # KV bucket name (default "tokens"); must already exist
 ```
 
 ### Logging Section
@@ -180,19 +180,29 @@ storage:
 logging:
   level: info           # debug | info | warn | error
   encoding: json        # json | console
+  outputPath: stdout    # stdout | stderr | file path (default stdout)
 ```
 
 ### Metrics Section
 
 ```yaml
 metrics:
-  enabled: true
-  address: ":2113"
+  enabled: true         # default false
+  address: ":2113"      # default ":2113"
 ```
+
+### Environment Overrides
+
+Keys that appear in the config file can be overridden with `AUTH_MGR_`-prefixed environment variables, `.` replaced by `_` (e.g. `AUTH_MGR_STORAGE_BUCKET=tokens-dev`). The `RR_` variables read by `rule-router` have no effect here.
+
+### Command-Line Flags
+
+- `--config` — config file path (default `config/auth-manager.yaml`)
+- `--version` — print the version and exit
 
 ## Token Access Patterns
 
-Tokens are stored in NATS KV using the `kvKey` from provider configuration. Access them in rules using:
+Tokens are stored in NATS KV using the `kvKey` from provider configuration. The value is the bare token string (the OAuth2 access token, or the value at `tokenPath`), not a JSON document. Access them in rules using:
 
 ```yaml
 # Direct token access
@@ -216,10 +226,13 @@ Structured JSON logs include:
 
 ### Metrics
 
-Prometheus metrics available at `:2113/metrics` (if enabled):
-- Authentication success/failure counts
-- Token refresh timing
-- Provider health status
+Prometheus metrics available at `:2113/metrics` (if enabled), all labeled by `provider` (which carries the provider's `kvKey`):
+- `authmgr_auth_success_total` — successful authentications
+- `authmgr_auth_failures_total` — failed authentications
+- `authmgr_auth_duration_seconds` — authentication request duration
+- `authmgr_kv_store_failures_total` — tokens obtained but not written to KV
+
+The metrics server serves `/metrics` only; there are no `/health` or `/ready` endpoints on this binary, and it does not register on NATS service discovery.
 
 ## Troubleshooting
 

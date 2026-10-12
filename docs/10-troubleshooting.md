@@ -18,19 +18,21 @@ Common mistakes:
 - Wildcard mismatch: `sensors.*` matches `sensors.temperature` but not `sensors.temperature.room1` (use `>` for multi-level).
 - Trailing dots, typos, case sensitivity (NATS subjects are case-sensitive).
 - The publishing service is using a different subject than you expect.
+- A `{template}` in the trigger subject or path. Templates are never expanded in triggers, so this is rejected at load with an error that suggests the wildcard rewrite (`events.location.*` with `{@subject.2}`).
 
-**HTTP triggers**: Confirm the path matches exactly. The gateway uses exact-path matching by default (not prefix matching). Check the method too — many webhook providers POST, but some PUT.
+**HTTP triggers**: Confirm the path matches. A path without wildcards matches exactly (not as a prefix); use `*` or a trailing `>` for wildcard paths. Check the method too — many webhook providers POST, but some PUT.
 
 ### 2. Does the stream exist?
 
-Router rules require a JetStream stream that captures the trigger subject. If no stream exists, the rule loads but its subscription is skipped with a warning.
+NATS triggers in the default JetStream mode require a stream that captures the trigger subject (`mode: core` and `reply: true` triggers do not). A missing stream does not leave a silently dead rule — it is rejected:
+
+- **File-based rules:** startup fails — `stream validation failed: cannot map N subject(s) to streams` (router), or `no stream found for subject` (a gateway outbound rule) — and the error lists the available stream filters.
+- **KV rule store:** the whole key is rejected (`stream validation failed, rejecting all rules for this key`, error `no stream found for trigger subject ...`) and that key's previous rules stay in effect.
 
 ```bash
 nats stream ls
 nats stream info <stream_name>
 ```
-
-Look in the application logs at startup for messages like `"no stream found for subject"` — that's the diagnostic.
 
 ### 3. Are conditions evaluating as expected?
 
@@ -41,7 +43,7 @@ echo '{"temperature": 35}' > msg.json
 rule-cli check --rule rules/sensors/temp.yaml --message msg.json --subject sensors.temperature
 ```
 
-This runs the real rule engine and shows whether each condition passed or failed and what the final action would be. Most subtle bugs (type mismatch, missing field, wrong operator) surface here. In a multi-rule file, `-n <index>` checks that rule alone — its siblings are not loaded, so one of them matching cannot pass for the rule you picked.
+This runs the real rule engine and shows whether the rule matched and the fully rendered action(s). It does not break the result down per condition, so to find the failing one, remove conditions or change the sample until the outcome flips. Most subtle bugs (type mismatch, missing field, wrong operator) surface here. In a multi-rule file, `-n <index>` checks that rule alone — its siblings are not loaded, so one of them matching cannot pass for the rule you picked.
 
 One trap that looks like a broken condition: **`neq`, `not_in`, and `not_contains` are `false` on a missing field**, not true. "Status is not `active`" does not match a message with no `status` at all. To act on absence, use `not_exists` — it is the only operator that does.
 
@@ -76,7 +78,7 @@ rule-cli check --rule idface.yaml --message body.form
 Two adjacent symptoms:
 
 - **The rendered payload is invalid JSON.** An unresolved variable renders as an empty string, so `"card": {card_value}` becomes `"card": ` when the sender omits that field. Quote every optional scalar: `"card": "{card_value}"`. An optional array or object cannot be quoted — split the rule on `exists` / `not_exists` instead ([09 Patterns — Writing to KV](./09-patterns.md#11-writing-to-kv-event--state)).
-- **The request returns 500 with `parsing form body`.** The body has a malformed percent-escape. This is rejected rather than partially parsed on purpose — a silently dropped field reads as absent and can flip a condition instead of raising an error.
+- **`failed to decode form payload` / `parsing form body` in the logs.** The body has a malformed percent-escape. This is rejected rather than partially parsed on purpose — a silently dropped field reads as absent and can flip a condition instead of raising an error. On a fire-and-forget route the sender has already received its `200`, so the log line is the only trace; a synchronous route returns `500`.
 
 ## Query parameter is always empty
 
@@ -94,7 +96,7 @@ Note that a query string never affects *routing* — if the path matches, the ru
 
 1. **Bucket isn't listed in config.** Confirm the bucket is under `kv.buckets`. If you're using local caching (`kv.localCache.enabled`), the bucket also needs to be cacheable.
 2. **Key doesn't exist** in the bucket. `nats kv get <bucket> <key>` to check.
-3. **JSON path syntax is off.** The colon separates the key from the path: `bucket.{var}:json.path`. A bucket name or key with dots is fine — the colon is what divides them.
+3. **JSON path syntax is off.** The colon separates the key from the path: `bucket.{var}:json.path`. The bucket name ends at the first dot, so a key with dots is fine — the colon is what divides key from path.
 4. **The KV value isn't JSON** but you used a JSON path. Without a colon, the whole value is returned as a string.
 5. **Template substitution inside the key didn't resolve.** If `{customer_id}` isn't in the message, `{@kv.customers.{customer_id}:tier}` becomes `{@kv.customers.:tier}` and looks up an empty key.
 
@@ -117,6 +119,7 @@ When an outbound HTTP action runs out of retries:
 - For scheduler rules, exhaustion is terminal for that firing — the next cron tick is a fresh attempt.
 
 Common causes:
+- The retry policy outlasts its deadline — `nats.consumers.ackWaitTimeout` (default `30s`) for a JetStream-triggered rule, 30 seconds for a core-mode trigger, 10 seconds per action for a schedule rule. Remaining attempts are abandoned with `context cancelled during retry`.
 - `maxDelay` too low for a slow upstream — the backoff caps before reaching a useful delay.
 - Auth token expired — check whether `nats-auth-manager` is keeping the token current (logs from that binary).
 - Network egress blocked — the application logs distinguish transport errors from HTTP error responses.
@@ -130,22 +133,24 @@ Synchronous gateway routes (an HTTP rule with a `respond` action, or a `nats` ac
 - **`404 Not Found`** — either no rule matches the path/method at all, **or** the path has a synchronous rule but its conditions did not match this request (so no `respond`/`request` action fired). Use `rule-cli check` to confirm the conditions pass for your sample request. Remember: a path is only handled synchronously when the matched rule actually has a `respond` or `request: true` action — otherwise it stays fire-and-forget and returns `200`.
 - **`503 Service Unavailable`** (bridge only) — `nc.Request` found **no responder** on the subject. Confirm a responder is subscribed: for a rule-router responder, the rule needs `reply: true` and runs under `features.router`; check it loaded (`nats req <subject> ''` should answer). Note: `503` is also returned for a full inbound work queue on *non*-synchronous routes — distinguish by whether the route is synchronous.
 - **`504 Gateway Timeout`** (bridge only) — a responder exists but didn't reply within `timeout` (default `5s`). Raise the rule's `timeout`, or speed up the responder.
+- **`502 Bad Gateway`** (bridge only) — the NATS request failed for another reason (for example the connection was closed). The log line `NATS bridge request failed` carries the error.
+- **`500 Internal Server Error`** — the request could not be evaluated at all, typically a malformed form body (see above).
 
 Two related gotchas:
 - **Reply cut off / connection reset on the bridge:** the HTTP server's `writeTimeout` must exceed the bridge `timeout`. If `writeTimeout` is shorter, the connection is closed before the reply is written. Size `http.server.writeTimeout` above the largest bridge `timeout`.
 - **Reply never arrives on a NATS responder:** a `reply: true` rule must have a `respond` action (enforced at load) and is served over **core NATS**, not JetStream — so it needs no stream, but the requester must use request/reply (`nats req`, `nc.Request`), not a plain publish.
 
-## forEach drops elements
+## forEach action fails on large arrays
 
-A `forEach` over an array longer than `forEach.maxIterations` (default 100) processes the first N and silently drops the rest.
+A `forEach` over an array longer than `forEach.maxIterations` (default 100) does not process the first N — the whole action fails for that message and generates nothing. Other rules on the same message are unaffected.
 
-- Check the `foreach_iterations_total` metric against the array size you expect.
+- Look for `failed to process action` with `forEach array exceeds limit: N elements > M max iterations` in the logs; `template_operations_total{status="error"}` also increments. The `foreach_*` metrics do not count it, because iteration never starts.
 - Raise the limit in config if needed (`forEach.maxIterations: 1000`).
 - Hard ceiling is 10000 — set to `0` to disable, but be cautious.
 
 ## Throttle state resets after reload
 
-A SIGHUP reload or a KV-driven rule update rebuilds the rule processor, which clears all in-memory **leading-mode** throttle state. If you reload and a rule fires immediately on the next matching message — even though you expected the window to still be active — that's why.
+A SIGHUP reload rebuilds the rule processor, which clears all in-memory **leading-mode** throttle state. If you reload and a rule fires immediately on the next matching message — even though you expected the window to still be active — that's why. A KV-driven rule update does not rebuild the processor and does not clear this state.
 
 There is no on-disk throttle persistence. If you need durable suppression across reloads, use a KV-backed counter or last-fired timestamp instead.
 
@@ -171,15 +176,23 @@ When `{@signature.valid}` is `false`:
 
 See [07 Security](./07-security.md) for the full signing workflow.
 
+## `NATS asynchronous error` with `kind=permissions_violation`
+
+The server refused a publish or subscribe for this process's credential. The log line's `error` names the subject; `nats_async_errors_total{kind="permissions_violation"}` counts them. A denied publish never acks, so this line is the only signal.
+
+If the subject is under `$SRV.` and the lines appear at startup and after every reconnect, the credential lacks the permissions for [service discovery](./12-observability.md#service-discovery): subscribe on `$SRV.>` and publish replies to the requester's inbox. Routing is unaffected — the process just is not listed by `nats micro ls`. Grant the permissions or expect the lines.
+
 ## Where to look in logs
 
 The application uses structured slog output. Key log fields when triaging:
 
 | Field | Meaning |
 |-------|---------|
-| `rule_file` | Which rule file (or KV key) the message hit |
 | `subject` / `path` | The NATS subject or HTTP path of the trigger |
-| `condition_result` | Whether conditions passed (debug level) |
+| `ruleIndex` | Which rule was evaluated (`evaluating rule`, debug level) — its position among all loaded rules, not within one file |
+| `field` / `operator` | A condition whose field could not be resolved (`failed to resolve condition field`, warn level) |
+| `variable` | A template variable that rendered empty (`template variable did not resolve; rendering empty`, debug level) |
+| `key` | The KV rule key (KV rule store messages) or the throttle key (`... throttle suppressed rule`, debug level) |
 | `error` | Underlying cause for failed actions |
 
-Set `logging.level: debug` temporarily when triaging a non-firing rule — it logs condition evaluation results, which is the most useful signal.
+Set `logging.level: debug` temporarily when triaging a non-firing rule — it shows which rules were evaluated, throttle suppressions, and template variables that did not resolve. It does not log each condition's pass/fail result; use `rule-cli check` to test conditions against a sample message.

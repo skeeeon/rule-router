@@ -414,7 +414,7 @@ The scheduler polls an API, the response is republished to NATS, a router rule r
         }
 ```
 
-**When to reach for it:** An external system has no webhook channel but you want event-driven semantics downstream. The scheduler step is also the natural place to inject `nats-auth-manager`-managed OAuth tokens — see its [README](../README.md) for the full flow.
+**When to reach for it:** An external system has no webhook channel but you want event-driven semantics downstream. The scheduler step is also the natural place to inject `nats-auth-manager`-managed OAuth tokens — see its [README](../cmd/nats-auth-manager/README.md) for the full flow.
 
 ---
 

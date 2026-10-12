@@ -108,13 +108,16 @@ action:
   nats:
     forEach: "{alerts}"
     subject: "alerts.{alertId}"
+    # alertId, severity: from alerts[i]
+    # deviceId, timestamp: from the root message
+    # processedAt: a system function
     payload: |
       {
-        "alertId": "{alertId}",              # From alerts[i]
-        "severity": "{severity}",            # From alerts[i]
-        "deviceId": "{@msg.deviceId}",       # From root message
-        "timestamp": "{@msg.receivedAt}",    # From root message
-        "processedAt": "{@timestamp()}"      # System function
+        "alertId": "{alertId}",
+        "severity": "{severity}",
+        "deviceId": "{@msg.deviceId}",
+        "timestamp": "{@msg.receivedAt}",
+        "processedAt": "{@timestamp()}"
       }
 ```
 
@@ -365,7 +368,7 @@ KV-sourced forEach also works with NATS and HTTP triggers. This is useful when t
 ## Performance & Limits
 
 **Default Limits:**
-- Maximum 100 iterations per forEach (configurable)
+- Maximum array length of 100 per forEach (configurable)
 - Prevents resource exhaustion from malicious/malformed messages
 - Configure via the top-level `forEach.maxIterations` block in the application config (not in the rule file)
 
@@ -373,20 +376,23 @@ KV-sourced forEach also works with NATS and HTTP triggers. This is useful when t
 ```yaml
 # rule-router.yaml (top level, alongside features/nats/metrics)
 forEach:
-  maxIterations: 100  # Maximum array elements to process per forEach action.
+  maxIterations: 100  # Maximum array length a forEach action accepts;
+                      # a longer array fails the action.
                       # Set to 0 for unlimited (use with caution).
                       # Hard ceiling enforced at config load: 10000.
 ```
 
-When an array exceeds the limit, processing stops at the limit and the remaining elements are silently dropped. The `foreach_iterations_total` metric reflects what was actually processed; pair it with the input size in your application logs if you need to detect truncation.
+When an array is longer than the limit, nothing is truncated: the whole `forEach` action fails for that message, with no actions generated, and the error `forEach array exceeds limit: N elements > M max iterations` is logged (`failed to process action`). Other rules matching the same message still run. A rule that fires for small batches and goes quiet for large ones is the symptom to look for.
 
 **Per-forEach observability:**
 
 | Metric | Labels | Meaning |
 |--------|--------|---------|
-| `foreach_iterations_total` | `rule_file` | Array elements visited (after `maxIterations` cap) |
+| `foreach_iterations_total` | `rule_file` | Array elements visited |
 | `foreach_filtered_total` | `rule_file` | Elements dropped by the `filter` block |
 | `foreach_actions_generated_total` | `rule_file` | Actions actually emitted (visited − filtered − errors) |
+
+Despite its name, the `rule_file` label carries the action type (`nats` or `http`), not the rule's file. An array over the limit is not counted by any of these — it fails before iteration starts.
 
 ## Best Practices
 

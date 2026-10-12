@@ -8,11 +8,20 @@ The companion `nats-auth-manager` binary uses its own config file (`config/auth-
 
 ## How config is loaded
 
-Config is resolved through [Viper](https://github.com/spf13/viper) by merging three sources, in increasing order of precedence:
+Config is resolved through [Viper](https://github.com/spf13/viper) by merging two sources, in increasing order of precedence:
 
 1. **Config file** — YAML, passed with `--config` (e.g. `config/rule-router.yaml`).
 2. **Environment variables** — prefix `RR_`, with `.` replaced by `_` (e.g. `RR_NATS_URLS`, `RR_HTTP_SERVER_ADDRESS`).
-3. **Command-line flags** — where bound.
+
+No config key is bound to a command-line flag. The binary's only flags are:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--config` | `config/rule-router.yaml` | Path to the config file. |
+| `--rules` | `rules` | Rules directory (searched recursively for `.yaml`/`.yml`). Ignored when `kv.rules.enabled` is true. |
+| `--version` | — | Print the version and exit. |
+
+The config is read once at startup. A SIGHUP reloads rules, not config — config changes need a restart.
 
 The canonical file is `config/rule-router.yaml`. The legacy per-feature files (`config/http-gateway.yaml`, `config/rule-scheduler.yaml`) are still valid — they are just the same schema with a different `features` block.
 
@@ -87,7 +96,7 @@ nats:
 
 > **At most one** authentication method may be set (`username`, `token`, `nkeySeedFile`, `credsFile`). Setting more than one is a validation error. `password` is paired with `username` and does not count as a separate method.
 
-> **Permissions:** besides the subjects your rules use, the credential should be allowed to subscribe to `$SRV.>` for [service discovery](./12-observability.md#service-discovery). Without it everything else works; the process just is not listed.
+> **Permissions:** besides the subjects your rules use, the credential should be allowed to subscribe to `$SRV.>` and publish replies to the requester's inbox (`_INBOX.>`, or `allow_responses`) for [service discovery](./12-observability.md#service-discovery). Without them everything else works; the process just is not listed, and the server's refusals are logged as `NATS asynchronous error`.
 
 ### `nats.tls`
 
@@ -124,7 +133,7 @@ nats:
 | `fetchBatchSize` | int | `1` | `1`–`10000` | Messages fetched per pull. |
 | `fetchTimeout` | duration | `5s` | `> 0` | Pull fetch timeout. |
 | `maxAckPending` | int | `1000` | `1`–`100000` | Max in-flight unacknowledged messages. Effective concurrency ceiling. |
-| `ackWaitTimeout` | duration | `30s` | — | Time JetStream waits for an ACK before redelivering. |
+| `ackWaitTimeout` | duration | `30s` | — | Time JetStream waits for an ACK before redelivering. Also the deadline for a message's actions, HTTP retries included — actions still running when it expires are cancelled and the message is NAK'd. |
 | `maxDeliver` | int | `3` | `≥ 1` | Max delivery attempts before JetStream stops redelivering (see [Dead-letter behavior](#dead-letter-behavior)). |
 | `deliverPolicy` | string | `"new"` | `all`, `new`, `last`, `by_start_time`, `by_start_sequence` | Where a new consumer starts reading. |
 | `replayPolicy` | string | `"instant"` | `instant`, `original` | Replay pacing. |
@@ -297,7 +306,7 @@ logging:
 
 | Field | Type | Default | Valid values | Description |
 |-------|------|---------|--------------|-------------|
-| `level` | string | `"info"` | `debug`, `info`, `warn`, `error` | Log verbosity. `debug` logs per-condition evaluation results — invaluable for triaging non-firing rules. |
+| `level` | string | `"info"` | `debug`, `info`, `warn`, `error` | Log verbosity. `debug` logs each rule evaluated, throttle suppressions, and template variables that did not resolve — useful for triaging non-firing rules (it does not log each condition's result). |
 | `encoding` | string | `"json"` | `json`, `console` | Output format. |
 | `outputPath` | string | `"stdout"` | `stdout`, `stderr`, or a file path | Log destination. |
 
@@ -315,10 +324,12 @@ metrics:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | bool | `false` | Start the Prometheus metrics server. The address/path/interval defaults below apply **only when enabled**. |
-| `address` | string | `":2112"` | Metrics server listen address. |
-| `path` | string | `"/metrics"` | Metrics endpoint path. |
-| `updateInterval` | duration string | `"15s"` | How often system gauges (goroutines, memory) refresh. Must parse as a Go duration. |
+| `enabled` | bool | `false` | Start the Prometheus metrics server (which also serves `/health` and `/ready`). |
+| `address` | string | — *(see note)* | Metrics server listen address, e.g. `":2112"`. |
+| `path` | string | — *(see note)* | Metrics endpoint path, e.g. `"/metrics"`. |
+| `updateInterval` | duration string | — *(see note)* | How often system gauges (goroutines, memory) refresh, e.g. `"15s"`. Must parse as a Go duration. |
+
+> **Set `address`, `path`, and `updateInterval` whenever you enable metrics.** The `:2112` / `/metrics` / `15s` defaults are not applied at load time, so `enabled: true` (or `RR_METRICS_ENABLED=true`) on its own fails startup with `invalid metrics update interval`. The shipped config files set all three.
 
 Full metric catalogue and health-check details are in [12 Observability](./12-observability.md).
 
@@ -333,9 +344,9 @@ forEach:
 
 | Field | Type | Default | Bounds | Description |
 |-------|------|---------|--------|-------------|
-| `maxIterations` | int | `100` | `0`–`10000` | Max array elements processed per `forEach` action. `0` = unlimited (use with caution). The hard ceiling enforced at load is **10000**. |
+| `maxIterations` | int | `100` | `0`–`10000` | Max array length a `forEach` action accepts. `0` = unlimited (use with caution). The hard ceiling enforced at load is **10000**. |
 
-When an array exceeds the limit, the first N elements are processed and the rest are **silently dropped**. Watch the `foreach_iterations_total` metric against expected array sizes to detect truncation. See [05 Array Processing](./05-array-processing.md#performance--limits).
+When an array exceeds the limit, the `forEach` action **fails for that message** and generates no actions; the error `forEach array exceeds limit` is logged and `template_operations_total{status="error"}` increments. Nothing is truncated. See [05 Array Processing](./05-array-processing.md#performance--limits).
 
 ---
 
@@ -413,6 +424,6 @@ There is no dedicated dead-letter *subject*. Delivery semantics are governed ent
 
 - A message that **panics** during processing is **terminated** (`msg.Term()`) immediately so it cannot loop.
 - A message that **fails** processing is **NAK'd** and redelivered until `maxDeliver` is reached, after which JetStream stops redelivering it.
-- Unparseable payloads are handled leniently by the rule engine (not rejected at the broker layer).
+- Payloads that are not JSON but are valid UTF-8 are evaluated as a raw string (`{@value}`) rather than rejected. A payload that is neither fails evaluation and is NAK'd like any other failure, so it is redelivered until `maxDeliver`.
 
 To inspect messages that exhaust delivery, use JetStream's advisory subjects (`$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES.>`) or raise `maxDeliver` and a stream-level retention policy. See [10 Troubleshooting](./10-troubleshooting.md).

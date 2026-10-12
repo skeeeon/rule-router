@@ -14,7 +14,7 @@ Features are enabled via config (`features.router`, `features.gateway`, `feature
 *   **Array Processing** - Native support for batch messages with array operators and forEach iteration.
 *   **Primitive Message Support** - Handle strings, numbers, booleans, and arrays at the root.
 *   **NATS JetStream Native** - Built on pull consumers for durable, scalable subscriptions.
-*   **Cryptographic Security** - NKey signature verification and replay protection for secure workflows.
+*   **Cryptographic Security** - NKey signature verification and replay protection for secure workflows, plus fail-closed HMAC verification of inbound webhooks (generic, Stripe, Slack, Standard Webhooks).
 *   **Key-Value Store Integration** - Dynamic lookups with a local cache for ~25x faster lookups.
 *   **Time-Based Rules** - Schedule-aware evaluation without external schedulers.
 *   **Zero-Copy Passthrough** - Forward messages unchanged for high-performance filtering.
@@ -46,7 +46,7 @@ Features are enabled via config (`features.router`, `features.gateway`, `feature
 
 ### Prerequisites
 
-*   Go 1.23+
+*   Go 1.26+
 *   NATS Server with JetStream enabled
 *   **JetStream streams must exist before starting `rule-router`**
 
@@ -97,7 +97,15 @@ Features are enabled via config (`features.router`, `features.gateway`, `feature
 
 ## Configuration
 
-See `config/rule-router.yaml` for a fully documented example.
+See `config/rule-router.yaml` for a fully documented example, and the [Configuration Reference](./../../docs/11-configuration.md) for every field.
+
+Command-line flags:
+
+*   `--config` — config file path (default `config/rule-router.yaml`)
+*   `--rules` — rules directory, searched recursively (default `rules`; ignored when `kv.rules.enabled` is true)
+*   `--version` — print the version and exit
+
+Any other setting comes from the config file or an `RR_*` environment variable.
 
 ## Advanced Features
 
@@ -252,7 +260,7 @@ By default, rules are loaded from YAML files in the `rules/` directory. You can 
 ./rule-router --config config/rule-router.yaml --rules rules/
 ```
 
-Rules load at startup. Send `SIGHUP` to reload from disk.
+Rules load at startup. Send `SIGHUP` to reload them from disk; the new rules are validated first, and if they fail to load the reload is aborted and the current rules keep serving. SIGHUP does not re-read the config file.
 
 ### KV-Based
 
@@ -297,8 +305,10 @@ The rule-router exposes Prometheus metrics on port `:2112` (configurable).
 
 *   `messages_total{status="received|processed|error"}`
 *   `rule_matches_total`
-*   `actions_total{status="success|error"}`
-*   `foreach_iterations_total{rule_file="batch_notifications"}`
+*   `actions_total{status="success|error|skipped"}`
+*   `foreach_iterations_total{rule_file="nats|http"}` (the label carries the action type)
 *   `throttle_suppressed_total{phase="trigger|action"}`
 *   `kv_cache_hits_total` / `kv_cache_misses_total`
 *   `nats_connection_status`
+
+Each process also registers on NATS service discovery as `rule-router` (`nats micro ls`), and serves `/health` and `/ready` on the metrics port. See [Metrics & Observability](./../../docs/12-observability.md).

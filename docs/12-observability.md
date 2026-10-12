@@ -36,7 +36,7 @@ A label-cardinality note up front: Prometheus `CounterVec`/`HistogramVec` series
 
 The metrics-port `/health` and `/ready` are the recommended probe targets for **all** feature combinations (router-only, scheduler-only, gateway, or any mix) — wire them to k8s `livenessProbe` and `readinessProbe` respectively.
 
-> **Note:** `/health` and `/ready` live on the metrics server, so they require `metrics.enabled: true` (the default). With metrics disabled there is no HTTP probe target; fall back to alerting on the `nats_connection_status` gauge (`1` = connected).
+> **Note:** `/health` and `/ready` live on the metrics server, so they require `metrics.enabled: true` (set in the shipped config files; the built-in default is `false`). With metrics disabled there is no HTTP probe target on router-only or scheduler-only deployments.
 
 > **TLS:** health and metrics endpoints, like the inbound gateway, are plain HTTP. Terminate TLS at a proxy/load balancer — see [02 Gateway — TLS termination](./02-gateway.md#tls--https-termination).
 
@@ -66,18 +66,18 @@ Types: **C** = Counter, **G** = Gauge, **H** = Histogram. "Feature" indicates wh
 | Metric | Type | Labels | Feature | Description |
 |--------|------|--------|---------|-------------|
 | `messages_total` | C | `status` = `received` \| `processed` \| `error` | router, gateway | Messages handled, by outcome. |
-| `rule_matches_total` | C | `trigger` = NATS subject \| HTTP path \| `schedule:<cron>` | router, gateway | Rule matches by trigger, counted once at evaluation. Rules sharing a trigger aggregate together (there is no per-rule name). |
-| `rules_active` | G | — | all | Number of rules currently loaded (updates on reload). |
+| `rule_matches_total` | C | `trigger` = NATS subject \| HTTP path \| `schedule:<cron>` | all | Rule matches by trigger, counted once per action a matching rule produces — a `forEach` fan-out of N counts N. Rules sharing a trigger aggregate together (there is no per-rule name). |
+| `rules_active` | G | — | all | Number of rules currently loaded (updates on reload). The scheduler sets it to its own schedule-rule count, so in a process that also runs the router or gateway the value depends on which feature set it last. |
 | `actions_total` | C | `status` = `success` \| `error` \| `skipped` | all | Actions executed, by outcome. `skipped` = an HTTP action matched on the router but `features.gateway` is disabled, so nothing executed it. |
-| `actions_by_type_total` | C | `type` = `templated` \| `passthrough` \| `merge` | router, gateway | Actions by payload mode. |
-| `action_publish_failures_total` | C | — | all | NATS publish failures for actions. |
-| `template_operations_total` | C | `status` = `success` \| `error` | router, gateway | Template-evaluation outcomes. |
+| `actions_by_type_total` | C | `type` = `templated` \| `passthrough` \| `merge` | all | Actions by payload mode. |
+| `action_publish_failures_total` | C | — | all | NATS publish failures for actions. The scheduler also counts failed HTTP actions and recovered job panics here. |
+| `template_operations_total` | C | `status` = `success` \| `error` | all | Action-evaluation outcomes: `success` once per action produced, `error` once per matched rule whose action failed to evaluate (for example a `forEach` field that is missing, is not an array, or is longer than `forEach.maxIterations`). |
 
 ### NATS connection
 
 | Metric | Type | Labels | Feature | Description |
 |--------|------|--------|---------|-------------|
-| `nats_connection_status` | G | — | all | `1` = connected, `0` = disconnected. Primary readiness signal. |
+| `nats_connection_status` | G | — | all | `1` = connected, `0` = disconnected — but it is only set by connection *events*: it reads `0` from startup until the first disconnect/reconnect cycle, even while connected. Until then use `/ready` for live connectivity. |
 | `nats_reconnects_total` | C | — | all | Cumulative reconnect events. |
 | `nats_async_errors_total` | C | `kind` | all | Errors NATS reports outside any request. `kind="slow_consumer"`: a subscription fell behind and messages were **dropped** — on a core subject, usually a rule whose actions are too slow (see [Core concepts](01-core-concepts.md)). `kind="permissions_violation"`: the account may not publish or subscribe on a subject; a denied publish never acks, so this is the only signal. `kind="other"`: everything else. Any non-zero value deserves a look. |
 
@@ -106,20 +106,22 @@ Emitted only when `security.verification.enabled` and a rule actually references
 
 | Metric | Type | Labels | Feature | Description |
 |--------|------|--------|---------|-------------|
-| `foreach_iterations_total` | C | `rule_file` | router, gateway, scheduler | Array elements visited (after the `maxIterations` cap). |
+| `foreach_iterations_total` | C | `rule_file` | router, gateway, scheduler | Array elements visited. |
 | `foreach_filtered_total` | C | `rule_file` | same | Elements dropped by the `filter` block. |
 | `foreach_actions_generated_total` | C | `rule_file` | same | Actions actually emitted (visited − filtered − errors). |
 | `foreach_element_errors_total` | C | `rule_file`, `error_type` | same | Per-element processing errors (see error types below). |
 | `foreach_duration_seconds` | H | `rule_file` | same | Time spent processing a `forEach` action. |
-| `array_operator_evaluations_total` | C | `operator` = `any`\|`all`\|`none`, `result` = `true`\|`false` | router, gateway | Array-operator evaluations in conditions. |
+| `array_operator_evaluations_total` | C | `operator` = `any`\|`all`\|`none`, `result` = `true`\|`false` | all | Array-operator evaluations in conditions. |
 
-`error_type` values for `foreach_element_errors_total`: `template_subject_failed`, `template_url_failed`, `template_method_failed`, `template_publish_response_subject_failed`.
+Despite its name, the `rule_file` label on the `foreach_*` metrics carries the **action type** — `nats` or `http` — not the rule's file, so these series aggregate every `forEach` rule of that type. An array longer than `forEach.maxIterations` fails before iteration and appears in none of them (see `template_operations_total{status="error"}`).
+
+`error_type` values for `foreach_element_errors_total`: `marshal_failed`, `merge_payload_failed`, `template_payload_failed`, `template_headers_failed`, `template_subject_failed`, `template_url_failed`, `template_method_failed`, `template_publish_response_subject_failed`, `action_build_failed`.
 
 ### Throttle
 
 | Metric | Type | Labels | Feature | Description |
 |--------|------|--------|---------|-------------|
-| `throttle_suppressed_total` | C | `phase` = `trigger` \| `action` | router, gateway | Messages dropped by a **leading**-mode per-rule throttle, by phase. |
+| `throttle_suppressed_total` | C | `phase` = `trigger` \| `action` | all | Messages dropped by a **leading**-mode per-rule throttle, by phase (schedule rules can only throttle the action). |
 | `throttle_deferred_total` | C | `outcome` = `coalesced` \| `emitted` \| `dropped` \| `error` | router, gateway, scheduler | **Trailing**-mode throttle lifecycle. |
 
 `outcome` values for `throttle_deferred_total`:
@@ -184,7 +186,7 @@ Emitted whenever an HTTP *action* runs (gateway outbound rules and scheduler HTT
 
 - `http_inbound_requests_total` and `http_request_duration_seconds` label `path` with the **rule route that matched**, not the raw request path. An exact-path rule reports its own path; a wildcard rule reports its pattern, so every URL under `/api/>` collapses into a single `path="/api/>"` series. Cardinality is therefore bounded by your rule count, and wildcards matching UUIDs or per-user paths are safe. If two wildcard rules match the same request, the first in load order names the label — all matching rules still fire, and per-rule attribution lives in `rule_matches_total{trigger}`.
 - `404` responses are recorded as `path="_unknown_"` so path-scanning traffic cannot blow up cardinality.
-- `rule_file` labels track the rule's source file (or KV key). This is bounded by your rule count and is safe.
+- The `rule_file` label on the `foreach_*` metrics only ever takes two values (`nats`, `http`) — it is the action type, not the source file.
 
 ---
 
@@ -218,8 +220,8 @@ sum(rate(http_outbound_requests_total{status_code!~"2.."}[5m]))
 # Throttle suppression rate by phase
 rate(throttle_suppressed_total[5m])
 
-# forEach truncation watch: iterations approaching the cap for a rule
-rate(foreach_iterations_total{rule_file="sensors/batch.yaml"}[5m])
+# forEach elements visited per second, NATS actions (rule_file is the action type)
+rate(foreach_iterations_total{rule_file="nats"}[5m])
 ```
 
 ## Example alerts
@@ -228,6 +230,9 @@ rate(foreach_iterations_total{rule_file="sensors/batch.yaml"}[5m])
 groups:
   - name: rule-router
     rules:
+      # nats_connection_status reads 0 from startup until the first reconnect
+      # (see the catalogue), so this also fires on a healthy instance that has
+      # never reconnected. Probe /ready for live connectivity.
       - alert: RuleRouterNATSDisconnected
         expr: nats_connection_status == 0
         for: 1m
@@ -279,15 +284,17 @@ Logs are structured (slog-style key/value) via the `logging` config block ([refe
 
 | Field | Meaning |
 |-------|---------|
-| `rule_file` | Which rule file (or KV key) a message hit. |
 | `subject` / `path` | The NATS subject or HTTP path of the trigger. |
-| `condition_result` | Whether conditions passed (debug level). |
+| `ruleIndex` | Which rule was evaluated (`evaluating rule`, debug level) — its position among all loaded rules. |
+| `field` / `operator` | A condition whose field could not be resolved (`failed to resolve condition field`, warn level). |
+| `variable` | A template variable that rendered empty (debug level). |
+| `kind` | The class of a `NATS asynchronous error` (`slow_consumer`, `permissions_violation`, `other`). |
 | `error` | Underlying cause for a failed action. |
 
-Set `logging.level: debug` temporarily to log per-condition evaluation — the single most useful signal for a rule that isn't firing. See [10 Troubleshooting](./10-troubleshooting.md).
+Set `logging.level: debug` temporarily for a rule that isn't firing: it shows which rules were evaluated, throttle suppressions, and template variables that did not resolve. Individual condition results are not logged. See [10 Troubleshooting](./10-troubleshooting.md).
 
 ---
 
 ## Auth manager metrics
 
-The companion `nats-auth-manager` binary runs its own metrics server (default `:2113`) with `authmgr_*` series (e.g. `authmgr_auth_success_total`, `authmgr_auth_failures_total`, both labeled by provider). These are documented in the [Auth Manager README](../cmd/nats-auth-manager/README.md); it is a separate process from `rule-router`.
+The companion `nats-auth-manager` binary runs its own metrics server (default `:2113`, when `metrics.enabled`) with `authmgr_*` series (`authmgr_auth_success_total`, `authmgr_auth_failures_total`, `authmgr_auth_duration_seconds`, `authmgr_kv_store_failures_total`, all labeled by `provider`). These are documented in the [Auth Manager README](../cmd/nats-auth-manager/README.md); it is a separate process from `rule-router`.

@@ -51,7 +51,7 @@ The core of the system. Key types and flow:
 1. **Loader** parses YAML rules from filesystem or NATS KV bucket
 2. **Index** maps NATS subject patterns to rules for O(1) lookup. Wildcard patterns (`*`, `>`) compile through `pattern.go`; HTTP path patterns reuse the same machinery via `path_matcher.go` (slash-separated).
 3. **Processor** orchestrates rule evaluation on incoming messages
-4. **Evaluator** resolves template variables and checks condition operators (`eq`, `gt`, `lt`, `gte`, `lte`, `contains`, `not_contains`, `exists`, `not_exists`, `any`, `all`, `none`); `condition_resolver.go` holds shared helpers
+4. **Evaluator** resolves template variables and checks condition operators (`eq`, `neq`, `gt`, `lt`, `gte`, `lte`, `contains`, `not_contains`, `in`, `not_in`, `exists`, `not_exists`, `recent`, `any`, `all`, `none` — the single list lives in `operators.go`); `condition_resolver.go` holds shared helpers
 5. **ThrottleManager** (`throttle.go`) — per-rule leading-edge suppression with a configurable window; state resets naturally when Processor is rebuilt on reload. See Throttle below for the trailing-mode path, which does *not* live here.
 6. **Signature verification** (`signature.go` + `signature_verify.go`) — nkey-based payload signature checks (stubbed out in the WASM build)
 
@@ -105,7 +105,7 @@ Each feature is a separate `lifecycle.Application` wired up by the AppBuilder:
 
 ### Configuration
 
-Config files live in `config/` (YAML). Loaded via Viper with environment variable overrides (prefix `RR_`) through pflag. A unified `Config` struct includes a `FeaturesConfig` section to enable/disable router, gateway, and scheduler. The canonical file is `config/rule-router.yaml`; legacy per-feature files (`http-gateway.yaml`, `rule-scheduler.yaml`) still work with the appropriate `features` block. `config/auth-manager.yaml` is consumed by `cmd/nats-auth-manager`. Config struct and validation live in `config/config.go`.
+Config files live in `config/` (YAML). Loaded via Viper with environment variable overrides (prefix `RR_`); no config key is bound to a flag — `main.go` parses only `--config`, `--rules`, and `--version` (pflag). Config is read once; SIGHUP reloads rules, not config. A unified `Config` struct includes a `FeaturesConfig` section to enable/disable router, gateway, and scheduler. The canonical file is `config/rule-router.yaml`; legacy per-feature files (`http-gateway.yaml`, `rule-scheduler.yaml`) still work with the appropriate `features` block. `config/auth-manager.yaml` is consumed by `cmd/nats-auth-manager`. Config struct and validation live in `config/config.go`.
 
 ### Rule Format
 

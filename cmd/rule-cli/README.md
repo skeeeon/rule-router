@@ -10,7 +10,7 @@ This tool streamlines the developer workflow by providing both rapid, template-b
 
 *   **Interactive Rule Builder**: A step-by-step wizard that guides you through creating complex rules, including nested conditions, `forEach` actions, and cron schedule triggers. Supports building multiple rules into a single file.
 *   **Template-Based Scaffolding**: Quickly generate rules for common use cases like NATS-to-NATS routing, batch processing, KV enrichment, HTTP webhooks, and cron schedules.
-*   **Unified Testing**: Test rules for NATS, HTTP, and Schedule triggers/actions with a single tool.
+*   **Unified Testing**: Test NATS- and HTTP-triggered rules with a single tool. Schedule rules can be created, scaffolded, and linted, but `check` and `test` do not evaluate them — a scaffolded schedule test fails with `no mock trigger specified in test config`.
 *   **Multi-Rule File Support**: Scaffold, test, and check rules in files containing multiple rules with per-rule test directories.
 *   **Full `forEach` Support**: Intelligently scaffolds, tests, and validates rules that use `forEach` for batch processing, including multi-action output validation.
 *   **Primitive Message Support**: Test rules with strings, numbers, and arrays at the root.
@@ -133,6 +133,8 @@ Total Tests: 8, Passed: 8, Failed: 0
 Duration: 30ms
 ```
 
+The grouped output above is what `--parallel=0` prints. The default parallel run (`--parallel=4`) prints the same results as a flat list in completion order, without the `=== RULE ===` headers, naming multi-rule results `_rule_N/match_1.json`.
+
 For multi-rule files, the test runner detects `_rule_N/` subdirectories within the `_test` directory and runs each independently.
 
 -----
@@ -156,7 +158,8 @@ Available Commands:
   test        Run all test suites for rules in a directory
 
 Flags:
-  -h, --help   help for rule-cli
+  -h, --help      help for rule-cli
+  -v, --version   version for rule-cli
 ```
 
 ### `new` Command
@@ -224,7 +227,7 @@ rule-cli scaffold rules/webhooks.yaml
 
 ### `check` Command
 
-Perform a quick, interactive check of a single rule against a single message.
+Perform a quick check of a single rule against a single message. `check` handles NATS- and HTTP-triggered rules only; schedule rules are not supported by `check` or `test` (use `lint` to validate them).
 
 ```bash
 # Quick check a rule with a message file
@@ -247,7 +250,7 @@ rule-cli check --rule webhook.yaml --message msg.json \
 rule-cli check --rule webhook.yaml --message msg.json --query '?tenant=acme&page=2'
 ```
 
-For multi-rule files, omitting `--rule-index` will list all rules with their triggers so you can pick one. The selected rule is checked **alone** — its siblings are not loaded — so when several rules share a trigger subject, the result is that rule's match and actions, not whichever sibling also fired.
+For multi-rule files, omitting `--rule-index` lists all rules with their triggers and exits, so you can pick one. The selected rule is checked **alone** — its siblings are not loaded — so when several rules share a trigger subject, the result is that rule's match and actions, not whichever sibling also fired.
 
 #### Testing non-JSON bodies
 
@@ -274,7 +277,7 @@ rule-cli kv push sensors/ --url nats://localhost:4222
 rule-cli kv push sensors/tank.yaml --url nats://localhost:4222
 
 # Push with credentials
-rule-cli kv push rules/ --url nats://my-server:4222 --creds /path/to/creds.json
+rule-cli kv push rules/ --url nats://my-server:4222 --creds /path/to/user.creds
 
 # Preview what would be pushed (validates rules without writing)
 rule-cli kv push sensors/ --dry-run
@@ -283,9 +286,9 @@ rule-cli kv push sensors/ --dry-run
 rule-cli kv push rules/ --bucket my-rules
 ```
 
-File paths are converted to dotted KV keys: `sensors/tank.yaml` becomes `sensors.tank`. Directory pushes are **non-recursive** — push each subdirectory separately for nested structures.
+The KV key is the file name without its extension, relative to the pushed directory (or the file's own directory): `rule-cli kv push sensors/` stores `sensors/tank.yaml` as `tank`, not `sensors.tank`. Keep file names unique across the directories you push to one bucket, or a later push overwrites an earlier one. `--dry-run` shows the `file -> key` mapping. Directory pushes are **non-recursive** — push each subdirectory separately for nested structures.
 
-All rules are validated before pushing. If any rule fails validation, the push is aborted.
+All rules are validated before pushing. If any rule fails validation, the push is aborted. A missing bucket is created.
 
 **» See the [KV Rule Store guide](../../docs/08-kv-rule-store.md) for full details on configuration, GitOps workflows, and how hot-reload works.**
 
@@ -375,7 +378,7 @@ jobs:
       
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.26'
       
       - name: Build rule-cli
         run: go build -o rule-cli ./cmd/rule-cli

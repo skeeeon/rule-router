@@ -83,6 +83,8 @@ trigger:
 
 HTTP paths support the same wildcard syntax as NATS subjects, with `/` as the separator: `*` matches one segment, `>` matches one or more trailing segments and must be the final segment. Exact and wildcard rules both fire when both match. See [02 Gateway — Path matching](./02-gateway.md#path-matching) for details.
 
+Trigger subjects and paths are matched literally — templates are never expanded in a trigger. A `{` or `}` in `trigger.nats.subject` or `trigger.http.path` is a load error: `events.location.{user_id}` would otherwise subscribe to the literal token `{user_id}` and never fire. Use a wildcard and read the token in the action instead — `events.location.*` with `{@subject.2}` (or `{@path.N}` for an HTTP path). The error message spells out that rewrite.
+
 **Schedule Trigger** (scheduler feature): Fires on a cron schedule.
 ```yaml
 trigger:
@@ -137,6 +139,30 @@ conditions:
       operator: "eq"
       value: "active"
 ```
+
+### Nested Groups
+
+A conditions block can hold `groups` alongside `items` — each group is itself a conditions block with its own `operator`, and groups nest. The block passes when its `items` and `groups` together satisfy its `operator`:
+
+```yaml
+conditions:
+  operator: and
+  items:
+    - field: "{status}"
+      operator: eq
+      value: "active"
+  groups:
+    - operator: or            # status is active AND (temperature > 32 OR humidity > 85)
+      items:
+        - field: "{temperature}"
+          operator: gt
+          value: 32
+        - field: "{humidity}"
+          operator: gt
+          value: 85
+```
+
+There is no `not` group; to act on a missing field use the `not_exists` operator.
 
 ### Variable-to-Variable Comparisons (NEW!)
 
@@ -281,7 +307,7 @@ action:
       maxDelay: "30s"
 ```
 
-**Respond Action**: Returns the evaluated payload to the *caller* instead of publishing onward. On an HTTP-triggered rule it is written as the HTTP response body; on a NATS trigger with `reply: true` it is sent back via `msg.Respond`. A respond is a single terminal response, so it supports `payload`/`passthrough`/`merge`/`headers` (same as other actions) plus an HTTP-only `statusCode` (defaults to 200) — but no `forEach` or `debounce`.
+**Respond Action**: Returns the evaluated payload to the *caller* instead of publishing onward. On an HTTP-triggered rule it is written as the HTTP response body; on a NATS trigger with `reply: true` it is sent back via `msg.Respond`. A respond is a single terminal response, so it supports `payload`/`passthrough`/`merge`/`headers` (same as other actions) plus an HTTP-only `statusCode` (defaults to 200) — but no `forEach` or `throttle`.
 ```yaml
 action:
   respond:
@@ -306,7 +332,9 @@ action:
 
 Backoff doubles each attempt (`initialDelay`, `2×`, `4×`, …) up to `maxDelay`, and a small random jitter (≤100ms) is added each round to avoid thundering herds when multiple actions retry simultaneously. Retries are issued for any non-2xx response or transport error. The retry context honors graceful shutdown — in-flight retries are cancelled when the application terminates.
 
-**Optional `publishResponse`**: Capture the HTTP response body and republish it to a NATS subject. On a 2xx response, the body (capped at 1 MB) is published as a NATS message — typically consumed by a router rule that performs the actual evaluation. Available wherever HTTP actions are used (scheduler cron triggers, gateway outbound NATS→HTTP, router NATS-trigger + HTTP-action rules).
+The whole retry sequence also has to fit the deadline of the path running it: `nats.consumers.ackWaitTimeout` (default `30s`) for a JetStream-triggered rule, 30 seconds for a `mode: core` trigger, and 10 seconds per action for a schedule rule. Retries still pending at the deadline are abandoned, so size `maxAttempts` and `maxDelay` to fit inside it.
+
+**Optional `publishResponse`**: Capture the HTTP response body and republish it to a NATS subject. On a 2xx response, the body (capped at 1 MB) is published as a NATS message — typically consumed by a router rule that performs the actual evaluation. Available wherever HTTP actions are used (scheduler cron triggers, and NATS-triggered HTTP actions, which run under `features.gateway`).
 
 ```yaml
 action:
@@ -503,7 +531,7 @@ If you need per-element rate limiting, split the fan-out into its own subject an
 
 ### State and reloads
 
-Leading-mode state lives in memory on the Processor. A SIGHUP reload rebuilds the Processor and therefore clears it — worth knowing if you are watching for an alert right after a config change.
+Leading-mode state lives in memory on the Processor. A SIGHUP reload rebuilds the Processor and therefore clears it — worth knowing if you are watching for an alert right after a rule change. A KV-driven rule update does not rebuild the Processor, so it leaves this state in place.
 
 Trailing-mode pending batches live in the executing layer instead, so they survive a reload and still fire. They are fully evaluated by the time they are pending, so a rule change mid-window does not alter what gets emitted.
 
@@ -527,7 +555,7 @@ Environment variables are expanded **at load time** (when rules are parsed from 
 ### Syntax
 
 ```yaml
-# Use ${VARIABLE_NAME} anywhere in your rules
+# Use ${VARIABLE_NAME} in condition and action fields (see the list below)
 action:
   http:
     url: "https://api.example.com"
@@ -537,7 +565,9 @@ action:
 
 ### Where Can I Use Them?
 
-Environment variables can be used in **both conditions and actions**:
+Environment variables can be used in **both conditions and actions**: condition fields and values (including `forEach` filters), NATS and HTTP action fields (subject, URL, method, payload, headers, `forEach`, throttle `window`/`key`), a trigger's throttle block, a schedule trigger's `cron` and `timezone`, and an HTTP trigger's `hmac.secret`.
+
+They are **not** expanded in a trigger's `subject` or `path`, in a `respond` action, in `publishResponse.subject`, or in `retry` settings — a `${VAR}` there stays literal text.
 
 #### In Actions
 

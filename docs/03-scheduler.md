@@ -1,6 +1,6 @@
 # Scheduler
 
-The scheduler feature fires rules on a cron schedule rather than in response to a message. Enable with `features.scheduler: true` or `RR_FEATURES_SCHEDULER=true`.
+The scheduler feature fires rules on a cron schedule rather than in response to a message. Enable with `features.scheduler: true` or `RR_FEATURES_SCHEDULER=true`. With file-based rules, the scheduler refuses to start if the rules directory contains no schedule rules (`no schedule-triggered rules found`); with the [KV rule store](./08-kv-rule-store.md) it starts empty and picks rules up as they arrive.
 
 Use cases:
 - Polling external APIs that have no webhook channel
@@ -116,7 +116,7 @@ The scheduler supports both NATS and HTTP actions.
         maxDelay: "30s"
 ```
 
-HTTP actions support the full retry/backoff machinery documented in [01 Core Concepts](./01-core-concepts.md).
+HTTP actions support the full retry/backoff machinery documented in [01 Core Concepts](./01-core-concepts.md). Each scheduled action (NATS publish or HTTP call) has **10 seconds** to finish, retries included, so attempts plus backoff that run past it are cut short.
 
 ## Poll-and-republish: `publishResponse`
 
@@ -174,7 +174,8 @@ Schedule rules can use conditions, though they evaluate against time and KV cont
       - field: "{@time.hour}"
         operator: lt
         value: 17
-      # Only if the maintenance flag is unset
+      # Only if maintenance mode is not switched on. The key must exist:
+      # neq (like every operator but not_exists) is false on a missing value.
       - field: "{@kv.config.maintenance:active}"
         operator: neq
         value: true

@@ -43,7 +43,7 @@ Query parameters live in their own `{@query.name}` namespace and are **never mer
 - **Names are case-sensitive.** `{@query.tenant}` and `{@query.Tenant}` are different parameters. (Headers are the opposite — HTTP defines those as case-insensitive.)
 - **Values are always strings**, like headers. Conditions coerce them, so `operator: gte, value: 2` works against `?version=3`.
 - **A repeated name keeps only its first value.** `?tag=a&tag=b` gives `{@query.tag}` → `a`.
-- **An absent parameter renders as an empty string** in templates and fails any condition except `exists`.
+- **An absent parameter renders as an empty string** in templates and fails every condition except `not_exists`.
 - **The query never affects routing.** Rule matching and the Prometheus `path` label key off the path alone, so `?anything=goes` can't turn a matching path into a 404 — nor make a non-matching one match.
 
 ```yaml
@@ -88,6 +88,8 @@ Test it with `rule-cli check --query 'tenant=acme&page=2'`, or the **Query Param
 | `{@timestamp.unix}` | Unix timestamp (seconds) | `1730217600` |
 | `{@timestamp.iso}` | ISO timestamp | `2025-10-29T17:30:00Z` |
 
+These use the process's local time zone (the `TZ` environment variable; containers usually run in UTC), so `{@time.hour}` is the local hour and `{@timestamp.iso}` carries the local offset. `{@timestamp()}` below is always UTC.
+
 ## Key-Value Store
 
 | Variable | Description | Example |
@@ -123,11 +125,11 @@ field: "{@kv.config.app:database.connection.host}"
 
 | Function | Description | Example Output |
 |----------|-------------|----------------|
-| `{@timestamp()}` | Generate current timestamp (RFC3339) | `2025-10-29T17:30:00Z` |
+| `{@timestamp()}` | Generate current timestamp (RFC3339, UTC) | `2025-10-29T17:30:00Z` |
 | `{@uuid7()}` | Generate time-ordered UUID v7 | `018b7e5a-f3c2-7000-8000-0123456789ab` |
 | `{@uuid4()}` | Generate random UUID v4 | `550e8400-e29b-41d4-a716-446655440000` |
 | `{@random.int(min,max)}` | Random integer, both ends inclusive | `42` |
-| `{@random.float(min,max,decimals)}` | Random float at a fixed number of decimal places | `-18.3` |
+| `{@random.float(min,max,decimals)}` | Random float at a fixed number of decimal places (`decimals` 0–10) | `-18.3` |
 | `{@random.choice(a,b,...)}` | One of the listed values | `open` |
 
 ### Random functions are for synthetic data
@@ -190,8 +192,8 @@ All system variables can be used in conditions with these operators:
 
 **Array Operators:**
 - `any` - At least one array element matches nested conditions
-- `all` - All array elements match nested conditions
-- `none` - No array elements match nested conditions
+- `all` - All array elements match nested conditions (`false` for an empty array)
+- `none` - No array elements match nested conditions (`true` for an empty array)
 
 **Time-Based:**
 - `recent` - Timestamp is within time window (e.g., `"5s"`, `"1m"`, `"1h"`)

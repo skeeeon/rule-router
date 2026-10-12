@@ -15,7 +15,7 @@ By default, rules are loaded from YAML files in the `rules/` directory at startu
 | **Rule source** | `rules/` directory | NATS KV bucket |
 | **When rules load** | At startup (or SIGHUP reload) | Continuously via KV Watch |
 | **Hot reload** | Requires SIGHUP signal | Automatic on any KV change |
-| **Dynamic subjects** | Requires restart for new subjects | Consumers/cron jobs created/removed automatically |
+| **Dynamic subjects** | Requires SIGHUP or restart for new subjects | Consumers/cron jobs created/removed automatically |
 | **Best for** | Simple deployments, local dev | GitOps, multi-team, dynamic environments |
 
 Both modes use the exact same YAML rule format. A rule that works from a file works identically from KV.
@@ -70,26 +70,27 @@ rule-cli kv push sensors/tank.yaml --url nats://localhost:4222
 rule-cli kv push sensors/ --url nats://localhost:4222
 
 # Push with credentials
-rule-cli kv push rules/ --url nats://my-server:4222 --creds /path/to/creds.json
+rule-cli kv push rules/ --url nats://my-server:4222 --creds /path/to/user.creds
 
 # Preview what would be pushed without writing
 rule-cli kv push sensors/ --dry-run
 ```
 
+If the bucket does not exist, `kv push` creates it with JetStream defaults (independent of the server's `autoProvision` setting).
+
 ### KV Key Derivation
 
-When pushing, the file path determines the KV key:
+The KV key is the file name with its `.yaml` or `.yml` extension stripped. The key is derived relative to the directory being pushed (or, for a single file, the file's own directory), so the directory part never becomes part of the key:
 
-1. Strip the `.yaml` or `.yml` extension
-2. Replace path separators (`/`, `\`) with `.`
+| Command | File | KV Key |
+|---|---|---|
+| `rule-cli kv push routing.yaml` | `routing.yaml` | `routing` |
+| `rule-cli kv push sensors/tank.yaml` | `sensors/tank.yaml` | `tank` |
+| `rule-cli kv push alerts/` | `alerts/critical.yml` | `critical` |
 
-| File Path | KV Key |
-|---|---|
-| `routing.yaml` | `routing` |
-| `sensors/tank.yaml` | `sensors.tank` |
-| `alerts/critical.yml` | `alerts.critical` |
+`--dry-run` prints the `file -> key` mapping before anything is written.
 
-Your directory structure maps directly to a dotted namespace in the KV store.
+> **Keep file names unique across directories.** `sensors/status.yaml` and `alerts/status.yaml` both push to the key `status`, so the second push overwrites the first.
 
 ### Directory Push Behavior
 
@@ -193,7 +194,7 @@ Outbound rules (NATS trigger + HTTP action) are handled by the shared `Subscript
 
 ### Stream Refresh
 
-When a new rule references a NATS subject, the application refreshes its JetStream stream list to pick up any newly created streams. If a stream doesn't exist for a subject, the rule is still loaded but the subscription is skipped with a warning — you can create the stream later and the next rule update will pick it up.
+On every KV update the application refreshes its JetStream stream list to pick up any newly created streams, then checks that each JetStream NATS trigger subject is covered by a stream. If one is not, **every rule under that key is rejected** (`stream validation failed, rejecting all rules for this key`) and the key's previous rules stay in effect. Create the stream, then push the key again. Core-transport triggers (`mode: core`, `reply: true`) need no stream and are not checked. Action subjects are only warned about, so an action may publish to a subject whose stream you create later.
 
 ### Validation
 
@@ -204,7 +205,7 @@ Rules pushed to KV go through the same validation pipeline as file-based rules:
 - KV field validation
 - Stream subject validation
 
-If a rule fails validation, it is rejected and the previous rules for that key are preserved.
+If any rule under a key fails validation, the whole key is rejected and the previous rules for that key are preserved.
 
 -----
 
