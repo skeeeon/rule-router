@@ -218,16 +218,16 @@ You can also manage rules directly with the `nats` CLI:
 nats kv add rules
 
 # Put a rule
-nats kv put rules sensors.tank < sensors/tank.yaml
+nats kv put rules tank < sensors/tank.yaml   # the key `rule-cli kv push` would use
 
 # Get a rule
-nats kv get rules sensors.tank
+nats kv get rules tank
 
 # List all rule keys
 nats kv ls rules
 
 # Delete a rule
-nats kv del rules sensors.tank
+nats kv del rules tank
 
 # Watch for changes (useful for debugging)
 nats kv watch rules
