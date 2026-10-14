@@ -200,12 +200,14 @@ On every KV update the application refreshes its JetStream stream list to pick u
 
 Rules pushed to KV go through the same validation pipeline as file-based rules:
 - YAML parsing
-- Environment variable expansion (`${VAR_NAME}`)
+- Environment variable check: a KV rule may not use `${VAR_NAME}` (see below)
 - Structural validation (trigger, conditions, action)
 - KV field validation
 - Stream subject validation
 
 If any rule under a key fails validation, the whole key is rejected and the previous rules for that key are preserved.
+
+**No `${VAR}` in KV rules.** File rules expand `${VAR}` from the router's environment; KV rules do not, because anyone who can write to the rule bucket could otherwise read that whole environment. A KV rule that uses `${...}` in a field that file rules would expand is rejected, and the error names the variable and the field (see [Environment Variables](./01-core-concepts.md#file-rules-only)). `rule-cli kv push` runs the same check, so the push fails locally before anything is uploaded. For a secret, store it in a KV bucket and reference it as `{@kv.bucket.key}` — that works in `hmac.secret` and in templated action fields (URL, method, payload, headers). A `{@kv...}` value is readable by anyone who can write rules, since a rule can copy it into a payload; that is by design, so keep only secrets meant for rules in that bucket.
 
 -----
 

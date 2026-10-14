@@ -52,6 +52,7 @@ var CronParser = cron.NewParser(
 type Loader struct {
 	logger              *logger.Logger
 	configuredKVBuckets []string
+	allowEnv            bool // expand ${VAR} from the process environment (file rules only)
 }
 
 // NewLoader creates a new rules loader
@@ -59,7 +60,18 @@ func NewLoader(log *logger.Logger, kvBuckets []string) *Loader {
 	return &Loader{
 		logger:              log,
 		configuredKVBuckets: kvBuckets,
+		allowEnv:            true,
 	}
+}
+
+// DisallowEnv makes the loader reject any ${VAR} reference instead of
+// expanding it. Used for KV rules: anyone with write access to the rule bucket
+// can author them, so expanding ${VAR} would let them read the router's whole
+// environment. Rejecting (rather than leaving "${VAR}" in place) keeps a
+// literal "${X}" from quietly becoming an HMAC secret.
+func (l *Loader) DisallowEnv() *Loader {
+	l.allowEnv = false
+	return l
 }
 
 // LoadFromDirectory loads all .yaml and .yml files from a directory, recursively,
@@ -162,7 +174,7 @@ func (l *Loader) ParseAndValidateYAML(data []byte, source string) ([]Rule, error
 	// Expand environment variables before validation
 	for i := range rules {
 		if err := l.expandEnvironmentVariables(&rules[i], source, i); err != nil {
-			return nil, fmt.Errorf("rule %d in %s: failed to expand environment variables: %w", i, source, err)
+			return nil, fmt.Errorf("rule %d in %s: %w", i, source, err)
 		}
 	}
 
@@ -231,47 +243,56 @@ func (l *Loader) normalizeThrottle(rule *Rule, filePath string, ruleIndex int) e
 }
 
 // expandEnvironmentVariables expands ${VAR_NAME} placeholders in a rule
-// This happens at load time, before validation, for static configuration
+// This happens at load time, before validation, for static configuration.
+// When the loader disallows env (KV rules), the same walk collects each
+// reference into refs instead, and any reference is an error.
 func (l *Loader) expandEnvironmentVariables(rule *Rule, filePath string, ruleIndex int) error {
 	l.logger.Debug("expanding environment variables in rule",
 		"file", filePath,
 		"ruleIndex", ruleIndex)
 
+	var refs []string
+
 	// Expand in trigger throttle
-	l.expandTriggerEnvVars(&rule.Trigger, filePath, ruleIndex)
+	l.expandTriggerEnvVars(&rule.Trigger, filePath, ruleIndex, &refs)
 
 	// Expand in conditions
 	if rule.Conditions != nil {
-		l.expandConditionsEnvVars(rule.Conditions, filePath, ruleIndex)
+		l.expandConditionsEnvVars(rule.Conditions, filePath, ruleIndex, &refs)
 	}
 
 	// Expand in action
-	l.expandActionEnvVars(&rule.Action, filePath, ruleIndex)
+	l.expandActionEnvVars(&rule.Action, filePath, ruleIndex, &refs)
 
+	if len(refs) > 0 {
+		return fmt.Errorf("uses %s: environment variables are expanded only in file rules; "+
+			"write the value into the rule, or for a secret store it in KV and use {@kv.<bucket>.<key>}",
+			strings.Join(refs, ", "))
+	}
 	return nil
 }
 
 // expandTriggerEnvVars expands env vars in trigger throttle fields
-func (l *Loader) expandTriggerEnvVars(trigger *Trigger, filePath string, ruleIndex int) {
+func (l *Loader) expandTriggerEnvVars(trigger *Trigger, filePath string, ruleIndex int, refs *[]string) {
 	if trigger.NATS != nil {
-		l.expandThrottleEnvVars(trigger.NATS.Throttle, "trigger.nats.throttle", filePath, ruleIndex)
+		l.expandThrottleEnvVars(trigger.NATS.Throttle, "trigger.nats.throttle", filePath, ruleIndex, refs)
 	}
 	if trigger.HTTP != nil {
-		l.expandThrottleEnvVars(trigger.HTTP.Throttle, "trigger.http.throttle", filePath, ruleIndex)
+		l.expandThrottleEnvVars(trigger.HTTP.Throttle, "trigger.http.throttle", filePath, ruleIndex, refs)
 	}
 	if trigger.HTTP != nil && trigger.HTTP.HMAC != nil {
 		// Resolve ${ENV} secrets at load time (literals pass through unchanged;
 		// {@kv...} refs are left intact and resolved per-request at the gateway).
-		trigger.HTTP.HMAC.Secret = l.expandEnvVarsInString(trigger.HTTP.HMAC.Secret, "trigger.http.hmac.secret", filePath, ruleIndex)
+		trigger.HTTP.HMAC.Secret = l.expandEnvVarsInString(trigger.HTTP.HMAC.Secret, "trigger.http.hmac.secret", filePath, ruleIndex, refs)
 	}
 	if trigger.Schedule != nil {
-		trigger.Schedule.Cron = l.expandEnvVarsInString(trigger.Schedule.Cron, "trigger.schedule.cron", filePath, ruleIndex)
-		trigger.Schedule.Timezone = l.expandEnvVarsInString(trigger.Schedule.Timezone, "trigger.schedule.timezone", filePath, ruleIndex)
+		trigger.Schedule.Cron = l.expandEnvVarsInString(trigger.Schedule.Cron, "trigger.schedule.cron", filePath, ruleIndex, refs)
+		trigger.Schedule.Timezone = l.expandEnvVarsInString(trigger.Schedule.Timezone, "trigger.schedule.timezone", filePath, ruleIndex, refs)
 	}
 }
 
 // expandConditionsEnvVars recursively expands env vars in condition fields and values
-func (l *Loader) expandConditionsEnvVars(conds *Conditions, filePath string, ruleIndex int) {
+func (l *Loader) expandConditionsEnvVars(conds *Conditions, filePath string, ruleIndex int, refs *[]string) {
 	if conds == nil {
 		return
 	}
@@ -282,37 +303,37 @@ func (l *Loader) expandConditionsEnvVars(conds *Conditions, filePath string, rul
 
 		// Expand field name (rare but possible: field: "${PREFIX}.status")
 		if originalField := condition.Field; strings.Contains(originalField, "${") {
-			condition.Field = l.expandEnvVarsInString(originalField, "condition.field", filePath, ruleIndex)
+			condition.Field = l.expandEnvVarsInString(originalField, "condition.field", filePath, ruleIndex, refs)
 		}
 
 		// Expand value - handle different types
-		condition.Value = l.expandEnvVarsInValue(condition.Value, "condition.value", filePath, ruleIndex)
+		condition.Value = l.expandEnvVarsInValue(condition.Value, "condition.value", filePath, ruleIndex, refs)
 
 		// Recurse into nested conditions (for array operators: any/all/none)
 		if condition.Conditions != nil {
-			l.expandConditionsEnvVars(condition.Conditions, filePath, ruleIndex)
+			l.expandConditionsEnvVars(condition.Conditions, filePath, ruleIndex, refs)
 		}
 	}
 
 	// Recurse into nested groups
 	for i := range conds.Groups {
-		l.expandConditionsEnvVars(&conds.Groups[i], filePath, ruleIndex)
+		l.expandConditionsEnvVars(&conds.Groups[i], filePath, ruleIndex, refs)
 	}
 }
 
 // expandEnvVarsInValue expands env vars in a condition value (handles strings, arrays, other types)
-func (l *Loader) expandEnvVarsInValue(value any, location, filePath string, ruleIndex int) any {
+func (l *Loader) expandEnvVarsInValue(value any, location, filePath string, ruleIndex int, refs *[]string) any {
 	switch v := value.(type) {
 	case string:
 		// Most common case: value: "${EXPECTED_STATUS}"
-		return l.expandEnvVarsInString(v, location, filePath, ruleIndex)
+		return l.expandEnvVarsInString(v, location, filePath, ruleIndex, refs)
 
 	case []any:
 		// Array values: value: ["${VAL1}", "${VAL2}"]
 		result := make([]any, len(v))
 		for j, item := range v {
 			if str, ok := item.(string); ok {
-				result[j] = l.expandEnvVarsInString(str, fmt.Sprintf("%s[%d]", location, j), filePath, ruleIndex)
+				result[j] = l.expandEnvVarsInString(str, fmt.Sprintf("%s[%d]", location, j), filePath, ruleIndex, refs)
 			} else {
 				result[j] = item // Keep non-strings as-is
 			}
@@ -326,79 +347,88 @@ func (l *Loader) expandEnvVarsInValue(value any, location, filePath string, rule
 }
 
 // expandActionEnvVars expands env vars in action fields
-func (l *Loader) expandActionEnvVars(action *Action, filePath string, ruleIndex int) {
+func (l *Loader) expandActionEnvVars(action *Action, filePath string, ruleIndex int, refs *[]string) {
 	if action.NATS != nil {
 		natsAction := action.NATS
 
 		// Expand subject
-		natsAction.Subject = l.expandEnvVarsInString(natsAction.Subject, "action.nats.subject", filePath, ruleIndex)
+		natsAction.Subject = l.expandEnvVarsInString(natsAction.Subject, "action.nats.subject", filePath, ruleIndex, refs)
 
 		// Expand payload
-		natsAction.Payload = l.expandEnvVarsInString(natsAction.Payload, "action.nats.payload", filePath, ruleIndex)
+		natsAction.Payload = l.expandEnvVarsInString(natsAction.Payload, "action.nats.payload", filePath, ruleIndex, refs)
 
 		// Expand forEach field
-		natsAction.ForEach = l.expandEnvVarsInString(natsAction.ForEach, "action.nats.forEach", filePath, ruleIndex)
+		natsAction.ForEach = l.expandEnvVarsInString(natsAction.ForEach, "action.nats.forEach", filePath, ruleIndex, refs)
 
 		// Expand headers
 		for key, val := range natsAction.Headers {
-			natsAction.Headers[key] = l.expandEnvVarsInString(val, fmt.Sprintf("action.nats.headers[%s]", key), filePath, ruleIndex)
+			natsAction.Headers[key] = l.expandEnvVarsInString(val, fmt.Sprintf("action.nats.headers[%s]", key), filePath, ruleIndex, refs)
 		}
 
 		// Expand filter conditions
 		if natsAction.Filter != nil {
-			l.expandConditionsEnvVars(natsAction.Filter, filePath, ruleIndex)
+			l.expandConditionsEnvVars(natsAction.Filter, filePath, ruleIndex, refs)
 		}
 
 		// Expand throttle fields
-		l.expandThrottleEnvVars(natsAction.Throttle, "action.nats.throttle", filePath, ruleIndex)
+		l.expandThrottleEnvVars(natsAction.Throttle, "action.nats.throttle", filePath, ruleIndex, refs)
 	}
 
 	if action.HTTP != nil {
 		httpAction := action.HTTP
 
 		// Expand URL
-		httpAction.URL = l.expandEnvVarsInString(httpAction.URL, "action.http.url", filePath, ruleIndex)
+		httpAction.URL = l.expandEnvVarsInString(httpAction.URL, "action.http.url", filePath, ruleIndex, refs)
 
 		// Expand method
-		httpAction.Method = l.expandEnvVarsInString(httpAction.Method, "action.http.method", filePath, ruleIndex)
+		httpAction.Method = l.expandEnvVarsInString(httpAction.Method, "action.http.method", filePath, ruleIndex, refs)
 
 		// Expand payload
-		httpAction.Payload = l.expandEnvVarsInString(httpAction.Payload, "action.http.payload", filePath, ruleIndex)
+		httpAction.Payload = l.expandEnvVarsInString(httpAction.Payload, "action.http.payload", filePath, ruleIndex, refs)
 
 		// Expand forEach field
-		httpAction.ForEach = l.expandEnvVarsInString(httpAction.ForEach, "action.http.forEach", filePath, ruleIndex)
+		httpAction.ForEach = l.expandEnvVarsInString(httpAction.ForEach, "action.http.forEach", filePath, ruleIndex, refs)
 
 		// Expand headers
 		for key, val := range httpAction.Headers {
-			httpAction.Headers[key] = l.expandEnvVarsInString(val, fmt.Sprintf("action.http.headers[%s]", key), filePath, ruleIndex)
+			httpAction.Headers[key] = l.expandEnvVarsInString(val, fmt.Sprintf("action.http.headers[%s]", key), filePath, ruleIndex, refs)
 		}
 
 		// Expand filter conditions
 		if httpAction.Filter != nil {
-			l.expandConditionsEnvVars(httpAction.Filter, filePath, ruleIndex)
+			l.expandConditionsEnvVars(httpAction.Filter, filePath, ruleIndex, refs)
 		}
 
 		// Expand throttle fields
-		l.expandThrottleEnvVars(httpAction.Throttle, "action.http.throttle", filePath, ruleIndex)
+		l.expandThrottleEnvVars(httpAction.Throttle, "action.http.throttle", filePath, ruleIndex, refs)
 	}
 }
 
 // expandThrottleEnvVars expands ${VAR} placeholders in a throttle block.
 // No-op when the block is absent.
-func (l *Loader) expandThrottleEnvVars(cfg *ThrottleConfig, location, filePath string, ruleIndex int) {
+func (l *Loader) expandThrottleEnvVars(cfg *ThrottleConfig, location, filePath string, ruleIndex int, refs *[]string) {
 	if cfg == nil {
 		return
 	}
-	cfg.Window = l.expandEnvVarsInString(cfg.Window, location+".window", filePath, ruleIndex)
-	cfg.Key = l.expandEnvVarsInString(cfg.Key, location+".key", filePath, ruleIndex)
+	cfg.Window = l.expandEnvVarsInString(cfg.Window, location+".window", filePath, ruleIndex, refs)
+	cfg.Key = l.expandEnvVarsInString(cfg.Key, location+".key", filePath, ruleIndex, refs)
 }
 
 // expandEnvVarsInString expands ${VAR_NAME} placeholders in a string
 // Returns the expanded string with environment variables substituted
 // Missing variables are replaced with empty string and logged as warnings
-func (l *Loader) expandEnvVarsInString(input, location, filePath string, ruleIndex int) string {
+func (l *Loader) expandEnvVarsInString(input, location, filePath string, ruleIndex int, refs *[]string) string {
 	// Fast path: no expansion needed
 	if input == "" || !strings.Contains(input, "${") {
+		return input
+	}
+
+	// Env not allowed (KV rules): record each reference and leave the string
+	// alone; expandEnvironmentVariables turns the records into an error.
+	if !l.allowEnv {
+		for _, match := range envVarPattern.FindAllString(input, -1) {
+			*refs = append(*refs, match+" in "+location)
+		}
 		return input
 	}
 

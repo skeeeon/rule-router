@@ -263,7 +263,8 @@ func (b *AppBuilder) WithKVRuleProcessor() *AppBuilder {
 		kvBuckets = b.cfg.KV.BucketNames()
 	}
 
-	b.base.Loader = rule.NewLoader(b.base.Logger, kvBuckets)
+	// KV rules never read the process environment: see Loader.DisallowEnv.
+	b.base.Loader = rule.NewLoader(b.base.Logger, kvBuckets).DisallowEnv()
 
 	var kvContext *rule.KVContext
 	if b.cfg.KV.Enabled && b.base.Broker != nil {

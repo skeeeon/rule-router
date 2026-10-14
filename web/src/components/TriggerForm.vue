@@ -20,7 +20,8 @@ function toggleHMAC(target) {
   target.hmac = target.hmac ? null : createHMAC()
 }
 
-// Mirrors the secret defaults offered by rule-cli's getHMAC.
+// Mirrors the secret defaults offered by rule-cli's getHMAC. ${VAR} expands
+// only in file rules; a KV rule using it is rejected.
 const SECRET_PLACEHOLDERS = {
   stripe: '${STRIPE_WEBHOOK_SECRET}',
   slack: '${SLACK_SIGNING_SECRET}',
@@ -157,7 +158,7 @@ const SECRET_PLACEHOLDERS = {
             autocomplete="off"
             spellcheck="false"
           >
-          <span class="field-hint">Literal, env <code>${VAR}</code>, or KV <code>{@kv.bucket.key}</code></span>
+          <span class="field-hint">Literal, env <code>${VAR}</code> (file rules only), or KV <code>{@kv.bucket.key}</code></span>
         </div>
         <div class="field" v-if="!trigger.http.hmac.scheme">
           <label>Algorithm</label>

@@ -101,7 +101,7 @@ onUnmounted(() => { document.removeEventListener('keydown', onEscape) })
             <tr><td class="mono">{@signature.pubkey}</td><td>NKey public key string</td></tr>
             <tr><td class="mono">{@value}</td><td>Root value (primitive messages)</td></tr>
             <tr><td class="mono">{@items}</td><td>Root array (array messages)</td></tr>
-            <tr><td class="mono">${ENV_VAR}</td><td>Environment variable (expanded at load time)</td></tr>
+            <tr><td class="mono">${ENV_VAR}</td><td>Environment variable (expanded at load time; file rules only, KV rules reject it)</td></tr>
           </tbody></table>
 
           <div class="help-note">

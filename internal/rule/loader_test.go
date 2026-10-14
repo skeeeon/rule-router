@@ -2294,3 +2294,144 @@ func TestTriggerPattern_RejectsTemplates(t *testing.T) {
 		})
 	}
 }
+
+// TestEnvExpansion_FileRules pins that the default (file) loader expands ${VAR}.
+func TestEnvExpansion_FileRules(t *testing.T) {
+	t.Setenv("RR_TEST_TOKEN", "s3cret")
+	loader := newTestLoader()
+
+	rules, err := loader.ParseAndValidateYAML([]byte(`
+- trigger:
+    http:
+      path: "/hook"
+      hmac:
+        header: "X-Signature"
+        secret: "${RR_TEST_TOKEN}"
+  action:
+    http:
+      url: "https://example.com/api"
+      method: "POST"
+      payload: '{"token":"${RR_TEST_TOKEN}"}'
+      headers:
+        Authorization: "Bearer ${RR_TEST_TOKEN}"
+`), "test.yaml")
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+
+	r := rules[0]
+	if got := r.Trigger.HTTP.HMAC.Secret; got != "s3cret" {
+		t.Errorf("hmac.secret = %q, want %q", got, "s3cret")
+	}
+	if got := r.Action.HTTP.Payload; got != `{"token":"s3cret"}` {
+		t.Errorf("payload = %q, want the expanded token", got)
+	}
+	if got := r.Action.HTTP.Headers["Authorization"]; got != "Bearer s3cret" {
+		t.Errorf("Authorization header = %q, want %q", got, "Bearer s3cret")
+	}
+}
+
+// TestEnvExpansion_DisallowedRejects pins that a loader with DisallowEnv (KV
+// rules) rejects every ${VAR} the file loader would expand, rather than
+// leaving it in place: an unexpanded "${X}" hmac.secret would otherwise
+// become the literal secret.
+func TestEnvExpansion_DisallowedRejects(t *testing.T) {
+	// Set, so a pass would mean the value leaked rather than went missing.
+	t.Setenv("RR_TEST_TOKEN", "s3cret")
+	loader := newTestLoader().DisallowEnv()
+
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr bool
+		wantIn  []string
+	}{
+		{
+			name: "http action header",
+			yaml: `
+- trigger: { nats: { subject: "events.in" } }
+  action:
+    http:
+      url: "https://example.com/api"
+      method: "POST"
+      headers:
+        Authorization: "Bearer ${RR_TEST_TOKEN}"`,
+			wantErr: true,
+			wantIn: []string{"rule 0 in test.yaml", "${RR_TEST_TOKEN}", "action.http.headers[Authorization]",
+				"only in file rules", "{@kv.<bucket>.<key>}"},
+		},
+		{
+			name: "nats action payload",
+			yaml: `
+- trigger: { nats: { subject: "events.in" } }
+  action: { nats: { subject: out, payload: '{"t":"${RR_TEST_TOKEN}"}' } }`,
+			wantErr: true,
+			wantIn:  []string{"${RR_TEST_TOKEN}", "action.nats.payload"},
+		},
+		{
+			name: "hmac secret",
+			yaml: `
+- trigger:
+    http:
+      path: "/hook"
+      hmac: { header: "X-Signature", secret: "${GITHUB_SECRET}" }
+  action: { nats: { subject: out, payload: "{}" } }`,
+			wantErr: true,
+			wantIn:  []string{"${GITHUB_SECRET}", "trigger.http.hmac.secret"},
+		},
+		{
+			name: "condition value",
+			yaml: `
+- trigger: { nats: { subject: "events.in" } }
+  conditions:
+    operator: and
+    items:
+      - { field: "{status}", operator: eq, value: "${RR_TEST_TOKEN}" }
+  action: { nats: { subject: out, payload: "{}" } }`,
+			wantErr: true,
+			wantIn:  []string{"${RR_TEST_TOKEN}", "condition.value"},
+		},
+		{
+			name: "no env refs loads",
+			yaml: `
+- trigger:
+    http:
+      path: "/hook"
+      hmac: { header: "X-Signature", secret: "{@kv.device_config.webhook_secret}" }
+  action:
+    http:
+      url: "https://example.com/api"
+      method: "POST"
+      headers:
+        Authorization: "Bearer {@kv.device_config.api_token}"`,
+		},
+		{
+			// respond is not a field the expander visits, so a literal "${"
+			// there is just text, not an env ref.
+			name: "literal ${ outside expanded fields is not flagged",
+			yaml: `
+- trigger: { http: { path: "/price" } }
+  action: { respond: { payload: "costs ${RR_TEST_TOKEN}" } }`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := loader.ParseAndValidateYAML([]byte(tt.yaml), "test.yaml")
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("load failed: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("load succeeded, want an error")
+			}
+			for _, want := range tt.wantIn {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want it to contain %q", err, want)
+				}
+			}
+		})
+	}
+}

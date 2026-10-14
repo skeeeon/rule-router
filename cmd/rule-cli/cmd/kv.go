@@ -72,7 +72,8 @@ func runKVPush(cmd *cobra.Command, args []string) error {
 
 	// Create a rules loader for validation
 	log := logger.NewBootstrap()
-	rulesLoader := rule.NewLoader(log, []string{})
+	// Validate as the router will: KV rules may not use ${VAR}.
+	rulesLoader := rule.NewLoader(log, []string{}).DisallowEnv()
 
 	// Validate all files first
 	type fileToPush struct {

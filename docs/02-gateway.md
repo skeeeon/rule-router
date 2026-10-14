@@ -148,7 +148,7 @@ The HMAC is computed over the **exact received bytes**, before any JSON parsing.
 | Form | Example | Resolved |
 |------|---------|----------|
 | Literal | `secret: "s3cr3t"` | as-is (discouraged — keeps the secret in the rule file) |
-| Env var | `secret: "${GITHUB_WEBHOOK_SECRET}"` | at load time from the process environment |
+| Env var | `secret: "${GITHUB_WEBHOOK_SECRET}"` | at load time from the process environment (file rules only — a [KV rule](./08-kv-rule-store.md) using `${...}` is rejected; use a KV ref) |
 | KV ref | `secret: "{@kv.secrets.github}"` | per request from a NATS KV bucket |
 
 An unset env var or unresolvable KV reference yields an empty secret, which **fails closed** (every request → `401`) rather than silently accepting unverified payloads.

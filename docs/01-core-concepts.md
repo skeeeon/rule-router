@@ -299,7 +299,7 @@ action:
     url: "https://api.pagerduty.com/incidents"
     method: "POST"
     headers:
-      Authorization: "Token ${PAGERDUTY_TOKEN}" # Env vars supported
+      Authorization: "Token ${PAGERDUTY_TOKEN}" # Env vars: file rules only
     payload: '{"service": "app-alerts", "message": "{alert_message}"}'
     retry:
       maxAttempts: 3
@@ -537,7 +537,7 @@ Trailing-mode pending batches live in the executing layer instead, so they survi
 
 ## Environment Variables
 
-The rule engine supports environment variable expansion for static configuration values using `${VAR_NAME}` syntax. This enables secure secret management and environment-specific configuration without hardcoding values in rule files.
+The rule engine supports environment variable expansion for static configuration values using `${VAR_NAME}` syntax, in **file rules only** (see [File Rules Only](#file-rules-only)). This enables secure secret management and environment-specific configuration without hardcoding values in rule files.
 
 ### How It Works
 
@@ -551,6 +551,18 @@ Environment variables are expanded **at load time** (when rules are parsed from 
 **Important**: Environment variable expansion is completely separate from template variable substitution:
 - `${ENV_VAR}` → Expanded at **load time** (static configuration)
 - `{field}` or `{@system}` → Resolved at **runtime** (per-message templating)
+
+### File Rules Only
+
+`${VAR}` is expanded only in rules loaded from files. A rule in the [KV rule store](./08-kv-rule-store.md) that uses `${...}` in any of the fields below is **rejected** when it is loaded, with an error naming the variable and field:
+
+```
+rule 0 in github: uses ${GITHUB_SECRET} in trigger.http.hmac.secret: environment variables are expanded only in file rules; write the value into the rule, or for a secret store it in KV and use {@kv.<bucket>.<key>}
+```
+
+Why: a file rule is written by whoever deploys the router, but a KV rule is written by anyone with write access to the rule bucket. Expanding `${VAR}` for them would hand them the router's whole environment — credentials, API tokens, anything else in it. A KV rule is rejected rather than left with the literal text because an HMAC secret of `"${X}"` would otherwise quietly become the secret itself.
+
+For a secret in a KV rule, store it in a KV bucket and reference it as `{@kv.bucket.key}`. That works in an HTTP trigger's `hmac.secret` and in any templated action field (URL, method, payload, headers). Fields that are not templated — `cron`, `timezone`, throttle `window` — take the value written directly into the rule.
 
 ### Syntax
 

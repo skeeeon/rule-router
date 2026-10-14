@@ -209,7 +209,7 @@ func newScheduleTestManager() (*RuleKVManager, func() []int) {
 		config:         &config.Config{},
 		streamResolver: &StreamResolver{jetStream: noStreamsJS{}, logger: log},
 	}
-	m := NewRuleKVManager("rules", false, rule.NewProcessor(log), b, rule.NewLoader(log, nil), log)
+	m := NewRuleKVManager("rules", false, rule.NewProcessor(log), b, rule.NewLoader(log, nil).DisallowEnv(), log)
 
 	var mu sync.Mutex
 	var rebuilds []int
@@ -289,4 +289,32 @@ func TestRuleKVManager_DeleteLastScheduleRuleRebuilds(t *testing.T) {
 	m.handleRulePut("jobs", []byte(scheduleRuleYAML), 1)
 	m.handleRuleDelete("jobs")
 	assertRebuilds(t, rebuilds(), 1, 0)
+}
+
+// TestRuleKVManager_PutWithEnvRefKeepsPreviousRules pins that a KV rule using
+// ${VAR} is rejected, not expanded, and the key keeps its previous rules.
+func TestRuleKVManager_PutWithEnvRefKeepsPreviousRules(t *testing.T) {
+	t.Setenv("RR_TEST_SECRET", "from-the-environment")
+	m, rebuilds := newScheduleTestManager()
+
+	m.handleRulePut("jobs", []byte(scheduleRuleYAML), 1)
+
+	m.handleRulePut("jobs", []byte(`
+- trigger:
+    schedule:
+      cron: "*/5 * * * *"
+  action:
+    nats:
+      subject: "out.tick"
+      payload: '{"token":"${RR_TEST_SECRET}"}'
+`), 2)
+
+	assertRebuilds(t, rebuilds(), 1)
+	got := m.processor.ScheduleRules()
+	if len(got) != 1 {
+		t.Fatalf("processor holds %d schedule rules, want the previous 1", len(got))
+	}
+	if p := got[0].Action.NATS.Payload; p != "{}" {
+		t.Fatalf("payload = %q, want the previous rule's %q", p, "{}")
+	}
 }

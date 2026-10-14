@@ -153,7 +153,7 @@ HMAC is configured **per rule** (not globally) on the HTTP trigger:
       passthrough: true
 ```
 
-The `secret` accepts three forms, all using existing syntax: a **literal**, an **env reference** `${VAR}` (expanded at load time), or a **KV reference** `{@kv.bucket.key}` (resolved per request). Prefer `${ENV}` or KV over literals so secrets are not committed in rule files. An empty/unset secret **fails closed** (every request → `401`).
+The `secret` accepts three forms, all using existing syntax: a **literal**, an **env reference** `${VAR}` (expanded at load time), or a **KV reference** `{@kv.bucket.key}` (resolved per request). Prefer `${ENV}` or KV over literals so secrets are not committed in rule files. `${ENV}` works in file rules only: a rule in the [KV rule store](./08-kv-rule-store.md) that uses it is rejected, so KV rules use `{@kv.bucket.key}`. An empty/unset secret **fails closed** (every request → `401`).
 
 ### Provider Coverage
 
