@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-15
+
 ### Features
 - **NATS service discovery** — each `rule-router` process registers as micro service `rule-router`, so `nats micro ls` (or any `$SRV.PING` / `$SRV.INFO` / `$SRV.STATS` client) shows what is running, which version, and where. Identity only, with no endpoints: name, version, start time, and `host` and `features` metadata. Never fatal — a credential without subscribe permission on `$SRV.>` runs normally and is simply not listed, though the server's refusals are logged and counted in `nats_async_errors_total{kind="permissions_violation"}`. `nats-auth-manager` does not register.
 
@@ -298,6 +300,7 @@
 - Signature verification
 - Rule-cli utility
 
+[0.21.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.21.0
 [0.20.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.20.0
 [0.19.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.19.0
 [0.18.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.18.0
