@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -37,6 +38,29 @@ const (
 	// retryMaxJitter is the maximum jitter added to HTTP retry delays
 	retryMaxJitter = 100 * time.Millisecond
 )
+
+// StatusError is a non-2xx response. A 4xx says the request itself is wrong —
+// a bad URL, a rejected key, a body the endpoint refuses — so sending it again
+// fails the same way. 408 and 429 are the exception: the server is asking the
+// client to come back later.
+type StatusError struct {
+	StatusCode int
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("HTTP request returned status %d", e.StatusCode)
+}
+
+// Permanent reports whether retrying the same request cannot succeed. Callers
+// match it by behavior (an interface{ Permanent() bool }), so they need not
+// import this package to tell a 404 from a 503.
+func (e *StatusError) Permanent() bool {
+	switch e.StatusCode {
+	case http.StatusRequestTimeout, http.StatusTooManyRequests:
+		return false
+	}
+	return e.StatusCode >= 400 && e.StatusCode < 500
+}
 
 // ResponsePublisher publishes a NATS message. Implemented by *broker.NATSBroker.
 // Used by Executor to publish HTTP response bodies to NATS when an action's
@@ -110,7 +134,8 @@ func (e *Executor) ExecuteHTTPAction(ctx context.Context, action *rule.HTTPActio
 
 	// Retry loop with exponential backoff
 	var lastErr error
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
+	attempt := 1
+	for ; attempt <= maxAttempts; attempt++ {
 		err := e.makeHTTPRequest(ctx, action)
 		if err == nil {
 			// Success!
@@ -122,8 +147,9 @@ func (e *Executor) ExecuteHTTPAction(ctx context.Context, action *rule.HTTPActio
 
 		lastErr = err
 
-		// Don't retry on last attempt
-		if attempt == maxAttempts {
+		// Don't retry on last attempt, or on a response a retry would repeat
+		var statusErr *StatusError
+		if attempt == maxAttempts || errors.As(err, &statusErr) && statusErr.Permanent() {
 			break
 		}
 
@@ -150,7 +176,7 @@ func (e *Executor) ExecuteHTTPAction(ctx context.Context, action *rule.HTTPActio
 		}
 	}
 
-	return fmt.Errorf("HTTP request failed after %d attempts: %w", maxAttempts, lastErr)
+	return fmt.Errorf("HTTP request failed after %d attempts: %w", attempt, lastErr)
 }
 
 // makeHTTPRequest makes a single HTTP request
@@ -252,5 +278,5 @@ func (e *Executor) makeHTTPRequest(ctx context.Context, action *rule.HTTPAction)
 		"responseBody", string(responseBody),
 		"duration", duration)
 
-	return fmt.Errorf("HTTP request returned status %d", resp.StatusCode)
+	return &StatusError{StatusCode: resp.StatusCode}
 }

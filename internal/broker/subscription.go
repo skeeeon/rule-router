@@ -398,18 +398,27 @@ func (sm *SubscriptionManager) processMessageWithRecovery(ctx context.Context, m
 
 	// Process the message through the rule engine
 	if err := sm.processMessage(ctx, msg, subject); err != nil {
+		var terminal *terminalError
+		redeliver := !errors.As(err, &terminal)
 		sm.logger.Error("failed to process message",
 			"subject", subject,
 			"workerID", workerID,
+			"redeliver", redeliver,
 			"error", err)
 
-		// NAK so the message is redelivered; JetStream's MaxDeliver bounds the
-		// attempts and dead-letters one that never succeeds. (Unparseable
-		// payloads are handled leniently in the rule engine, not rejected here.)
-		if nakErr := msg.Nak(); nakErr != nil {
-			sm.logger.Error("failed to NAK message",
+		if redeliver {
+			// NAK so the message is redelivered; JetStream's MaxDeliver bounds the
+			// attempts and dead-letters one that never succeeds. (Unparseable
+			// payloads are handled leniently in the rule engine, not rejected here.)
+			if nakErr := msg.Nak(); nakErr != nil {
+				sm.logger.Error("failed to NAK message",
+					"subject", subject,
+					"error", nakErr)
+			}
+		} else if termErr := msg.Term(); termErr != nil {
+			sm.logger.Error("failed to terminate message after permanent action failure",
 				"subject", subject,
-				"error", nakErr)
+				"error", termErr)
 		}
 
 		if sm.metrics != nil {
@@ -426,6 +435,23 @@ func (sm *SubscriptionManager) processMessageWithRecovery(ctx context.Context, m
 			sm.metrics.IncMessagesTotal("processed")
 		}
 	}
+}
+
+// terminalError marks a message whose failed actions all failed permanently;
+// processMessageWithRecovery terminates it instead of NAKing it.
+type terminalError struct {
+	err error
+}
+
+func (e *terminalError) Error() string { return e.err.Error() }
+func (e *terminalError) Unwrap() error { return e.err }
+
+// isPermanent reports whether a failed action would fail the same way on
+// redelivery, e.g. an httpclient.StatusError for a 4xx. It matches by behavior
+// so the broker does not import httpclient.
+func isPermanent(err error) bool {
+	var p interface{ Permanent() bool }
+	return errors.As(err, &p) && p.Permanent()
 }
 
 // processMessage handles a single message through the rule engine.
@@ -479,12 +505,26 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 		defer cancel()
 	}
 
-	// Publish all matched actions
+	// Run every action even when one fails: the rules behind them are
+	// independent, so one rule's broken endpoint must not starve the rest. Any
+	// failure a redelivery might fix NAKs the message, which re-fires the
+	// actions that succeeded — the usual at-least-once trade. If every failure
+	// is permanent, redelivery would only repeat them, so the message is
+	// terminated instead.
+	var errs []error
+	retryable := false
 	for _, action := range outcome.Immediate {
 		if err := sm.executeAction(actionCtx, action); err != nil {
-			// Return the error to allow the message to be NAK'd, as the action failed.
-			return err
+			errs = append(errs, err)
+			retryable = retryable || !isPermanent(err)
 		}
+	}
+	if len(errs) > 0 {
+		err := errors.Join(errs...)
+		if !retryable {
+			return &terminalError{err: err}
+		}
+		return err
 	}
 
 	duration := time.Since(start)

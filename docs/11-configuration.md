@@ -422,6 +422,7 @@ There is no dedicated dead-letter *subject*. Delivery semantics are governed ent
 
 - A message that **panics** during processing is **terminated** (`msg.Term()`) immediately so it cannot loop.
 - A message that **fails** processing is **NAK'd** and redelivered until `maxDeliver` is reached, after which JetStream stops redelivering it.
+- A message whose failed actions **all failed permanently** (an outbound 4xx other than 408/429) is **terminated** rather than NAK'd — redelivery would fail the same way.
 - Payloads that are not JSON but are valid UTF-8 are evaluated as a raw string (`{@value}`) rather than rejected. A payload that is neither fails evaluation and is NAK'd like any other failure, so it is redelivered until `maxDeliver`.
 
 To inspect messages that exhaust delivery, use JetStream's advisory subjects (`$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES.>`) or raise `maxDeliver` and a stream-level retention policy. See [10 Troubleshooting](./10-troubleshooting.md).

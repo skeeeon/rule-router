@@ -330,7 +330,7 @@ action:
 | `initialDelay` | duration string | `"1s"` | Delay before the second attempt. Format: Go duration (`"500ms"`, `"2s"`, `"1m"`). |
 | `maxDelay` | duration string | `"30s"` | Cap on the backoff. Prevents runaway delays on long retry chains. |
 
-Backoff doubles each attempt (`initialDelay`, `2×`, `4×`, …) up to `maxDelay`, and a small random jitter (≤100ms) is added each round to avoid thundering herds when multiple actions retry simultaneously. Retries are issued for any non-2xx response or transport error. The retry context honors graceful shutdown — in-flight retries are cancelled when the application terminates.
+Backoff doubles each attempt (`initialDelay`, `2×`, `4×`, …) up to `maxDelay`, and a small random jitter (≤100ms) is added each round to avoid thundering herds when multiple actions retry simultaneously. Retries are issued for a 5xx, 408, or 429 response or a transport error. Any other 4xx is permanent and not retried — the request itself is wrong, so repeating it cannot help. The retry context honors graceful shutdown — in-flight retries are cancelled when the application terminates.
 
 The whole retry sequence also has to fit the deadline of the path running it: `nats.consumers.ackWaitTimeout` (default `30s`) for a JetStream-triggered rule, 30 seconds for a `mode: core` trigger, and 10 seconds per action for a schedule rule. Retries still pending at the deadline are abandoned, so size `maxAttempts` and `maxDelay` to fit inside it.
 

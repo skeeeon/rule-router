@@ -151,6 +151,52 @@ func TestExecuteHTTPAction_RetryExhaustion(t *testing.T) {
 	}
 }
 
+func TestExecuteHTTPAction_PermanentStatusNotRetried(t *testing.T) {
+	tests := []struct {
+		status       int
+		wantAttempts int32
+		wantPerm     bool
+	}{
+		{http.StatusNotFound, 1, true},
+		{http.StatusUnauthorized, 1, true},
+		{http.StatusRequestTimeout, 3, false},
+		{http.StatusTooManyRequests, 3, false},
+		{http.StatusServiceUnavailable, 3, false},
+	}
+	for _, tt := range tests {
+		t.Run(http.StatusText(tt.status), func(t *testing.T) {
+			var attempts int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&attempts, 1)
+				w.WriteHeader(tt.status)
+			}))
+			defer server.Close()
+
+			action := &rule.HTTPAction{
+				URL:    server.URL,
+				Method: "POST",
+				Retry: &rule.RetryConfig{
+					MaxAttempts:  3,
+					InitialDelay: "10ms",
+					MaxDelay:     "50ms",
+				},
+			}
+
+			err := newTestExecutor().ExecuteHTTPAction(context.Background(), action)
+			var statusErr *StatusError
+			if !errors.As(err, &statusErr) || statusErr.StatusCode != tt.status {
+				t.Fatalf("expected StatusError %d, got %v", tt.status, err)
+			}
+			if statusErr.Permanent() != tt.wantPerm {
+				t.Errorf("Permanent() = %v, want %v", statusErr.Permanent(), tt.wantPerm)
+			}
+			if got := atomic.LoadInt32(&attempts); got != tt.wantAttempts {
+				t.Errorf("expected %d attempts, got %d", tt.wantAttempts, got)
+			}
+		})
+	}
+}
+
 func TestExecuteHTTPAction_ContextCancellation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

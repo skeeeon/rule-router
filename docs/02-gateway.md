@@ -222,7 +222,9 @@ A NATS trigger with an HTTP action calls an external API in response to an inter
 
 ### ACK-on-success semantics
 
-Outbound HTTP actions are ACKed back to JetStream **only on a successful HTTP response** (2xx). Non-2xx responses trigger the retry policy; if all retries are exhausted, the message is NACKed and JetStream redelivers per the stream's policy.
+Outbound HTTP actions are ACKed back to JetStream **only on a successful HTTP response** (2xx). A 5xx, 408, 429, or transport error triggers the retry policy; if all retries are exhausted, the message is NACKed and JetStream redelivers per the stream's policy. Any other 4xx is **permanent**: it is not retried, and if every failed action on the message failed permanently the message is terminated rather than redelivered — a wrong URL or a rejected key fails the same way every time.
+
+One failed action never stops the others. Every matched rule's actions run; a NACK then redelivers the whole message, so the actions that succeeded fire again on the next delivery.
 
 This means an unreachable external API does not silently drop events — JetStream keeps them queued until they succeed or the stream's retention limit is reached. This is the inverse of inbound's fire-and-forget guarantee: outbound trades delivery latency for delivery durability.
 

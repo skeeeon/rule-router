@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixes
+- **One failing action stopped every action after it, and a 4xx was retried as if it could succeed** — a JetStream-triggered message ran its matched actions in order and stopped at the first failure, then NAK'd the message. So a rule whose HTTP endpoint returned `404` silently starved every rule after it on the same subject, while the actions before it fired again on each redelivery (three copies at the default `maxDeliver`). Every action now runs whether or not another fails. A 4xx other than `408`/`429` is now permanent: it is not retried, even with `retry.maxAttempts` set, and a message whose failed actions all failed that way is terminated rather than redelivered. A 5xx, `408`, `429`, transport error, or NATS publish failure still NAKs the message, and redelivery still re-runs the actions that succeeded — to keep a retryable HTTP call from repeating a publish, put the call on its own subject or set a `Nats-Msg-Id` header. The `failed to process message` log line gains a `redeliver` field.
+
 ## [0.21.0] - 2026-10-15
 
 ### Features
