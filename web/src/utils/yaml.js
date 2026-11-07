@@ -8,7 +8,13 @@ export function rulesToYaml(rules) {
 
 function ruleToYaml(rule) {
   const lines = []
-  lines.push('- trigger:')
+  const name = (rule.name || '').trim()
+  if (name) {
+    lines.push(`- name: ${yamlString(name)}`)
+    lines.push('  trigger:')
+  } else {
+    lines.push('- trigger:')
+  }
   pushTrigger(lines, rule.trigger, 4)
 
   if (rule.conditions && hasConditions(rule.conditions)) {

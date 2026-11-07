@@ -12,7 +12,8 @@
 # Example Use Case: fan ephemeral heartbeats out to a UI notification subject —
 # losing one during a restart is fine, so durability isn't worth a stream.
 #
-- trigger:
+- name: "Fan out heartbeats to the UI"
+  trigger:
     nats:
       subject: "metrics.heartbeat.*"
       mode: core

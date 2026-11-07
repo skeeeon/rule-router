@@ -6,7 +6,8 @@
 # Example Use Case: Processing a Stripe event webhook that contains multiple
 # charge events in a single request.
 #
-- trigger:
+- name: "Split webhook line items into events"
+  trigger:
     http:
       path: "/webhooks/stripe/batch"
       method: "POST"

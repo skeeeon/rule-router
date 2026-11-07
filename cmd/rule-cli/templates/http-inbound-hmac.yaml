@@ -8,7 +8,8 @@
 #
 # Example Use Case: A GitHub push webhook signed with HMAC-SHA256.
 #
-- trigger:
+- name: "Verify a signed GitHub webhook"
+  trigger:
     http:
       path: "/webhooks/github/push"
       method: "POST"

@@ -69,6 +69,12 @@ func (rb *RuleBuilder) BuildRules() ([]byte, error) {
 func (rb *RuleBuilder) buildSingleRule() (*rule.Rule, error) {
 	var r rule.Rule
 
+	name, err := rb.prompter.Ask("Rule name (optional, e.g. \"Alert on high temperature\"):")
+	if err != nil {
+		return nil, err
+	}
+	r.Name = name
+
 	// 1. Get Trigger
 	trigger, err := rb.getTrigger()
 	if err != nil {

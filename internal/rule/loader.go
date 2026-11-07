@@ -167,21 +167,21 @@ func (l *Loader) ParseAndValidateYAML(data []byte, source string) ([]Rule, error
 	// else reads it, so env expansion and validation only ever see one field.
 	for i := range rules {
 		if err := l.normalizeThrottle(&rules[i], source, i); err != nil {
-			return nil, fmt.Errorf("rule %d in %s: %w", i, source, err)
+			return nil, fmt.Errorf("%s in %s: %w", ruleLabel(i, &rules[i]), source, err)
 		}
 	}
 
 	// Expand environment variables before validation
 	for i := range rules {
 		if err := l.expandEnvironmentVariables(&rules[i], source, i); err != nil {
-			return nil, fmt.Errorf("rule %d in %s: %w", i, source, err)
+			return nil, fmt.Errorf("%s in %s: %w", ruleLabel(i, &rules[i]), source, err)
 		}
 	}
 
 	// Validate after expansion
 	for i := range rules {
 		if err := l.validateRule(&rules[i], source, i); err != nil {
-			return nil, fmt.Errorf("rule %d in %s is invalid: %w", i, source, err)
+			return nil, fmt.Errorf("%s in %s is invalid: %w", ruleLabel(i, &rules[i]), source, err)
 		}
 		// Separate from validateRule because it walks the whole rule rather than
 		// inspecting one part of it, and its error is already fully qualified.
@@ -195,6 +195,15 @@ func (l *Loader) ParseAndValidateYAML(data []byte, source string) ([]Rule, error
 		"ruleCount", len(rules))
 
 	return rules, nil
+}
+
+// ruleLabel identifies a rule in an error: its position, plus its name when it
+// has one, so "rule 3" can be found in a long file without counting.
+func ruleLabel(i int, r *Rule) string {
+	if r.Name == "" {
+		return fmt.Sprintf("rule %d", i)
+	}
+	return fmt.Sprintf("rule %d (%q)", i, r.Name)
 }
 
 // normalizeThrottle folds the deprecated `debounce` block onto `throttle` on

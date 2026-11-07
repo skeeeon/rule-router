@@ -10,7 +10,8 @@
 # Subject templates resolve against the trigger context only (cron + KV +
 # system functions). Response fields are NOT available in the subject.
 #
-- trigger:
+- name: "Poll an API on a schedule"
+  trigger:
     schedule:
       cron: "*/5 * * * *"
   action:

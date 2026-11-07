@@ -107,6 +107,9 @@ func (o Outcome) All() []*Action {
 
 // Rule represents a generic rule with trigger and action
 type Rule struct {
+	// Name is an optional human label. It changes no behavior; it only makes
+	// load errors, the web builder's sidebar, and YAML files easier to read.
+	Name       string      `json:"name,omitempty" yaml:"name,omitempty"`
 	Trigger    Trigger     `json:"trigger" yaml:"trigger"`
 	Conditions *Conditions `json:"conditions,omitempty" yaml:"conditions,omitempty"`
 	Action     Action      `json:"action" yaml:"action"`

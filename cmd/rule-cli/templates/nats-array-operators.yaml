@@ -7,7 +7,8 @@
 # Example Use Case: Check if a batch of security events contains ANY critical
 # alerts before forwarding it to the high-priority processing system.
 #
-- trigger:
+- name: "Escalate batches with critical events"
+  trigger:
     nats:
       subject: "security.events.batch"
   conditions:

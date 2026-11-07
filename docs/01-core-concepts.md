@@ -27,11 +27,12 @@ If no `features` block is present, `router` defaults to `true` for backward comp
 
 ---
 
-All features of rule-router are configured using a shared rule syntax. A **rule** is a YAML object composed of a `trigger`, optional `conditions`, and an `action`.
+All features of rule-router are configured using a shared rule syntax. A **rule** is a YAML object composed of an optional `name`, a `trigger`, optional `conditions`, and an `action`.
 
 ```yaml
 # A rule is defined by a trigger, optional conditions, and an action.
-- trigger:
+- name: "Alert on high temperature"   # optional label: shown in load errors, rule-cli, and the web builder
+  trigger:
     # ... defines what starts the rule evaluation (e.g., a NATS message or an HTTP request)
   conditions:
     # ... defines the logic to determine if the action should run (e.g., field value checks)

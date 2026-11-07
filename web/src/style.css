@@ -404,38 +404,41 @@ body {
   padding: 4px 2px;
 }
 
-.file-collapse {
-  background: none;
+.file-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
   border: none;
-  color: var(--text-muted);
+  border-radius: 4px;
+  background: none;
   cursor: pointer;
+  text-align: left;
+}
+
+.file-toggle:hover {
+  background: var(--bg-hover);
+}
+
+.file-caret {
+  color: var(--text-muted);
   font-size: 10px;
-  width: 16px;
+  width: 10px;
   flex-shrink: 0;
-  padding: 0;
 }
 
 .file-name {
   flex: 1;
   min-width: 0;
-  border: 1px solid transparent;
-  background: none;
-  border-radius: 4px;
-  padding: 3px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
   font-weight: 700;
   color: var(--text-secondary);
   font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
-}
-
-.file-name:hover {
-  background: var(--bg-hover);
-}
-
-.file-name:focus {
-  outline: none;
-  border-color: var(--accent);
-  background: var(--bg-surface);
 }
 
 .file-error-dot {
@@ -453,18 +456,25 @@ body {
   flex-shrink: 0;
 }
 
-.file-add {
+.file-btn {
   background: none;
   border: none;
+  border-radius: 4px;
   color: var(--text-muted);
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1;
   cursor: pointer;
-  width: 22px;
+  width: 26px;
+  height: 26px;
   flex-shrink: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.file-add:hover {
+.file-btn:hover {
+  background: var(--bg-hover);
   color: var(--accent-text);
 }
 
@@ -499,25 +509,25 @@ body {
   min-width: 0;
 }
 
-.sidebar-rule-summary {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-.sr-trigger,
-.sr-action {
+.sr-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--text-primary);
+  white-space: nowrap;
 }
 
-.sr-arrow {
+.sr-line {
+  font-size: 12px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sr-line.sr-muted {
   color: var(--text-muted);
-  flex-shrink: 0;
 }
 
 .sidebar-rule-chips {
@@ -556,6 +566,9 @@ body {
 }
 
 .sr-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font-size: 11px;
   color: var(--error);
   white-space: nowrap;
@@ -730,13 +743,32 @@ body {
   flex-shrink: 0;
 }
 
-.rule-editor-label {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--accent-text);
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  flex-shrink: 0;
+.rule-name-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: none;
+  transition: border-color 0.15s ease;
+}
+
+.rule-name-input:hover {
+  border-color: var(--border);
+}
+
+.rule-name-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--bg-surface);
+}
+
+.rule-name-input::placeholder {
+  color: var(--text-placeholder);
+  font-weight: 400;
 }
 
 .rule-file-input {
@@ -2550,7 +2582,36 @@ textarea:focus-visible {
   .preview-toolbar button {
     text-align: center;
   }
+}
 
+@media (max-width: 480px) {
+  .app-header {
+    padding: 12px 16px;
+  }
+
+  .editor-pane {
+    padding: 12px;
+    padding-bottom: 80px;
+  }
+
+  .section {
+    padding: 14px;
+    border-radius: 6px;
+  }
+
+  .header-row {
+    flex-direction: column;
+  }
+
+  .drawer {
+    height: 80vh;
+  }
+}
+
+/* Touch devices (phones and tablets at any width): one place for hit-target
+   sizing. Keyed on the input device, not the viewport, so an iPad in landscape
+   gets finger-sized targets too. */
+@media (pointer: coarse) {
   /* Prevent iOS Safari from zooming when focusing form fields.
      !important is needed to override Vue scoped styles (e.g. JsonTextarea). */
   input,
@@ -2577,7 +2638,7 @@ textarea:focus-visible {
     font-size: 14px;
   }
 
-  /* 40x40 minimum touch targets for icon buttons. */
+  /* 40x40 minimum touch targets. */
   .rule-action-btn {
     width: 40px;
     height: 40px;
@@ -2594,29 +2655,38 @@ textarea:focus-visible {
     min-width: 40px;
     min-height: 40px;
   }
-}
-
-@media (max-width: 480px) {
-  .app-header {
-    padding: 12px 16px;
+  .file-btn {
+    width: 40px;
+    height: 40px;
+    font-size: 18px;
   }
-
-  .editor-pane {
+  .file-toggle {
+    min-height: 40px;
+  }
+  .sidebar-rule {
+    padding: 10px;
+  }
+  .sidebar-search,
+  .sidebar-newfile {
+    min-height: 40px;
+  }
+  .sidebar-addrule {
     padding: 12px;
-    padding-bottom: 80px;
+  }
+  .editor-back {
+    min-height: 40px;
+    padding: 8px 12px 8px 0;
+  }
+  .toggle-btn {
+    min-height: 36px;
+    padding: 8px 14px;
+    font-size: 12px;
   }
 
-  .section {
-    padding: 14px;
-    border-radius: 6px;
-  }
-
-  .header-row {
-    flex-direction: column;
-  }
-
-  .drawer {
-    height: 80vh;
+  /* No hover on touch, so hover-revealed row buttons would only show on the
+     selected rule, cramped. Duplicate/remove live in the editor header. */
+  .sr-action-btn {
+    display: none;
   }
 }
 

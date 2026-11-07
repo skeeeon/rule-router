@@ -16,7 +16,8 @@
 #   KV:        {@kv.bucket.key}, {@kv.bucket.key:json.path}
 #   Functions: {@timestamp()}, {@uuid4()}, {@uuid7()}
 #
-- trigger:
+- name: "Kick off the weekday morning task"
+  trigger:
     schedule:
       # Standard 5-field cron expression
       cron: "0 8 * * 1-5"

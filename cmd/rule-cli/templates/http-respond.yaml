@@ -6,7 +6,8 @@
 #
 # Example Use Case: A quote/lookup endpoint that enriches the request from KV.
 #
-- trigger:
+- name: "Answer a quote lookup over HTTP"
+  trigger:
     http:
       path: "/api/quote"
       method: "POST"

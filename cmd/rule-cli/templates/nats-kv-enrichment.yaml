@@ -5,7 +5,8 @@
 #
 # Example Use Case: Adding customer metadata (like name or tier) to an order event.
 #
-- trigger:
+- name: "Enrich orders with customer data"
+  trigger:
     nats:
       subject: "orders.new"
   conditions:

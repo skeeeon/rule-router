@@ -6,7 +6,8 @@
 #
 # Example Use Case: Alerting when a sensor reading exceeds a threshold.
 #
-- trigger:
+- name: "Alert on high temperature"
+  trigger:
     nats:
       # The subject to listen on. Supports wildcards (*, >).
       subject: "sensors.temperature.>"

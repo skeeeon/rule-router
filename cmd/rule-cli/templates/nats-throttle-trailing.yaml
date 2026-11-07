@@ -22,7 +22,8 @@
 # someone spins the dial. Only the value they settle on should reach the HVAC
 # controller.
 #
-- trigger:
+- name: "Report settled thermostat readings"
+  trigger:
     nats:
       subject: "thermostat.setpoint.>"
   action:

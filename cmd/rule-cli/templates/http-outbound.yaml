@@ -5,7 +5,8 @@
 #
 # Example Use Case: Sending a critical alert from NATS to PagerDuty.
 #
-- trigger:
+- name: "Page PagerDuty on critical alerts"
+  trigger:
     nats:
       subject: "alerts.critical.>"
   action:

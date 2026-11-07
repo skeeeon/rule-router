@@ -1,6 +1,6 @@
 <script setup>
 import { reactive, computed, ref, provide, onMounted, onUnmounted, watch } from 'vue'
-import { createRule, createConditions, groupRulesByFile, uniqueFileName, DEFAULT_FILENAME, uid } from './utils/state.js'
+import { createRule, createConditions, groupRulesByFile, uniqueFileName, ruleSummary, DEFAULT_FILENAME, uid } from './utils/state.js'
 import { rulesToYaml } from './utils/yaml.js'
 import { validateRule } from './utils/validate.js'
 import { parseYamlToRules } from './utils/parse.js'
@@ -17,6 +17,7 @@ import MessageInspector from './components/MessageInspector.vue'
 import RuleTester from './components/RuleTester.vue'
 import SectionPanel from './components/SectionPanel.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
+import Icon from './components/Icon.vue'
 
 const inspectedFields = ref([])
 provide('inspectedFields', inspectedFields)
@@ -34,6 +35,7 @@ const showKvPull = ref(false)
 const showHelp = ref(false)
 const showDrawer = ref(false)
 const showResetConfirm = ref(false)
+const pendingRemoveId = ref(null) // rule awaiting delete confirmation
 const kvPushTarget = ref(null)
 
 // Theme: 'system' | 'light' | 'dark'
@@ -61,9 +63,9 @@ function applyTheme(t) {
 }
 
 const themeIcon = computed(() => {
-  if (theme.value === 'light') return '\u2600\uFE0F'   // sun
-  if (theme.value === 'dark') return '\uD83C\uDF19'     // crescent moon
-  return '\uD83D\uDCBB'                                  // computer (system)
+  if (theme.value === 'light') return 'sun'
+  if (theme.value === 'dark') return 'moon'
+  return 'monitor' // system
 })
 
 const themeTitle = computed(() => {
@@ -247,6 +249,26 @@ function duplicateRule(id) {
   selectRule(clone.id)
 }
 
+// Ask first: a delete is auto-saved straight to localStorage, so a mis-tap
+// would otherwise lose the rule for good.
+function requestRemove(id) {
+  if (state.rules.length <= 1) return
+  pendingRemoveId.value = id
+}
+
+const removeMessage = computed(() => {
+  const r = state.rules.find(x => x.id === pendingRemoveId.value)
+  if (!r) return ''
+  const { trigger, action } = ruleSummary(r)
+  const label = r.name ? `"${r.name}"` : `${trigger} → ${action || '…'}`
+  return `${label} will be removed. This cannot be undone.`
+})
+
+function confirmRemove() {
+  removeRule(pendingRemoveId.value)
+  pendingRemoveId.value = null
+}
+
 function removeRule(id) {
   if (state.rules.length <= 1) return
   const index = state.rules.findIndex(r => r.id === id)
@@ -362,7 +384,7 @@ function loadFromKV(entries) {
         <button class="header-btn" @click="showKvPull = true" title="Load rules from a NATS KV bucket">Load KV</button>
         <button class="help-toggle" @click="showHelp = true" title="Reference">?</button>
         <button class="theme-toggle" @click="cycleTheme" :title="themeTitle">
-          {{ themeIcon }}
+          <Icon :name="themeIcon" :size="16" />
         </button>
       </div>
     </header>
@@ -377,7 +399,7 @@ function loadFromKV(entries) {
         @add="addRule"
         @new-file="addFile"
         @duplicate="duplicateRule"
-        @remove="removeRule"
+        @remove="requestRemove"
         @rename-file="renameFile"
       />
 
@@ -387,7 +409,13 @@ function loadFromKV(entries) {
           <button class="editor-back" @click="backToList">‹ Rules</button>
 
           <div class="rule-editor-header">
-            <span class="rule-editor-label">Rule {{ activeIndex + 1 }}</span>
+            <input
+              v-model="activeRule.name"
+              class="rule-name-input"
+              placeholder="Rule name (optional)"
+              title="A label for this rule — shown in the sidebar and written to YAML as name:"
+              autocomplete="off"
+            >
             <div class="rule-file-input">
               <input
                 v-model="activeRule.file"
@@ -406,16 +434,14 @@ function loadFromKV(entries) {
                 title="Duplicate rule"
                 aria-label="Duplicate rule"
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                </svg>
+                <Icon name="copy" />
               </button>
               <button
                 v-if="state.rules.length > 1"
                 class="rule-action-btn remove"
-                @click="removeRule(activeRule.id)"
+                @click="requestRemove(activeRule.id)"
                 title="Remove rule"
+                aria-label="Remove rule"
               >&times;</button>
             </div>
           </div>
@@ -479,6 +505,15 @@ function loadFromKV(entries) {
     <KvPushModal v-if="showKvModal" :target="kvPushTarget" @close="showKvModal = false" />
     <KvPullModal v-if="showKvPull" @close="showKvPull = false" @load="loadFromKV" />
     <HelpModal v-if="showHelp" @close="showHelp = false" />
+    <ConfirmModal
+      v-if="pendingRemoveId !== null"
+      title="Remove rule?"
+      :message="removeMessage"
+      confirm-label="Remove"
+      :danger="true"
+      @confirm="confirmRemove"
+      @close="pendingRemoveId = null"
+    />
     <ConfirmModal
       v-if="showResetConfirm"
       title="Clear all rules?"

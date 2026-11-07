@@ -8,7 +8,8 @@
 # Example Use Case: A geocoding service answered from a KV cache.
 # Test with:  nats req services.geocode '{"address":"...","country":"US"}'
 #
-- trigger:
+- name: "Answer geocode requests from KV"
+  trigger:
     nats:
       subject: "services.geocode"
       reply: true

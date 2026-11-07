@@ -17,7 +17,8 @@
 #   rule-cli check --rule this-rule.yaml --message body.form --query 'site=hq' \
 #     --header 'Content-Type: application/x-www-form-urlencoded'
 #
-- trigger:
+- name: "Accept a form-encoded webhook"
+  trigger:
     http:
       path: "/devices/identified"
       method: "POST"

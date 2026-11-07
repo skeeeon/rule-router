@@ -15,7 +15,8 @@
 # Example use case: a flapping temperature sensor that would otherwise page
 # once per reading.
 #
-- trigger:
+- name: "Page once per flapping sensor"
+  trigger:
     nats:
       # The subject to listen on. Supports wildcards (*, >).
       subject: "sensors.temperature.>"

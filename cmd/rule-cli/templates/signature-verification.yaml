@@ -6,7 +6,8 @@
 #
 # Example Use Case: A command to unlock a door, which must be authenticated.
 #
-- trigger:
+- name: "Unlock a door on a signed command"
+  trigger:
     nats:
       subject: "commands.secure.door.unlock"
   conditions:

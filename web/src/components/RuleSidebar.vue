@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { ruleModes, ruleSummary } from '../utils/state.js'
+import Icon from './Icon.vue'
 
 const props = defineProps({
   groups: Array,          // [{ file, rules: [...] }]
@@ -30,6 +31,7 @@ const filteredGroups = computed(() => {
       const rules = g.rules.filter(r => {
         const { trigger, action } = ruleSummary(r)
         return (
+          (r.name || '').toLowerCase().includes(q) ||
           g.file.toLowerCase().includes(q) ||
           trigger.toLowerCase().includes(q) ||
           action.toLowerCase().includes(q)
@@ -44,13 +46,11 @@ function fileErrorCount(group) {
   return group.rules.reduce((sum, r) => sum + (props.errorById[r.id] || 0), 0)
 }
 
-function onRenameFile(group, e) {
-  const to = e.target.value.trim()
-  if (to && to !== group.file) {
-    emit('rename-file', { from: group.file, to })
-  } else {
-    e.target.value = group.file // revert empty/unchanged edits
-  }
+// Renaming lives behind an explicit button (not an always-editable input) so a
+// tap on the file header collapses it instead of opening the keyboard.
+function renameFile(group) {
+  const to = window.prompt('Rename file (applies to all its rules):', group.file)?.trim()
+  if (to && to !== group.file) emit('rename-file', { from: group.file, to })
 }
 
 function summaryOf(rule) {
@@ -81,29 +81,21 @@ function modesOf(rule) {
       <div v-for="group in filteredGroups" :key="group.file" class="sidebar-file">
         <div class="sidebar-file-header">
           <button
-            class="file-collapse"
+            class="file-toggle"
             @click="toggleCollapse(group.file)"
             :aria-expanded="!collapsed.has(group.file)"
-            :title="collapsed.has(group.file) ? 'Expand' : 'Collapse'"
-          >{{ collapsed.has(group.file) ? '▸' : '▾' }}</button>
-          <input
-            class="file-name"
-            :value="group.file"
-            @change="onRenameFile(group, $event)"
-            @keydown.enter="$event.target.blur()"
-            title="Rename file (applies to all its rules)"
-            autocapitalize="off"
-            autocorrect="off"
-            autocomplete="off"
-            spellcheck="false"
           >
-          <span
-            v-if="fileErrorCount(group) > 0"
-            class="file-error-dot"
-            :title="`${fileErrorCount(group)} validation error(s) in this file`"
-          >●</span>
-          <span class="file-count">{{ group.rules.length }}</span>
-          <button class="file-add" @click="emit('add', group.file)" title="Add a rule to this file">+</button>
+            <span class="file-caret" aria-hidden="true">{{ collapsed.has(group.file) ? '▸' : '▾' }}</span>
+            <span class="file-name">{{ group.file }}</span>
+            <span
+              v-if="fileErrorCount(group) > 0"
+              class="file-error-dot"
+              :title="`${fileErrorCount(group)} validation error(s) in this file`"
+            >●</span>
+            <span class="file-count">{{ group.rules.length }}</span>
+          </button>
+          <button class="file-btn" @click="renameFile(group)" title="Rename file" aria-label="Rename file"><Icon name="pencil" /></button>
+          <button class="file-btn" @click="emit('add', group.file)" title="Add a rule to this file" aria-label="Add a rule to this file">+</button>
         </div>
 
         <div v-show="!collapsed.has(group.file)" class="sidebar-rules">
@@ -115,22 +107,17 @@ function modesOf(rule) {
             @click="emit('select', rule.id)"
           >
             <div class="sidebar-rule-main">
-              <div class="sidebar-rule-summary">
-                <span class="sr-trigger">{{ summaryOf(rule).trigger }}</span>
-                <span class="sr-arrow">→</span>
-                <span class="sr-action">{{ summaryOf(rule).action || '…' }}</span>
-              </div>
+              <div v-if="rule.name" class="sr-name">{{ rule.name }}</div>
+              <div class="sr-line" :class="{ 'sr-muted': rule.name }">{{ summaryOf(rule).trigger }}</div>
+              <div class="sr-line sr-muted">→ {{ summaryOf(rule).action || '…' }}</div>
               <div v-if="modesOf(rule).length" class="sidebar-rule-chips">
                 <span v-for="m in modesOf(rule)" :key="m" class="mode-chip" :class="`mode-${m}`">{{ m }}</span>
               </div>
             </div>
             <div class="sidebar-rule-meta">
-              <span v-if="errorById[rule.id] > 0" class="sr-error" :title="`${errorById[rule.id]} error(s)`">⚠ {{ errorById[rule.id] }}</span>
+              <span v-if="errorById[rule.id] > 0" class="sr-error" :title="`${errorById[rule.id]} error(s)`"><Icon name="alert" :size="12" /> {{ errorById[rule.id] }}</span>
               <button class="sr-action-btn" @click.stop="emit('duplicate', rule.id)" title="Duplicate rule" aria-label="Duplicate rule">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                </svg>
+                <Icon name="copy" :size="13" />
               </button>
               <button class="sr-action-btn remove" @click.stop="emit('remove', rule.id)" title="Remove rule" aria-label="Remove rule">×</button>
             </div>

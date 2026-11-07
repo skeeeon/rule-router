@@ -5,7 +5,8 @@
 #
 # Example Use Case: Receiving a GitHub push webhook and creating an internal event.
 #
-- trigger:
+- name: "Turn a GitHub push into an event"
+  trigger:
     http:
       # The HTTP path the gateway will listen on. Supports NATS-style
       # wildcards on path segments: "/webhooks/*/events" matches one

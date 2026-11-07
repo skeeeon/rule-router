@@ -7,6 +7,7 @@ export function uid() { return _nextId++ }
 export function createRule(file = '') {
   return {
     id: uid(),
+    name: '', // Optional human label — emitted as `name:` and shown in the sidebar
     file,  // Filename grouping — rules with same file go into one YAML output
     trigger: {
       type: 'nats',

@@ -13,6 +13,7 @@ export function parseYamlToRules(yamlString, file = '') {
 
 function rawToRule(raw, file) {
   const rule = createRule(file)
+  rule.name = typeof raw.name === 'string' ? raw.name : ''
 
   // Trigger
   if (raw.trigger?.nats) {

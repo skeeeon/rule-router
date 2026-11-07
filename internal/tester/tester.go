@@ -1619,6 +1619,13 @@ func parseRuleIndex(name string) int {
 
 // describeTrigger returns a short human-readable description of a rule's trigger.
 func describeTrigger(r *rule.Rule) string {
+	if r.Name != "" {
+		return fmt.Sprintf("%q (%s)", r.Name, triggerSummary(r))
+	}
+	return triggerSummary(r)
+}
+
+func triggerSummary(r *rule.Rule) string {
 	if r.Trigger.NATS != nil {
 		return fmt.Sprintf("NATS %s", r.Trigger.NATS.Subject)
 	}
