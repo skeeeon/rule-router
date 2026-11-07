@@ -124,6 +124,15 @@ func run() error {
 		return fmt.Errorf("failed to start manager: %w", err)
 	}
 
+	// Announce the process on NATS micro discovery ($SRV): identity only,
+	// never fatal. Registered once refresh loops are running, so a startup
+	// that fails partway never appears. NATSClient.Close stops it.
+	kvKeys := make([]string, len(providerList))
+	for i, p := range providerList {
+		kvKeys[i] = p.ID()
+	}
+	natsClient.RegisterService(version, kvKeys)
+
 	appLogger.Info("nats-auth-manager running",
 		"providers", len(providerList),
 		"kvBucket", cfg.Storage.Bucket)

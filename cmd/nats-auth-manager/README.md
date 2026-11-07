@@ -232,7 +232,20 @@ Prometheus metrics available at `:2113/metrics` (if enabled), all labeled by `pr
 - `authmgr_auth_duration_seconds` — authentication request duration
 - `authmgr_kv_store_failures_total` — tokens obtained but not written to KV
 
-The metrics server serves `/metrics` only; there are no `/health` or `/ready` endpoints on this binary, and it does not register on NATS service discovery.
+The metrics server serves `/metrics` only; there are no `/health` or `/ready` endpoints on this binary.
+
+### Service Discovery
+
+Each instance registers on the NATS micro discovery protocol (`$SRV`) as `nats-auth-manager`, once its refresh loops are running:
+
+```bash
+nats micro ls
+nats micro info nats-auth-manager
+```
+
+It is identity only, with no endpoints: the version (an unstamped build reports `0.0.0-dev`), start time, and metadata `host`, `bucket`, and `kvKeys` (the comma-separated keys this instance keeps fresh). Use it to confirm the manager is up, and to catch **duplicate instances**: two managers on one bucket both refresh every token, and a provider that revokes the previous token on issue makes them invalidate each other.
+
+The credential needs to subscribe to `$SRV.>` and publish replies to the requester's inbox (`_INBOX.>`, or `allow_responses`). Discovery is never fatal: without the permission the manager runs normally and is not listed, and the server's refusals are logged as `NATS asynchronous error` lines.
 
 ## Troubleshooting
 

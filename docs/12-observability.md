@@ -51,7 +51,7 @@ nats micro ls
 nats micro info rule-router
 ```
 
-It is identity only, with no endpoints. `$SRV.PING`, `$SRV.INFO`, and `$SRV.STATS` report the name, the version (a build without a version stamp reports `0.0.0-dev`), the start time, and two metadata keys: `host` (the hostname) and `features` (the enabled features, e.g. `router,gateway`). A SIGHUP reload replaces the NATS connection, so the instance re-registers with a new id and start time. The `nats-auth-manager` binary does not register.
+It is identity only, with no endpoints. `$SRV.PING`, `$SRV.INFO`, and `$SRV.STATS` report the name, the version (a build without a version stamp reports `0.0.0-dev`), the start time, and two metadata keys: `host` (the hostname) and `features` (the enabled features, e.g. `router,gateway`). A SIGHUP reload replaces the NATS connection, so the instance re-registers with a new id and start time. The companion `nats-auth-manager` binary registers separately as `nats-auth-manager` (metadata `host`, `bucket`, `kvKeys`), so it shows in `nats micro ls` too and a ping to `rule-router` still finds routers only; see its [README](../cmd/nats-auth-manager/README.md#service-discovery).
 
 **Permissions.** The credential needs to subscribe to `$SRV.>` and to publish replies to the requester's inbox (`_INBOX.>`, or `allow_responses`). Discovery is never fatal: without the permission the process runs normally and is simply not listed, but the server's refusals are logged as `NATS asynchronous error` lines at startup and after every reconnect, and counted in `nats_async_errors_total{kind="permissions_violation"}`. Either grant `$SRV.>` or expect them.
 

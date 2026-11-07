@@ -1,8 +1,8 @@
-package broker
+package natsservice
 
 import "testing"
 
-func TestServiceVersion(t *testing.T) {
+func TestVersion(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
@@ -18,8 +18,8 @@ func TestServiceVersion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := serviceVersion(tt.in); got != tt.want {
-				t.Errorf("serviceVersion(%q) = %q, want %q", tt.in, got, tt.want)
+			if got := Version(tt.in); got != tt.want {
+				t.Errorf("Version(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
 	}
