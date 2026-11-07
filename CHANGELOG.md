@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-11-07
+
+### Features
+- **`nats-auth-manager` registers on NATS service discovery** — each instance registers as micro service `nats-auth-manager`, so `nats micro ls` lists it alongside `rule-router`, and a ping to `rule-router` still finds routers only. Identity only, with no endpoints: version, start time, and `host`, `bucket`, and `kvKeys` metadata (the keys the instance keeps fresh). It shows at a glance whether the manager is running — otherwise a stopped manager shows up only as `401`s once tokens expire — and catches two instances on one bucket, which both refresh every token and, with a provider that revokes the previous token on issue, invalidate each other's tokens. Never fatal: a credential without subscribe permission on `$SRV.>` runs normally and is simply not listed. The auth manager now logs asynchronous NATS errors (such as those permission refusals) as `NATS asynchronous error` lines; before, it discarded them.
+- **Optional rule `name`** — a rule may carry a `name:` label. It changes no behavior, but load errors now identify the rule as `rule 0 ("Alert on high temp") in f.yaml`, `rule-cli` prints it, `rule-cli new` asks for it, and every template sets one.
+- **Web rule builder: clearer, touch-friendly sidebar** — rows show the rule name, then its trigger and action on separate lines, and search matches names. Controls are sized for touch on coarse-pointer devices (tablets in landscape included), and tapping a file header collapses it, with rename as its own button.
+- **Web rule builder: confirm before destructive edits** — removing a rule, removing a condition group, or clearing conditions now asks first, since edits auto-save and cannot be undone. The prompt says how many conditions will be lost, and an empty group is removed without asking.
+
 ## [0.22.0] - 2026-11-05
 
 ### Fixes
@@ -305,6 +313,7 @@
 - Signature verification
 - Rule-cli utility
 
+[0.23.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.23.0
 [0.22.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.22.0
 [0.21.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.21.0
 [0.20.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.20.0
