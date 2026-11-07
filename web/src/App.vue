@@ -1,6 +1,6 @@
 <script setup>
 import { reactive, computed, ref, provide, onMounted, onUnmounted, watch } from 'vue'
-import { createRule, createConditions, groupRulesByFile, uniqueFileName, ruleSummary, DEFAULT_FILENAME, uid } from './utils/state.js'
+import { createRule, createConditions, groupRulesByFile, uniqueFileName, ruleSummary, countConditions, DEFAULT_FILENAME, uid } from './utils/state.js'
 import { rulesToYaml } from './utils/yaml.js'
 import { validateRule } from './utils/validate.js'
 import { parseYamlToRules } from './utils/parse.js'
@@ -36,6 +36,7 @@ const showHelp = ref(false)
 const showDrawer = ref(false)
 const showResetConfirm = ref(false)
 const pendingRemoveId = ref(null) // rule awaiting delete confirmation
+const showClearConditionsConfirm = ref(false)
 const kvPushTarget = ref(null)
 
 // Theme: 'system' | 'light' | 'dark'
@@ -299,6 +300,21 @@ function toggleConditions() {
   }
 }
 
+// "Clear" wipes every condition on the rule, so ask first — unless there are
+// none, in which case there is nothing to lose.
+function requestClearConditions() {
+  if (countConditions(activeRule.value?.conditions) === 0) {
+    toggleConditions()
+    return
+  }
+  showClearConditionsConfirm.value = true
+}
+
+function confirmClearConditions() {
+  showClearConditionsConfirm.value = false
+  if (state.showConditions) toggleConditions()
+}
+
 function resetRules() {
   const hasContent = state.rules.length > 1
     || !!state.rules[0]?.trigger?.nats?.subject
@@ -454,7 +470,7 @@ function loadFromKV(entries) {
 
           <SectionPanel title="Conditions">
             <template #header-actions>
-              <button class="toggle-btn" @click="toggleConditions">
+              <button class="toggle-btn" @click="state.showConditions ? requestClearConditions() : toggleConditions()">
                 {{ state.showConditions ? 'Clear' : 'Add Conditions' }}
               </button>
             </template>
@@ -513,6 +529,15 @@ function loadFromKV(entries) {
       :danger="true"
       @confirm="confirmRemove"
       @close="pendingRemoveId = null"
+    />
+    <ConfirmModal
+      v-if="showClearConditionsConfirm"
+      title="Clear conditions?"
+      :message="`All ${countConditions(activeRule?.conditions)} condition(s) on this rule will be removed. This cannot be undone.`"
+      confirm-label="Clear conditions"
+      :danger="true"
+      @confirm="confirmClearConditions"
+      @close="showClearConditionsConfirm = false"
     />
     <ConfirmModal
       v-if="showResetConfirm"

@@ -1,6 +1,8 @@
 <script setup>
-import { createCondition, createConditions } from '../utils/state.js'
+import { ref } from 'vue'
+import { createCondition, createConditions, countConditions } from '../utils/state.js'
 import ConditionItem from './ConditionItem.vue'
+import ConfirmModal from './ConfirmModal.vue'
 
 const props = defineProps({
   modelValue: Object,
@@ -26,8 +28,21 @@ function addGroup() {
   props.modelValue.groups.push(createConditions())
 }
 
+// Index of the group awaiting delete confirmation. An empty group is removed
+// straight away — nothing to lose, so no prompt.
+const pendingGroup = ref(null)
+
 function removeGroup(index) {
-  props.modelValue.groups.splice(index, 1)
+  if (countConditions(props.modelValue.groups[index]) === 0) {
+    props.modelValue.groups.splice(index, 1)
+    return
+  }
+  pendingGroup.value = index
+}
+
+function confirmRemoveGroup() {
+  props.modelValue.groups.splice(pendingGroup.value, 1)
+  pendingGroup.value = null
 }
 </script>
 
@@ -68,5 +83,15 @@ function removeGroup(index) {
       <button class="small-btn" @click="addCondition">+ Condition</button>
       <button v-if="depth < MAX_DEPTH" class="small-btn" @click="addGroup">+ Group</button>
     </div>
+
+    <ConfirmModal
+      v-if="pendingGroup !== null"
+      title="Remove group?"
+      :message="`This group and its ${countConditions(modelValue.groups[pendingGroup])} condition(s) will be removed. This cannot be undone.`"
+      confirm-label="Remove group"
+      :danger="true"
+      @confirm="confirmRemoveGroup"
+      @close="pendingGroup = null"
+    />
   </div>
 </template>

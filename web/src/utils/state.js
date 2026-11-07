@@ -75,6 +75,16 @@ export function createConditions() {
   return { id: uid(), operator: 'and', items: [], groups: [] }
 }
 
+// Counts every condition in a group, including nested groups and the
+// sub-conditions of array operators (any/all/none).
+export function countConditions(group) {
+  if (!group) return 0
+  let n = 0
+  for (const item of group.items || []) n += 1 + countConditions(item.conditions)
+  for (const g of group.groups || []) n += countConditions(g)
+  return n
+}
+
 export function createCondition() {
   return { id: uid(), field: '', operator: 'eq', value: '', conditions: null }
 }
