@@ -1,0 +1,57 @@
+name: Release
+
+# Push a tag to release: commit the CHANGELOG.md section for the version,
+# then `git tag vX.Y.Z && git push origin vX.Y.Z`. Don't also run
+# `goreleaser release` locally — both would publish to the same release.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # goreleaser needs history and tags
+
+      # Latest stable, not go.mod's minimum: the binaries ship with this
+      # toolchain's standard library, so they should carry its security fixes.
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+
+      # The release body is the version's hand-written CHANGELOG.md section
+      # rather than goreleaser's commit list. A tag without a section is a
+      # mistake, so stop before building anything.
+      - name: Extract release notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            index($0, "## [" v "]") == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
+            echo "::error::CHANGELOG.md has no section for [$version]"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/notes.md"
+
+      - name: go test
+        run: go test ./...
+
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --clean --release-notes ${{ runner.temp }}/notes.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

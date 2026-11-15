@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The minimum the module claims to support.
+          - name: go.mod
+            version-file: go.mod
+          # What releases are built with (see release.yml).
+          - name: stable
+            version: stable
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ matrix.version }}
+          go-version-file: ${{ matrix.version-file }}
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # The WASM tester leans on //go:build stubs (metrics, logger, KVContext,
+      # signature verification). A method added to the real type without its
+      # stub only breaks this build.
+      - name: WASM build
+        env:
+          GOOS: js
+          GOARCH: wasm
+        run: |
+          go vet ./cmd/wasm/...
+          go build -ldflags="-s -w" -o /dev/null ./cmd/wasm/
+
+      - name: go test
+        run: go test -race ./...
+
+      # Only on the toolchain releases ship with: an older toolchain reports
+      # standard-library fixes it can't have, and that isn't actionable here.
+      - name: govulncheck
+        if: matrix.name == 'stable'
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  web:
+    name: Web UI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+      - run: npm run build
