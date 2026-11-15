@@ -156,7 +156,7 @@ Cross-checks live in `loader.go::validateTriggerActionCompatibility`. When addin
 
 The web UI includes a rule tester that runs the real Go rule engine in the browser via WebAssembly. The WASM binary is built from `cmd/wasm/main.go` and uses the same evaluation path as `rule-cli check`.
 
-Heavy dependencies are excluded from the WASM build via `//go:build` tags to keep the binary small (~7 MB, ~2 MB gzipped):
+Heavy dependencies are excluded from the WASM build via `//go:build` tags to keep the binary small (~11 MB, ~3 MB gzipped):
 
 - `internal/logger/logger.go` has `//go:build !js` — WASM uses `logger_wasm.go` (slog-only, no zap/viper)
 - `internal/metrics/metrics.go` and `collector.go` have `//go:build !js` — WASM uses `metrics_wasm.go` (no-op stubs)
