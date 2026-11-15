@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-11-14
+
+### Security
+- **Built with a Go toolchain that fixes GO-2026-6859** — the 0.23.0 binaries were built with Go 1.27.3, whose HTTP/1 server can crash on a race between `MaxBytesReader` and request headers. `govulncheck` reports the affected `net/http` code as reachable from all three binaries, and `rule-router` runs `net/http` servers for the gateway and for metrics. Releases are now built in GitHub Actions on the latest stable Go, so they carry current standard-library fixes. No code changed for this; upgrade to pick up the rebuilt binaries.
+
+### Improvements
+- **Dependency updates** — `nats.go` 1.55.0, `nkeys` 0.4.17, `gocron` 2.23.1, `prometheus/client_golang` 1.25.0, `oauth2` 0.37.0, `pflag` 1.1.0, and `goccy/go-json` 0.12.0, which now matches `encoding/json`'s decoding and error reporting more closely: invalid JSON anywhere in a payload is a syntax error, and error messages read as `encoding/json`'s do. The web rule builder's dependencies are updated too (Vue 3.5.45, Vite 8.3.8, `cron-parser`, `cronstrue`, `yaml`), clearing four high-severity `npm audit` findings.
+- **CI** — every push and pull request now runs `gofmt`, `go vet`, the WASM build, `go test -race`, `govulncheck`, and the web build. Pushing a version tag builds and publishes the release, using this file's section for the release notes.
+
 ## [0.23.0] - 2026-11-07
 
 ### Features
