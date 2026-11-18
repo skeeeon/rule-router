@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Improvements
+- **JetStream action publishes are synchronous** — a `jetstream`-mode action used `PublishMsgAsync` and then blocked on its ack, which is a synchronous publish with extra machinery. It now calls `PublishMsg` with `ackTimeout` as the deadline. Retries, error messages and `ackTimeout` behave as before. With no async pending set, the 2048-publish cap and the expiry that 0.17.0 added to stop it from stalling are gone. A failed ack now increments `action_publish_failures_total` once, not twice.
+
 ## [0.23.1] - 2026-11-14
 
 ### Security

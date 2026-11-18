@@ -58,19 +58,6 @@ const (
 	// ~18s of grace, then fail fast so a genuine misconfiguration still surfaces.
 	initialConnectMaxAttempts = 10
 	initialConnectRetryWait   = 2 * time.Second
-
-	// publishAsyncMaxPending caps outstanding async JetStream publishes. Once it
-	// is reached, further publishes fail fast with ErrTooManyStalledMsgs.
-	publishAsyncMaxPending = 2048
-
-	// publishAsyncAckSlack extends the client-side expiry of a pending async
-	// publish past our own ack wait. Without an expiry, a publish whose ack never
-	// arrives (permissions violation, dropped reply) holds its pending slot
-	// forever; enough of those and the publisher is wedged at max pending for the
-	// life of the process. The slack keeps our AckTimeout the primary deadline —
-	// callers still get "timeout waiting for publish ack" — while this backstop
-	// releases the slot shortly after.
-	publishAsyncAckSlack = 5 * time.Second
 )
 
 // NATSBroker connects to external NATS JetStream servers with KV support and local caching
@@ -735,25 +722,9 @@ func (b *NATSBroker) initializeNATSConnection() error {
 		"connectedURL", connectedURL,
 		"availableURLs", len(b.config.NATS.URLs))
 
-	// Configure JetStream for Async Publishing ---
-	jsOpts := []jetstream.JetStreamOpt{
-		// Set a limit on the number of outstanding async publishes. This is crucial for backpressure.
-		jetstream.WithPublishAsyncMaxPending(publishAsyncMaxPending),
-		// Expire pending publishes that never get an ack so their slots are
-		// released; without this the pending set only grows and the publisher
-		// eventually stalls permanently. See publishAsyncAckSlack.
-		jetstream.WithPublishAsyncTimeout(b.config.NATS.Publish.AckTimeout + publishAsyncAckSlack),
-		// Set up a handler to log any errors that occur in the background.
-		jetstream.WithPublishAsyncErrHandler(func(js jetstream.JetStream, msg *nats.Msg, err error) {
-			b.logger.Error("asynchronous publish failed", "subject", msg.Subject, "error", err)
-			if b.metrics != nil {
-				// This metric tracks failures that happen after the initial send.
-				b.metrics.IncActionPublishFailures()
-			}
-		}),
-	}
-
-	b.jetStream, err = jetstream.New(b.natsConn, jsOpts...)
+	// Action publishes are synchronous (see ActionPublisher.publishJetStream), so
+	// no async publish options are needed.
+	b.jetStream, err = jetstream.New(b.natsConn)
 	if err != nil {
 		return fmt.Errorf("failed to create JetStream interface: %w", err)
 	}

@@ -102,34 +102,24 @@ func (ap *ActionPublisher) PublishWithRetry(ctx context.Context, action *rule.NA
 	return fmt.Errorf("failed to publish after %d attempts (mode: %s): %w", maxRetries, publishMode, lastErr)
 }
 
-// publishJetStream publishes to JetStream using the async model for high throughput.
+// publishJetStream publishes to JetStream and waits for the stream's ack, for
+// at most AckTimeout. A caller needs the ack before it can Ack the message that
+// triggered the rule, so the publish is synchronous.
 func (ap *ActionPublisher) publishJetStream(ctx context.Context, action *rule.NATSAction) error {
-	msg := newActionMsg(action)
-
-	// Publish async
-	ackF, err := ap.js.PublishMsgAsync(msg)
-	if err != nil {
-		// This error occurs if the async buffer is full (backpressure).
-		return fmt.Errorf("jetstream async publish failed on send: %w", err)
-	}
-
-	// Wait for acknowledgement with timeout
 	pubCtx, cancel := context.WithTimeout(ctx, ap.cfg.AckTimeout)
 	defer cancel()
 
-	select {
-	case <-ackF.Ok():
-		return nil // Publish was successful.
-	case err := <-ackF.Err():
-		// The server returned an error for this publish.
-		if errors.Is(err, nats.ErrNoResponders) {
+	if _, err := ap.js.PublishMsg(pubCtx, newActionMsg(action)); err != nil {
+		// nats.go retries "no responders" briefly, then returns this error.
+		if errors.Is(err, jetstream.ErrNoStreamResponse) {
 			return fmt.Errorf("jetstream publish failed: no stream is configured for action subject %q", action.Subject)
 		}
-		return fmt.Errorf("jetstream async publish failed on ack: %w", err)
-	case <-pubCtx.Done():
-		// We timed out waiting for the server's acknowledgement.
-		return fmt.Errorf("timeout waiting for publish acknowledgement: %w", pubCtx.Err())
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("timeout waiting for publish acknowledgement: %w", err)
+		}
+		return fmt.Errorf("jetstream publish failed: %w", err)
 	}
+	return nil
 }
 
 // publishCore publishes to core NATS (fire-and-forget, no ack).
