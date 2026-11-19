@@ -58,10 +58,9 @@ jobs:
 
   # Container images for amd64 and arm64 (edge routers such as Peplink run
   # arm64 only), pushed to ghcr.io/<owner>/<app> as X.Y.Z, X.Y and latest.
-  # Runs after the release so a failed release ships no image. GHCR makes a
-  # new package private: after the first release, set each package's
-  # visibility to public in its GitHub settings so devices can pull it
-  # without credentials.
+  # Runs after the release so a failed release ships no image. The packages
+  # take this public repository's visibility, so devices pull them without
+  # credentials.
   images:
     needs: release
     runs-on: ubuntu-latest
