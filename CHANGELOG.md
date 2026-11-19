@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-19
+
+### Improvements
+- **Higher default concurrency** — the old defaults left most of the router's throughput unused. On an 8-core test VM, the router goes from about 2,070 to 4,750 msg/s, with p99 latency at 2,000 msg/s down from 22 ms to 7.7 ms. The gateway's inbound ceiling goes from about 1,870 to 3,820 msg/s; above it, callers get `503`s rather than slower responses.
+
+  | Setting | Was (code / shipped YAML) | Now |
+  |---|---|---|
+  | `nats.consumers.workerCount` | 2 / 4 | 64 |
+  | `nats.consumers.fetchBatchSize` | 1 / 10 | 256 |
+  | `http.server.inboundWorkerCount` | 10 | 64 |
+  | `http.client.maxIdleConnsPerHost` | 10 | 64 |
+  | `http.client.maxIdleConns` | 100 | 256 |
+
+  The code defaults apply only to keys missing from your config. If your config was copied from an earlier shipped file, it still sets the old values, so update them to pick this up. `workerCount` and `fetchBatchSize` apply **per subscribed subject**: with 30 subjects, an instance now runs 1,920 workers and can buffer about 7,700 messages. With slow outbound HTTP endpoints, keep `fetchBatchSize` near 2–4× `workerCount`, because buffered messages' `ackWaitTimeout` clocks are already running. Keep `maxAckPending` at or above `fetchBatchSize`; the default of 1000 is unchanged.
+
+### Features
+- **Benchmark harness** — `bench/run.sh` runs the real binary against a throwaway NATS server and reports throughput and p50/p90/p99/max end-to-end latency. It loads the router by default and the gateway's inbound path with `MODE=http`. Any config key can be changed for a run with an `RR_*` variable, for example `RR_NATS_CONSUMERS_WORKERCOUNT=128 bench/run.sh -n 100000 -rate 5000`. `NATS_URL` points it at an existing server.
+- **Opt-in pprof** — `metrics.pprof: true` (or `RR_METRICS_PPROF=true`) serves Go's profiler under `/debug/pprof/` on the metrics port. It is off by default; never enable it on a port reachable from outside. `PROFILE=cpu.pprof bench/run.sh` saves a CPU profile taken under load.
+
+### Fixes
+- **Example rules rendered invalid JSON** — templates insert raw text, so string fields must be quoted (`"id": "{device.id}"`), but many examples left them bare. Some also had `#` comments inside `payload: |` blocks, which become part of the payload. Every example now renders valid JSON. The night-motion example in `time-based.yaml` could never fire (`hour >= 22` and `hour < 6`); it now matches either.
+
 ## [0.23.2] - 2026-11-18
 
 ### Improvements
@@ -327,6 +349,7 @@
 - Signature verification
 - Rule-cli utility
 
+[0.24.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.24.0
 [0.23.2]: https://github.com/skeeeon/rule-router/releases/tag/v0.23.2
 [0.23.1]: https://github.com/skeeeon/rule-router/releases/tag/v0.23.1
 [0.23.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.23.0
