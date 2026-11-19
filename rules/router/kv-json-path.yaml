@@ -39,7 +39,7 @@
       payload: |
         {
           "customer": {
-            "id": {customer_id},
+            "id": "{customer_id}",
             "tier": "{@kv.customer_data.{customer_id}:tier}",
             "name": "{@kv.customer_data.{customer_id}:profile.name}",
             "email": "{@kv.customer_data.{customer_id}:profile.contact.email}"
@@ -74,7 +74,7 @@
       subject: shipping.primary-address
       payload: |
         {
-          "customer_id": {customer_id},
+          "customer_id": "{customer_id}",
           "primary_address": {
             "city": "{@kv.customer_data.{customer_id}:shipping.addresses.0.city}",
             "zip": "{@kv.customer_data.{customer_id}:shipping.addresses.0.zip}",
@@ -113,7 +113,7 @@
         {
           "alert": "Temperature threshold exceeded",
           "sensor": {
-            "id": {sensor_id},
+            "id": "{sensor_id}",
             "model": "{@kv.device_config.{sensor_id}:hardware.model}",
             "firmware": "{@kv.device_config.{sensor_id}:hardware.firmware}",
             "location": {
@@ -166,8 +166,8 @@
             "priority": "{@kv.system_config.email_settings:templates.alert.priority}"
           },
           "message_data": {
-            "recipient": {recipient},
-            "alert_title": {alert_title}
+            "recipient": "{recipient}",
+            "alert_title": "{alert_title}"
           },
           "queued_at": "{@timestamp()}"
         }
@@ -200,7 +200,7 @@
         {
           "authorization": "Admin API access granted",
           "user": {
-            "id": {user_id},
+            "id": "{user_id}",
             "role": "{@kv.user_permissions.{user_id}:role}",
             "features": {
               "dashboard": "{@kv.user_permissions.{user_id}:features.dashboard}",
@@ -217,8 +217,8 @@
             }
           },
           "request_data": {
-            "endpoint": {requested_endpoint},
-            "method": {http_method}
+            "endpoint": "{requested_endpoint}",
+            "method": "{http_method}"
           },
           "authorized_at": "{@timestamp()}"
         }
@@ -250,7 +250,7 @@
       payload: |
         {
           "experiment": {
-            "id": {experiment_id},
+            "id": "{experiment_id}",
             "enabled": "{@kv.feature_flags.{experiment_id}:enabled}",
             "control_weight": "{@kv.feature_flags.{experiment_id}:variants.control.weight}",
             "test_weight": "{@kv.feature_flags.{experiment_id}:variants.test.weight}"
@@ -266,8 +266,8 @@
             }
           },
           "user": {
-            "type": {user_type},
-            "region": {user_region}
+            "type": "{user_type}",
+            "region": "{user_region}"
           },
           "tracked_at": "{@timestamp()}"
         }
@@ -301,14 +301,14 @@
             "type": "{@subject.1}",
             "id": "{@subject.3}",
             "maintenance_schedule": {
-              "type": {maintenance_type},
+              "type": "{maintenance_type}",
               "frequency_days": "{@kv.equipment_maintenance.{@subject.3}:schedules.{maintenance_type}.frequency_days}",
               "duration_hours": "{@kv.equipment_maintenance.{@subject.3}:schedules.{maintenance_type}.duration_hours}",
               "required_technician_level": "{@kv.equipment_maintenance.{@subject.3}:schedules.{maintenance_type}.technician_level}"
             }
           },
           "scheduling": {
-            "scheduled_by": {scheduled_by},
+            "scheduled_by": "{scheduled_by}",
             "scheduled_at": "{@timestamp()}",
             "maintenance_id": "{@uuid7()}"
           }
@@ -338,7 +338,7 @@
       payload: |
         {
           "service": {
-            "name": {service_name},
+            "name": "{service_name}",
             "errors": {
               "count": "{@kv.logs.{service_name}:errors.count}",
               "rate_per_min": "{@kv.logs.{service_name}:errors.rate_per_min}"

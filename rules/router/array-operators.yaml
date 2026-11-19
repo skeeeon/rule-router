@@ -23,7 +23,7 @@
       subject: analytics.premium-user-activity
       payload: |
         {
-          "user_id": {user_id},
+          "user_id": "{user_id}",
           "tags": {tags},
           "event": "premium_user_detected",
           "timestamp": "{@timestamp()}"
@@ -49,7 +49,7 @@
       subject: user.allowed-action
       payload: |
         {
-          "user_id": {user_id},
+          "user_id": "{user_id}",
           "flags": {flags},
           "action": "proceed",
           "timestamp": "{@timestamp()}"
@@ -75,8 +75,8 @@
       subject: search.results
       payload: |
         {
-          "name": {name},
-          "email": {email},
+          "name": "{name}",
+          "email": "{email}",
           "match_type": "contains",
           "timestamp": "{@timestamp()}"
         }
@@ -103,8 +103,8 @@
       subject: fulfillment.order-ready
       payload: |
         {
-          "order_id": {order_id},
-          "status": {status},
+          "order_id": "{order_id}",
+          "status": "{status}",
           "action": "process_order",
           "timestamp": "{@timestamp()}"
         }
@@ -129,8 +129,8 @@
       subject: api.authorized
       payload: |
         {
-          "tenant_id": {tenant_id},
-          "action": {action},
+          "tenant_id": "{tenant_id}",
+          "action": "{action}",
           "authorization": "granted",
           "request_id": "{@uuid7()}",
           "timestamp": "{@timestamp()}"
@@ -152,7 +152,7 @@
       subject: tasks.high-priority
       payload: |
         {
-          "task_id": {task_id},
+          "task_id": "{task_id}",
           "priority": {priority},
           "queue": "urgent",
           "assigned_at": "{@timestamp()}"
@@ -184,9 +184,9 @@
       subject: security.allowed
       payload: |
         {
-          "user_id": {user_id},
-          "action": {action},
-          "ip": {ip},
+          "user_id": "{user_id}",
+          "action": "{action}",
+          "ip": "{ip}",
           "security_status": "cleared",
           "check_id": "{@uuid7()}",
           "timestamp": "{@timestamp()}"
@@ -220,8 +220,8 @@
       subject: features.access-granted
       payload: |
         {
-          "user_id": {user_id},
-          "feature": {feature},
+          "user_id": "{user_id}",
+          "feature": "{feature}",
           "user_roles": {user_roles},
           "access": "granted",
           "session_id": "{@uuid7()}",
@@ -251,8 +251,8 @@
       subject: iot.validated-event
       payload: |
         {
-          "device_id": {device_id},
-          "event_type": {event_type},
+          "device_id": "{device_id}",
+          "event_type": "{event_type}",
           "validation": "passed",
           "event_id": "{@uuid7()}",
           "timestamp": "{@timestamp()}"
@@ -282,9 +282,9 @@
       subject: admin.scheduled-operation
       payload: |
         {
-          "user_id": {user_id},
-          "operation": {operation},
-          "criticality": {criticality},
+          "user_id": "{user_id}",
+          "operation": "{operation}",
+          "criticality": "{criticality}",
           "scheduled_hour": "{@time.hour}",
           "operation_id": "{@uuid7()}",
           "timestamp": "{@timestamp()}"
@@ -318,9 +318,9 @@
       subject: fulfillment.special-handling
       payload: |
         {
-          "order_id": {order_id},
-          "payment_method": {payment_method},
-          "shipping_country": {shipping_country},
+          "order_id": "{order_id}",
+          "payment_method": "{payment_method}",
+          "shipping_country": "{shipping_country}",
           "items_tags": {items_tags},
           "handling": "fragile_shipping",
           "fulfillment_id": "{@uuid7()}",
@@ -351,9 +351,9 @@
       subject: moderation.manual-review
       payload: |
         {
-          "post_id": {post_id},
+          "post_id": "{post_id}",
           "content_flags": {content_flags},
-          "author_status": {author_status},
+          "author_status": "{author_status}",
           "review_priority": "standard",
           "review_id": "{@uuid7()}",
           "queued_at": "{@timestamp()}"
@@ -383,7 +383,7 @@
       subject: items.needs-tags
       payload: |
         {
-          "item_id": {item_id},
+          "item_id": "{item_id}",
           "issue": "missing_tags",
           "timestamp": "{@timestamp()}"
         }
@@ -404,7 +404,7 @@
       subject: config.port-allowed
       payload: |
         {
-          "config_id": {config_id},
+          "config_id": "{config_id}",
           "port": {port},
           "validation": "passed",
           "timestamp": "{@timestamp()}"

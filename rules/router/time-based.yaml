@@ -57,8 +57,8 @@
       payload: |
         {
           "alert": "WEEKEND CRITICAL - Page On-Call",
-          "error": {error_message},
-          "severity": {severity},
+          "error": "{error_message}",
+          "severity": "{severity}",
           "escalation": "immediate",
           "weekendDay": "{@day.name}",
           "detectedAt": "{@timestamp()}",
@@ -76,12 +76,12 @@
       - field: "{motion_detected}"
         operator: eq
         value: true
-      - field: "{@time.hour}"
-        operator: gte
-        value: 22       # After 10 PM
     groups:
       - operator: or
         items:
+          - field: "{@time.hour}"
+            operator: gte
+            value: 22   # After 10 PM
           - field: "{@time.hour}"
             operator: lt
             value: 6    # Before 6 AM
@@ -91,7 +91,7 @@
       payload: |
         {
           "alert": "Motion detected during night hours",
-          "location": {location},
+          "location": "{location}",
           "nightHours": true,
           "currentTime": "{@time.hour}:{@time.minute}",
           "date": "{@date.iso}",
@@ -124,7 +124,7 @@
       payload: |
         {
           "message": "Alert suppressed during maintenance window",
-          "originalAlert": {alert_type},
+          "originalAlert": "{alert_type}",
           "maintenanceWindow": "Sunday 2-4 AM",
           "suppressedAt": "{@timestamp()}",
           "resumeProcessing": "Sunday 4:00 AM"
