@@ -116,8 +116,8 @@ Used by the **router** and **gateway** features (for NATS-triggered rules).
 nats:
   consumers:
     consumerPrefix: "rule-router"
-    workerCount: 4
-    fetchBatchSize: 10
+    workerCount: 64
+    fetchBatchSize: 256
     fetchTimeout: 5s
     maxAckPending: 1000
     ackWaitTimeout: 30s
@@ -129,10 +129,10 @@ nats:
 | Field | Type | Default | Bounds / valid values | Description |
 |-------|------|---------|------------------------|-------------|
 | `consumerPrefix` | string | `"rule-router"` | — | Prefix for generated durable consumer names. Give each app a unique prefix when several share a stream. |
-| `workerCount` | int | `2` | `1`–`1000` | Parallel workers per subscription. |
-| `fetchBatchSize` | int | `1` | `1`–`10000` | Messages fetched per pull. |
+| `workerCount` | int | `64` | `1`–`1000` | Parallel workers per subscription. Each waits on a synchronous publish (or outbound HTTP call), so throughput ≈ workers ÷ round-trip time. |
+| `fetchBatchSize` | int | `256` | `1`–`10000` | Messages fetched per pull. Aim for ~4× `workerCount`; buffered per subscription, and buffered messages' ack-wait clocks are already running. |
 | `fetchTimeout` | duration | `5s` | `> 0` | Pull fetch timeout. |
-| `maxAckPending` | int | `1000` | `1`–`100000` | Max in-flight unacknowledged messages. Effective concurrency ceiling. |
+| `maxAckPending` | int | `1000` | `1`–`100000` | Max in-flight unacknowledged messages. Effective concurrency ceiling — keep it ≥ `fetchBatchSize` or full batches never arrive. |
 | `ackWaitTimeout` | duration | `30s` | — | Time JetStream waits for an ACK before redelivering. Also the deadline for a message's actions, HTTP retries included — actions still running when it expires are cancelled and the message is NAK'd. |
 | `maxDeliver` | int | `3` | `≥ 1` | Max delivery attempts before JetStream stops redelivering (see [Dead-letter behavior](#dead-letter-behavior)). |
 | `deliverPolicy` | string | `"new"` | `all`, `new`, `last`, `by_start_time`, `by_start_sequence` | Where a new consumer starts reading. |
@@ -184,7 +184,7 @@ http:
     idleTimeout: 120s
     maxHeaderBytes: 1048576
     shutdownGracePeriod: 30s
-    inboundWorkerCount: 10
+    inboundWorkerCount: 64
     inboundQueueSize: 1000
 ```
 
@@ -196,7 +196,7 @@ http:
 | `idleTimeout` | duration | `120s` | — | Keep-alive idle timeout. |
 | `maxHeaderBytes` | int | `1048576` (1 MB) | — | Max request header size. |
 | `shutdownGracePeriod` | duration | `30s` | — | Time allowed to drain in-flight requests on shutdown. |
-| `inboundWorkerCount` | int | `10` | `1`–`1000` | Workers draining the fire-and-forget webhook queue. |
+| `inboundWorkerCount` | int | `64` | `1`–`1000` | Workers draining the fire-and-forget webhook queue. |
 | `inboundQueueSize` | int | `1000` | `1`–`100000` | Buffered webhook queue depth. A full queue returns `503` on non-synchronous routes. |
 
 Inbound request bodies are hard-capped at **10 MB** (`io.LimitReader`); anything beyond is truncated. This is a fixed safeguard, not configurable.
@@ -209,8 +209,8 @@ Inbound request bodies are hard-capped at **10 MB** (`io.LimitReader`); anything
 http:
   client:
     timeout: 30s
-    maxIdleConns: 100
-    maxIdleConnsPerHost: 10
+    maxIdleConns: 256
+    maxIdleConnsPerHost: 64
     idleConnTimeout: 90s
     tls:
       insecureSkipVerify: false
@@ -219,8 +219,8 @@ http:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `timeout` | duration | `30s` | Per-request timeout for outbound HTTP actions. |
-| `maxIdleConns` | int | `100` | Connection-pool size across all hosts. |
-| `maxIdleConnsPerHost` | int | `10` | Idle connections kept per host. |
+| `maxIdleConns` | int | `256` | Connection-pool size across all hosts. |
+| `maxIdleConnsPerHost` | int | `64` | Idle connections kept per host. Keep ≥ `workerCount` when many workers call one host, or the extra calls open new connections each time. |
 | `idleConnTimeout` | duration | `90s` | How long an idle connection is kept. |
 | `tls.insecureSkipVerify` | bool | `false` | Skip certificate verification on outbound calls. **Development / trusted-internal only.** |
 
@@ -367,9 +367,9 @@ nats:
     caFile: /etc/ssl/nats/ca.pem
   consumers:
     consumerPrefix: rule-router
-    workerCount: 8
-    fetchBatchSize: 50
-    maxAckPending: 2000
+    workerCount: 128           # more than default: replicated JetStream acks are slower
+    fetchBatchSize: 512
+    maxAckPending: 2000        # keep >= fetchBatchSize
     maxDeliver: 5
   publish:
     mode: jetstream
@@ -379,7 +379,7 @@ http:
   server:
     address: ":8080"
     writeTimeout: 30s          # keep > any bridge timeout
-    inboundWorkerCount: 20
+    inboundWorkerCount: 128
     inboundQueueSize: 5000
   client:
     timeout: 15s

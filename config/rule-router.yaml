@@ -31,8 +31,8 @@ nats:
   # JetStream Consumer Configuration (used by router and gateway features)
   consumers:
     consumerPrefix: "rule-router"
-    workerCount: 4
-    fetchBatchSize: 10
+    workerCount: 64
+    fetchBatchSize: 256
     fetchTimeout: 5s
     maxAckPending: 1000
     ackWaitTimeout: 30s
@@ -62,14 +62,14 @@ http:
     idleTimeout: 120s
     maxHeaderBytes: 1048576
     shutdownGracePeriod: 30s
-    inboundWorkerCount: 10
+    inboundWorkerCount: 64
     inboundQueueSize: 1000
 
   # Outbound HTTP client (gateway and scheduler)
   client:
     timeout: 30s
-    maxIdleConns: 100
-    maxIdleConnsPerHost: 10
+    maxIdleConns: 256
+    maxIdleConnsPerHost: 64
     idleConnTimeout: 90s
     tls:
       insecureSkipVerify: false

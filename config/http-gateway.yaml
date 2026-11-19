@@ -17,13 +17,13 @@ http:
     idleTimeout: 120s
     maxHeaderBytes: 1048576 # 1MB
     shutdownGracePeriod: 30s
-    inboundWorkerCount: 10
+    inboundWorkerCount: 64
     inboundQueueSize: 1000
 
   client:
     timeout: 30s
-    maxIdleConns: 100
-    maxIdleConnsPerHost: 10
+    maxIdleConns: 256
+    maxIdleConnsPerHost: 64
     idleConnTimeout: 90s
 
     tls:
@@ -46,8 +46,8 @@ nats:
   # JetStream Consumer Configuration
   consumers:
     consumerPrefix: "http-gateway" # Unique prefix for this application's consumers
-    workerCount: 4          # Number of parallel workers per subscription
-    fetchBatchSize: 10      # Messages fetched per batch
+    workerCount: 64          # Number of parallel workers per subscription
+    fetchBatchSize: 256      # Messages fetched per batch
     fetchTimeout: 5s        # Fetch timeout
     maxAckPending: 1000     # Max unacknowledged messages
     ackWaitTimeout: 30s     # Time to wait for ACK before redelivery

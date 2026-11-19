@@ -13,8 +13,8 @@ nats:
 
   consumers:
     consumerPrefix: "rr-bench"
-    workerCount: 4
-    fetchBatchSize: 10
+    workerCount: 64       # same as the shipped defaults
+    fetchBatchSize: 256
     fetchTimeout: 5s
     maxAckPending: 1000
     ackWaitTimeout: 30s
