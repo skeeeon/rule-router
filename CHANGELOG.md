@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.23.2] - 2026-11-18
+
 ### Improvements
 - **JetStream action publishes are synchronous** — a `jetstream`-mode action used `PublishMsgAsync` and then blocked on its ack, which is a synchronous publish with extra machinery. It now calls `PublishMsg` with `ackTimeout` as the deadline. Retries, error messages and `ackTimeout` behave as before. With no async pending set, the 2048-publish cap and the expiry that 0.17.0 added to stop it from stalling are gone. A failed ack now increments `action_publish_failures_total` once, not twice.
 
@@ -325,6 +327,8 @@
 - Signature verification
 - Rule-cli utility
 
+[0.23.2]: https://github.com/skeeeon/rule-router/releases/tag/v0.23.2
+[0.23.1]: https://github.com/skeeeon/rule-router/releases/tag/v0.23.1
 [0.23.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.23.0
 [0.22.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.22.0
 [0.21.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.21.0
