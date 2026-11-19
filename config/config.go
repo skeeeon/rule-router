@@ -83,6 +83,10 @@ const (
 	// maxAckPending follow it unless set (see setInFlightDefaults).
 	DefaultWorkerCount = 64
 
+	// DefaultInstanceHeadroom is how many instances sharing one durable the
+	// derived maxAckPending leaves room for (see setInFlightDefaults).
+	DefaultInstanceHeadroom = 4
+
 	// DefaultMaxDeliver is the default maximum delivery attempts per message
 	DefaultMaxDeliver = 3
 
@@ -409,14 +413,7 @@ func Load(path string) (*Config, error) {
 
 	// Apply defaults that depend on other config values (must run after unmarshal).
 
-	// setDefaults sized these from the default workerCount before the file was
-	// read. Size them again from the configured one, unless set themselves.
-	if !v.IsSet("nats.consumers.fetchBatchSize") {
-		config.NATS.Consumers.FetchBatchSize = 0
-	}
-	if !v.IsSet("nats.consumers.maxAckPending") {
-		config.NATS.Consumers.MaxAckPending = 0
-	}
+	// Sized from the configured workerCount, so this must run after unmarshal.
 	setInFlightDefaults(&config.NATS.Consumers)
 
 	// Default features.router to true when no features block is present (backward compat)
@@ -457,23 +454,31 @@ func Load(path string) (*Config, error) {
 	return &config, nil
 }
 
-// setDefaults applies default values to the configuration
 // setInFlightDefaults sizes fetchBatchSize and maxAckPending from workerCount
 // when they are not set, so workerCount is the one knob for how many messages
 // a subscription keeps in flight. The consumer asks the server for more once
 // half its buffer is gone, so a buffer of 4× workers brings two messages per
 // worker each round trip. (2× would be just enough at a distance, but measured
-// a few percent slower on a local server.) The server must then allow that
-// buffer plus one message in each worker to be unacked at once.
+// a few percent slower on a local server.)
+//
+// One instance holds its buffer plus one message per worker unacked. The
+// maxAckPending limit belongs to the consumer, though, and every instance on
+// the durable shares it, so the default leaves room for DefaultInstanceHeadroom
+// instances. Sized to exactly one, a second instance would only split the
+// first one's slots, and the consumer would sit at its limit whenever there
+// is a backlog, so hitting it would no longer signal a problem.
 func setInFlightDefaults(c *ConsumerConfig) {
 	if c.FetchBatchSize == 0 {
 		c.FetchBatchSize = 4 * c.WorkerCount
 	}
 	if c.MaxAckPending == 0 {
-		c.MaxAckPending = c.FetchBatchSize + c.WorkerCount
+		c.MaxAckPending = DefaultInstanceHeadroom * (c.FetchBatchSize + c.WorkerCount)
 	}
 }
 
+// setDefaults applies default values to the configuration. fetchBatchSize and
+// maxAckPending are left alone: they follow workerCount, which is only known
+// after unmarshal (see setInFlightDefaults).
 func setDefaults(cfg *Config) {
 	// NATS defaults
 	if len(cfg.NATS.URLs) == 0 {
@@ -493,7 +498,6 @@ func setDefaults(cfg *Config) {
 	if cfg.NATS.Consumers.WorkerCount == 0 {
 		cfg.NATS.Consumers.WorkerCount = DefaultWorkerCount
 	}
-	setInFlightDefaults(&cfg.NATS.Consumers)
 	if cfg.NATS.Consumers.FetchTimeout == 0 {
 		cfg.NATS.Consumers.FetchTimeout = DefaultFetchTimeout
 	}

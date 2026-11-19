@@ -47,7 +47,7 @@ nats:
   consumers:
     consumerPrefix: "http-gateway" # Unique prefix for this application's consumers
     workerCount: 64          # Messages in flight per subscription; throughput ~ workers / RTT to NATS.
-                             # fetchBatchSize and maxAckPending follow it (4x, 5x) unless set.
+                             # fetchBatchSize and maxAckPending follow it (4x, room for 4 instances) unless set.
     fetchTimeout: 5s        # Fetch timeout
     ackWaitTimeout: 30s     # Time to wait for ACK before redelivery
     maxDeliver: 3           # Max delivery attempts before message goes to dead letter

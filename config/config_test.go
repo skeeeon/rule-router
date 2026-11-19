@@ -35,9 +35,6 @@ func TestSetDefaults(t *testing.T) {
 				if cfg.NATS.Consumers.WorkerCount != 64 {
 					t.Errorf("WorkerCount = %d, want 64", cfg.NATS.Consumers.WorkerCount)
 				}
-				if cfg.NATS.Consumers.FetchBatchSize != 256 {
-					t.Errorf("FetchBatchSize = %d, want 256 (4 × workers)", cfg.NATS.Consumers.FetchBatchSize)
-				}
 				if cfg.NATS.Consumers.FetchTimeout != 5*time.Second {
 					t.Errorf("FetchTimeout = %v, want 5s", cfg.NATS.Consumers.FetchTimeout)
 				}
@@ -46,9 +43,6 @@ func TestSetDefaults(t *testing.T) {
 				}
 				if cfg.NATS.Consumers.MaxDeliver != 3 {
 					t.Errorf("MaxDeliver = %d, want 3", cfg.NATS.Consumers.MaxDeliver)
-				}
-				if cfg.NATS.Consumers.MaxAckPending != 320 {
-					t.Errorf("MaxAckPending = %d, want 320 (fetch batch + workers)", cfg.NATS.Consumers.MaxAckPending)
 				}
 				if cfg.NATS.Consumers.DeliverPolicy != "new" {
 					t.Errorf("DeliverPolicy = %s, want new", cfg.NATS.Consumers.DeliverPolicy)
@@ -170,6 +164,7 @@ func TestValidateConfig(t *testing.T) {
 	validConfig := func() *Config {
 		cfg := &Config{}
 		setDefaults(cfg)
+		setInFlightDefaults(&cfg.NATS.Consumers)
 		cfg.Features.Router = true // at least one feature must be enabled
 		return cfg
 	}
@@ -597,14 +592,10 @@ kv:
 	}
 }
 
-// TestLoadMetricsDefaults goes through Load rather than setDefaults: the
-// metrics defaults depend on metrics.enabled, which is only known after
-// unmarshal. Applying them in setDefaults made `enabled: true` on its own fail
-// startup with "invalid metrics update interval", and a test that called
-// setDefaults with Enabled pre-set could not see it.
 // TestLoadConsumerInFlight pins that workerCount alone sizes a subscription's
 // in-flight window: fetchBatchSize and maxAckPending follow it unless set, so
 // raising workers for a far-away NATS server is not quietly capped by either.
+// maxAckPending leaves room for DefaultInstanceHeadroom (4) instances.
 // All three stay overridable by env var with no key in the file.
 func TestLoadConsumerInFlight(t *testing.T) {
 	tests := []struct {
@@ -614,9 +605,14 @@ func TestLoadConsumerInFlight(t *testing.T) {
 		wantWorkers, wantFetch, want int
 	}{
 		{
+			name:        "defaults",
+			yaml:        "logging:\n  level: info\n",
+			wantWorkers: 64, wantFetch: 256, want: 1280,
+		},
+		{
 			name:        "workerCount alone sizes the rest",
 			yaml:        "nats:\n  consumers:\n    workerCount: 1000\n",
-			wantWorkers: 1000, wantFetch: 4000, want: 5000,
+			wantWorkers: 1000, wantFetch: 4000, want: 20000,
 		},
 		{
 			name:        "explicit values are kept",
@@ -627,13 +623,13 @@ func TestLoadConsumerInFlight(t *testing.T) {
 			name:        "workerCount by env var alone",
 			yaml:        "logging:\n  level: info\n",
 			env:         map[string]string{"RR_NATS_CONSUMERS_WORKERCOUNT": "200"},
-			wantWorkers: 200, wantFetch: 800, want: 1000,
+			wantWorkers: 200, wantFetch: 800, want: 4000,
 		},
 		{
 			name:        "fetchBatchSize by env var alone",
 			yaml:        "logging:\n  level: info\n",
 			env:         map[string]string{"RR_NATS_CONSUMERS_FETCHBATCHSIZE": "50"},
-			wantWorkers: 64, wantFetch: 50, want: 114,
+			wantWorkers: 64, wantFetch: 50, want: 456,
 		},
 	}
 
@@ -661,6 +657,11 @@ func TestLoadConsumerInFlight(t *testing.T) {
 	}
 }
 
+// TestLoadMetricsDefaults goes through Load rather than setDefaults: the
+// metrics defaults depend on metrics.enabled, which is only known after
+// unmarshal. Applying them in setDefaults made `enabled: true` on its own fail
+// startup with "invalid metrics update interval", and a test that called
+// setDefaults with Enabled pre-set could not see it.
 func TestLoadMetricsDefaults(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -730,6 +731,7 @@ func TestValidateKVBuckets(t *testing.T) {
 	validConfig := func() *Config {
 		cfg := &Config{}
 		setDefaults(cfg)
+		setInFlightDefaults(&cfg.NATS.Consumers)
 		cfg.Features.Router = true
 		return cfg
 	}

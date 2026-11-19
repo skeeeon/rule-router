@@ -131,7 +131,7 @@ nats:
 | `workerCount` | int | `64` | `1`–`2500` | Parallel workers per subscription, and the one knob for how many messages a subscription keeps in flight. Each worker waits on a synchronous publish (or outbound HTTP call), so throughput ≈ workers ÷ round-trip time. See [Running far from NATS](#running-far-from-nats). |
 | `fetchBatchSize` | int | 4 × `workerCount` | `1`–`10000` | Messages the consumer buffers per subscription. It asks for more once half the buffer is gone, so 4× workers brings two messages per worker each round trip. Set it only to buffer less: a buffered message's ack-wait clock is already running while it waits behind about four actions per worker, so with actions slower than about `ackWaitTimeout` ÷ 5 (6s at the default), lower this or raise `ackWaitTimeout`. |
 | `fetchTimeout` | duration | `5s` | `> 0` | Pull fetch timeout. |
-| `maxAckPending` | int | `fetchBatchSize` + `workerCount` | `1`–`100000` | Max unacknowledged messages per consumer: everything buffered plus one in each worker. Set lower and workers sit idle waiting for the server. The limit belongs to the consumer, so instances sharing one (same `consumerPrefix`) share it: set it to instances × (`fetchBatchSize` + `workerCount`). |
+| `maxAckPending` | int | 4 × (`fetchBatchSize` + `workerCount`) | `1`–`100000` | Max unacknowledged messages per consumer. One instance holds its buffer plus one message in each worker (`fetchBatchSize` + `workerCount`, 320 at the defaults). The limit belongs to the consumer, so instances sharing one (same `consumerPrefix`) share it. The default leaves room for four. For more, set it to instances × (`fetchBatchSize` + `workerCount`). Set lower and workers sit idle waiting for the server. |
 | `ackWaitTimeout` | duration | `30s` | — | Time JetStream waits for an ACK before redelivering. Also the deadline for a message's actions, HTTP retries included — actions still running when it expires are cancelled and the message is NAK'd. |
 | `maxDeliver` | int | `3` | `≥ 1` | Max delivery attempts before JetStream stops redelivering (see [Dead-letter behavior](#dead-letter-behavior)). |
 | `deliverPolicy` | string | `"new"` | `all`, `new`, `last`, `by_start_time`, `by_start_sequence` | Where a new consumer starts reading. |
@@ -157,7 +157,7 @@ Each message still takes at least a round trip or two end to end, so latency sta
 
 On shutdown and on rule reload, each subscription NAKs the messages still in its buffer so another instance can take them right away. They don't hold `maxAckPending` slots until `ackWaitTimeout` expires. A crash can't do this, so its buffered messages wait out the ack window.
 
-Watch the limit with `nats consumer info <stream> <consumer>`. If `Ack Pending` stays at or near `Max Ack Pending` while `Unprocessed` grows, the instances can't keep up, or `maxAckPending` wasn't raised when instances were added.
+Watch the limit with `nats consumer info <stream> <consumer>`. If `Ack Pending` stays at or near `Max Ack Pending` while `Unprocessed` grows, either more than four instances share the consumer and `maxAckPending` wasn't raised, or the actions can't keep up.
 
 ### `nats.connection`
 

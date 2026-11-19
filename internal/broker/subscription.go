@@ -42,9 +42,11 @@ const (
 	retryNakDelay = 5 * time.Second
 
 	// drainSweepWait bounds each Next() while returning buffered messages on
-	// shutdown. Drain closes the iterator only after the server confirms the
-	// unsubscribe, so this is a ceiling for a slow round trip, not a sleep.
-	drainSweepWait = 2 * time.Second
+	// shutdown. Buffered messages are already local and return at once; this
+	// only covers waiting for the server to confirm the unsubscribe. Kept short
+	// because subscriptions are swept one after another: with NATS unreachable
+	// each sweep runs to this limit, and the NAKs could not be sent anyway.
+	drainSweepWait = 100 * time.Millisecond
 
 	// deferredFlushTimeout bounds the shutdown flush of pending trailing-throttle
 	// batches. Anything still unstarted when it expires is dropped and logged.
@@ -469,11 +471,13 @@ func (sm *SubscriptionManager) processMessageWithRecovery(ctx context.Context, m
 			// spending every attempt at once. A failure caused by shutdown
 			// cancelling the actions is not the message's fault, so it goes back
 			// immediately for another instance to pick up.
-			nak := func() error { return msg.NakWithDelay(retryNakDelay) }
+			var nakErr error
 			if ctx.Err() != nil {
-				nak = msg.Nak
+				nakErr = msg.Nak()
+			} else {
+				nakErr = msg.NakWithDelay(retryNakDelay)
 			}
-			if nakErr := nak(); nakErr != nil {
+			if nakErr != nil {
 				sm.logger.Error("failed to NAK message",
 					"subject", subject,
 					"error", nakErr)

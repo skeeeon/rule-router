@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixes
+- **`maxAckPending` defaults to 4 × (`fetchBatchSize` + `workerCount`)**, 1,280 at the defaults, instead of 320. The limit belongs to the consumer and every instance on the same durable shares it, so at 320 a second instance only split the first one's slots and added almost no throughput. A consumer with a backlog also sat at its limit all the time, which hid real stalls from monitoring. The default now leaves room for four instances. For more, set it to instances × (`fetchBatchSize` + `workerCount`).
+- **Shutdown and rule reload return buffered messages** instead of discarding them. Pre-fetched messages count against `maxAckPending` from the moment the server sends them, so a restart used to hold up to a full fetch buffer of slots until `ackWaitTimeout` (30s) expired. In a test, a 50,000-message backlog now clears 4.4s after a restart instead of 29.9s.
+- **Failed messages are redelivered after 5 seconds** instead of immediately, so a downstream that is briefly unavailable no longer uses up every `maxDeliver` attempt within milliseconds. Keep the output stream's duplicate window longer than (`ackWaitTimeout` + 5s) × `maxDeliver`.
+
 ## [0.25.0] - 2026-11-19
 
 ### Improvements

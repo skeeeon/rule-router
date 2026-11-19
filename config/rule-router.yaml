@@ -34,7 +34,7 @@ nats:
     # Messages each subscribed subject keeps in flight. Each worker waits on a
     # round trip to NATS, so throughput is about workerCount / RTT: raise it when
     # NATS is far away (msg/s you need x RTT in seconds). fetchBatchSize and
-    # maxAckPending follow it (4x and 5x) unless you set them.
+    # maxAckPending follow it (4x, and room for 4 instances) unless you set them.
     workerCount: 64
     fetchTimeout: 5s
     ackWaitTimeout: 30s
