@@ -31,10 +31,12 @@ nats:
   # JetStream Consumer Configuration (used by router and gateway features)
   consumers:
     consumerPrefix: "rule-router"
+    # Messages each subscribed subject keeps in flight. Each worker waits on a
+    # round trip to NATS, so throughput is about workerCount / RTT: raise it when
+    # NATS is far away (msg/s you need x RTT in seconds). fetchBatchSize and
+    # maxAckPending follow it (4x and 5x) unless you set them.
     workerCount: 64
-    fetchBatchSize: 256
     fetchTimeout: 5s
-    maxAckPending: 1000
     ackWaitTimeout: 30s
     maxDeliver: 3
     deliverPolicy: "new"

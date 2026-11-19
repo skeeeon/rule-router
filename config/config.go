@@ -76,20 +76,15 @@ const (
 const (
 	// DefaultWorkerCount is the default number of consumer workers per
 	// subscription. Each worker waits on a synchronous publish (or an outbound
-	// HTTP call), so throughput is roughly workers / round-trip time; bench/run.sh
-	// showed 64-128 as the knee on a single-node server.
+	// HTTP call), so throughput is roughly workers / round-trip time. Against a
+	// local server bench/run.sh kept gaining up to about 512 (8-core machine);
+	// the default stays modest because every subscribed subject gets this many
+	// workers and 4× as many buffered messages. fetchBatchSize and
+	// maxAckPending follow it unless set (see setInFlightDefaults).
 	DefaultWorkerCount = 64
-
-	// DefaultFetchBatchSize is the default number of messages to fetch per
-	// batch. ~4x workers keeps them fed; it is per subscription, so it is kept
-	// modest because every subscribed subject buffers this many.
-	DefaultFetchBatchSize = 256
 
 	// DefaultMaxDeliver is the default maximum delivery attempts per message
 	DefaultMaxDeliver = 3
-
-	// DefaultMaxAckPending is the default maximum pending acknowledgements
-	DefaultMaxAckPending = 1000
 
 	// DefaultPublishMaxRetries is the default maximum publish retry attempts
 	DefaultPublishMaxRetries = 3
@@ -115,8 +110,9 @@ const (
 
 // Validation limits
 const (
-	// MaxWorkerCount is the maximum allowed worker count
-	MaxWorkerCount = 1000
+	// MaxWorkerCount is the maximum allowed worker count: a quarter of
+	// MaxFetchBatchSize, so the fetch batch derived from it always fits.
+	MaxWorkerCount = MaxFetchBatchSize / 4
 
 	// MaxFetchBatchSize is the maximum allowed fetch batch size
 	MaxFetchBatchSize = 10000
@@ -367,6 +363,7 @@ func Load(path string) (*Config, error) {
 	for _, key := range []string{
 		"features.router", "features.gateway", "features.scheduler",
 		"nats.urls", "nats.username", "nats.password", "nats.token",
+		"nats.consumers.workerCount", "nats.consumers.fetchBatchSize", "nats.consumers.maxAckPending",
 		"logging.level",
 		"metrics.enabled", "metrics.address", "metrics.path", "metrics.pprof",
 	} {
@@ -412,6 +409,16 @@ func Load(path string) (*Config, error) {
 
 	// Apply defaults that depend on other config values (must run after unmarshal).
 
+	// setDefaults sized these from the default workerCount before the file was
+	// read. Size them again from the configured one, unless set themselves.
+	if !v.IsSet("nats.consumers.fetchBatchSize") {
+		config.NATS.Consumers.FetchBatchSize = 0
+	}
+	if !v.IsSet("nats.consumers.maxAckPending") {
+		config.NATS.Consumers.MaxAckPending = 0
+	}
+	setInFlightDefaults(&config.NATS.Consumers)
+
 	// Default features.router to true when no features block is present (backward compat)
 	if !v.IsSet("features.router") && !v.IsSet("features.gateway") && !v.IsSet("features.scheduler") {
 		config.Features.Router = true
@@ -451,6 +458,22 @@ func Load(path string) (*Config, error) {
 }
 
 // setDefaults applies default values to the configuration
+// setInFlightDefaults sizes fetchBatchSize and maxAckPending from workerCount
+// when they are not set, so workerCount is the one knob for how many messages
+// a subscription keeps in flight. The consumer asks the server for more once
+// half its buffer is gone, so a buffer of 4× workers brings two messages per
+// worker each round trip. (2× would be just enough at a distance, but measured
+// a few percent slower on a local server.) The server must then allow that
+// buffer plus one message in each worker to be unacked at once.
+func setInFlightDefaults(c *ConsumerConfig) {
+	if c.FetchBatchSize == 0 {
+		c.FetchBatchSize = 4 * c.WorkerCount
+	}
+	if c.MaxAckPending == 0 {
+		c.MaxAckPending = c.FetchBatchSize + c.WorkerCount
+	}
+}
+
 func setDefaults(cfg *Config) {
 	// NATS defaults
 	if len(cfg.NATS.URLs) == 0 {
@@ -470,9 +493,7 @@ func setDefaults(cfg *Config) {
 	if cfg.NATS.Consumers.WorkerCount == 0 {
 		cfg.NATS.Consumers.WorkerCount = DefaultWorkerCount
 	}
-	if cfg.NATS.Consumers.FetchBatchSize == 0 {
-		cfg.NATS.Consumers.FetchBatchSize = DefaultFetchBatchSize
-	}
+	setInFlightDefaults(&cfg.NATS.Consumers)
 	if cfg.NATS.Consumers.FetchTimeout == 0 {
 		cfg.NATS.Consumers.FetchTimeout = DefaultFetchTimeout
 	}
@@ -481,9 +502,6 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.NATS.Consumers.MaxDeliver == 0 {
 		cfg.NATS.Consumers.MaxDeliver = DefaultMaxDeliver
-	}
-	if cfg.NATS.Consumers.MaxAckPending == 0 {
-		cfg.NATS.Consumers.MaxAckPending = DefaultMaxAckPending
 	}
 	if cfg.NATS.Consumers.DeliverPolicy == "" {
 		cfg.NATS.Consumers.DeliverPolicy = DefaultDeliverPolicy

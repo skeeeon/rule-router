@@ -36,7 +36,7 @@ func TestSetDefaults(t *testing.T) {
 					t.Errorf("WorkerCount = %d, want 64", cfg.NATS.Consumers.WorkerCount)
 				}
 				if cfg.NATS.Consumers.FetchBatchSize != 256 {
-					t.Errorf("FetchBatchSize = %d, want 256", cfg.NATS.Consumers.FetchBatchSize)
+					t.Errorf("FetchBatchSize = %d, want 256 (4 × workers)", cfg.NATS.Consumers.FetchBatchSize)
 				}
 				if cfg.NATS.Consumers.FetchTimeout != 5*time.Second {
 					t.Errorf("FetchTimeout = %v, want 5s", cfg.NATS.Consumers.FetchTimeout)
@@ -47,8 +47,8 @@ func TestSetDefaults(t *testing.T) {
 				if cfg.NATS.Consumers.MaxDeliver != 3 {
 					t.Errorf("MaxDeliver = %d, want 3", cfg.NATS.Consumers.MaxDeliver)
 				}
-				if cfg.NATS.Consumers.MaxAckPending != 1000 {
-					t.Errorf("MaxAckPending = %d, want 1000", cfg.NATS.Consumers.MaxAckPending)
+				if cfg.NATS.Consumers.MaxAckPending != 320 {
+					t.Errorf("MaxAckPending = %d, want 320 (fetch batch + workers)", cfg.NATS.Consumers.MaxAckPending)
 				}
 				if cfg.NATS.Consumers.DeliverPolicy != "new" {
 					t.Errorf("DeliverPolicy = %s, want new", cfg.NATS.Consumers.DeliverPolicy)
@@ -238,7 +238,7 @@ func TestValidateConfig(t *testing.T) {
 		{
 			name: "worker count too high",
 			modify: func(cfg *Config) {
-				cfg.NATS.Consumers.WorkerCount = 1001
+				cfg.NATS.Consumers.WorkerCount = MaxWorkerCount + 1
 			},
 			wantErr: "worker count too high",
 		},
@@ -353,7 +353,7 @@ func TestValidateConfig(t *testing.T) {
 			modify: func(cfg *Config) {
 				cfg.Features.Gateway = true
 				cfg.HTTP.Server.Address = ":8080"
-				cfg.HTTP.Server.InboundWorkerCount = 1001
+				cfg.HTTP.Server.InboundWorkerCount = MaxWorkerCount + 1
 			},
 			wantErr: "inbound worker count too high",
 		},
@@ -602,6 +602,65 @@ kv:
 // unmarshal. Applying them in setDefaults made `enabled: true` on its own fail
 // startup with "invalid metrics update interval", and a test that called
 // setDefaults with Enabled pre-set could not see it.
+// TestLoadConsumerInFlight pins that workerCount alone sizes a subscription's
+// in-flight window: fetchBatchSize and maxAckPending follow it unless set, so
+// raising workers for a far-away NATS server is not quietly capped by either.
+// All three stay overridable by env var with no key in the file.
+func TestLoadConsumerInFlight(t *testing.T) {
+	tests := []struct {
+		name                         string
+		yaml                         string
+		env                          map[string]string
+		wantWorkers, wantFetch, want int
+	}{
+		{
+			name:        "workerCount alone sizes the rest",
+			yaml:        "nats:\n  consumers:\n    workerCount: 1000\n",
+			wantWorkers: 1000, wantFetch: 4000, want: 5000,
+		},
+		{
+			name:        "explicit values are kept",
+			yaml:        "nats:\n  consumers:\n    workerCount: 1000\n    fetchBatchSize: 500\n    maxAckPending: 600\n",
+			wantWorkers: 1000, wantFetch: 500, want: 600,
+		},
+		{
+			name:        "workerCount by env var alone",
+			yaml:        "logging:\n  level: info\n",
+			env:         map[string]string{"RR_NATS_CONSUMERS_WORKERCOUNT": "200"},
+			wantWorkers: 200, wantFetch: 800, want: 1000,
+		},
+		{
+			name:        "fetchBatchSize by env var alone",
+			yaml:        "logging:\n  level: info\n",
+			env:         map[string]string{"RR_NATS_CONSUMERS_FETCHBATCHSIZE": "50"},
+			wantWorkers: 64, wantFetch: 50, want: 114,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+			cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(cfgPath, []byte(tt.yaml), 0644); err != nil {
+				t.Fatalf("failed to write temp config: %v", err)
+			}
+
+			cfg, err := Load(cfgPath)
+			if err != nil {
+				t.Fatalf("Load() error: %v", err)
+			}
+
+			c := cfg.NATS.Consumers
+			if c.WorkerCount != tt.wantWorkers || c.FetchBatchSize != tt.wantFetch || c.MaxAckPending != tt.want {
+				t.Errorf("workers/fetch/maxAckPending = %d/%d/%d, want %d/%d/%d",
+					c.WorkerCount, c.FetchBatchSize, c.MaxAckPending, tt.wantWorkers, tt.wantFetch, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadMetricsDefaults(t *testing.T) {
 	tests := []struct {
 		name         string

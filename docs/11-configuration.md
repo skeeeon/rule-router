@@ -34,8 +34,9 @@ The config file is **optional**: if it doesn't exist, the app runs entirely from
 ```
 features.router    features.gateway    features.scheduler
 nats.urls          nats.username       nats.password      nats.token
+nats.consumers.workerCount   nats.consumers.fetchBatchSize   nats.consumers.maxAckPending
 logging.level
-metrics.enabled    metrics.address     metrics.path
+metrics.enabled    metrics.address     metrics.path       metrics.pprof
 ```
 
 These always work via `RR_*` regardless of the file. Any other key is overridable only if it also appears in the config file. Examples:
@@ -116,10 +117,8 @@ Used by the **router** and **gateway** features (for NATS-triggered rules).
 nats:
   consumers:
     consumerPrefix: "rule-router"
-    workerCount: 64
-    fetchBatchSize: 256
+    workerCount: 64          # fetchBatchSize and maxAckPending follow it
     fetchTimeout: 5s
-    maxAckPending: 1000
     ackWaitTimeout: 30s
     maxDeliver: 3
     deliverPolicy: "new"
@@ -129,14 +128,30 @@ nats:
 | Field | Type | Default | Bounds / valid values | Description |
 |-------|------|---------|------------------------|-------------|
 | `consumerPrefix` | string | `"rule-router"` | — | Prefix for generated durable consumer names. Give each app a unique prefix when several share a stream. |
-| `workerCount` | int | `64` | `1`–`1000` | Parallel workers per subscription. Each waits on a synchronous publish (or outbound HTTP call), so throughput ≈ workers ÷ round-trip time. |
-| `fetchBatchSize` | int | `256` | `1`–`10000` | Messages fetched per pull. Aim for ~4× `workerCount`; buffered per subscription, and buffered messages' ack-wait clocks are already running. |
+| `workerCount` | int | `64` | `1`–`2500` | Parallel workers per subscription, and the one knob for how many messages a subscription keeps in flight. Each worker waits on a synchronous publish (or outbound HTTP call), so throughput ≈ workers ÷ round-trip time. See [Running far from NATS](#running-far-from-nats). |
+| `fetchBatchSize` | int | 4 × `workerCount` | `1`–`10000` | Messages the consumer buffers per subscription. It asks for more once half the buffer is gone, so 4× workers brings two messages per worker each round trip. Set it only to buffer less: a buffered message's ack-wait clock is already running while it waits behind about four actions per worker, so with actions slower than about `ackWaitTimeout` ÷ 5 (6s at the default), lower this or raise `ackWaitTimeout`. |
 | `fetchTimeout` | duration | `5s` | `> 0` | Pull fetch timeout. |
-| `maxAckPending` | int | `1000` | `1`–`100000` | Max in-flight unacknowledged messages. Effective concurrency ceiling — keep it ≥ `fetchBatchSize` or full batches never arrive. |
+| `maxAckPending` | int | `fetchBatchSize` + `workerCount` | `1`–`100000` | Max unacknowledged messages per consumer: everything buffered plus one in each worker. Set lower and workers sit idle waiting for the server. The limit belongs to the consumer, so instances sharing one (same `consumerPrefix`) share it: set it to instances × (`fetchBatchSize` + `workerCount`). |
 | `ackWaitTimeout` | duration | `30s` | — | Time JetStream waits for an ACK before redelivering. Also the deadline for a message's actions, HTTP retries included — actions still running when it expires are cancelled and the message is NAK'd. |
 | `maxDeliver` | int | `3` | `≥ 1` | Max delivery attempts before JetStream stops redelivering (see [Dead-letter behavior](#dead-letter-behavior)). |
 | `deliverPolicy` | string | `"new"` | `all`, `new`, `last`, `by_start_time`, `by_start_sequence` | Where a new consumer starts reading. |
 | `replayPolicy` | string | `"instant"` | `instant`, `original` | Replay pacing. |
+
+#### Running far from NATS
+
+Each worker waits one round trip to NATS per message, so a subscription handles about `workerCount ÷ RTT` messages per second, up to whatever the router's CPU and the NATS server can sustain. Next to the server, the default of 64 is already fast. On an 8-core test machine it gave about 16k msg/s, and 512 workers reached that machine's ceiling of about 24k. Across a WAN, 64 isn't enough: at 100 ms RTT, 64 workers handle about 600 msg/s.
+
+Raise `workerCount` to the rate you need × the RTT in seconds, with some headroom. For example, 5,000 msg/s at 150 ms needs about 750 workers. Workers are cheap goroutines that spend their time waiting. `fetchBatchSize` and `maxAckPending` follow automatically, so `workerCount` is the only setting to change.
+
+Measured with the benchmark harness through a proxy adding 100 ms RTT:
+
+| `workerCount` | Throughput |
+|---|---|
+| 64 (default) | ~600 msg/s |
+| 1000 | ~9,300 msg/s |
+| 2500 (maximum) | ~18,400 msg/s |
+
+Each message still takes at least a round trip or two end to end, so latency stays around 1–2× RTT whatever you set. For the lowest latency, run the router next to its NATS server.
 
 ### `nats.connection`
 
@@ -196,7 +211,7 @@ http:
 | `idleTimeout` | duration | `120s` | — | Keep-alive idle timeout. |
 | `maxHeaderBytes` | int | `1048576` (1 MB) | — | Max request header size. |
 | `shutdownGracePeriod` | duration | `30s` | — | Time allowed to drain in-flight requests on shutdown. |
-| `inboundWorkerCount` | int | `64` | `1`–`1000` | Workers draining the fire-and-forget webhook queue. |
+| `inboundWorkerCount` | int | `64` | `1`–`2500` | Workers draining the fire-and-forget webhook queue. |
 | `inboundQueueSize` | int | `1000` | `1`–`100000` | Buffered webhook queue depth. A full queue returns `503` on non-synchronous routes. |
 
 Inbound request bodies are hard-capped at **10 MB** (`io.LimitReader`); anything beyond is truncated. This is a fixed safeguard, not configurable.
@@ -369,8 +384,6 @@ nats:
   consumers:
     consumerPrefix: rule-router
     workerCount: 128           # more than default: replicated JetStream acks are slower
-    fetchBatchSize: 512
-    maxAckPending: 2000        # keep >= fetchBatchSize
     maxDeliver: 5
   publish:
     mode: jetstream
