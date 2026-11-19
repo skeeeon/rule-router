@@ -1,0 +1,31 @@
+# The rule bench/run.sh drives. The load generator publishes to bench.in and
+# measures what arrives on bench.out.
+#
+# Contract with bench/main.go: the output payload must carry `seq` and `sent`
+# through unchanged, because that is how latency is measured. Change anything
+# else (conditions, templates, extra rules) to bench a different workload.
+#
+# Sample message:
+#   {"seq": 1, "sent": 1763500000000000000, "device": {"id": "dev-42", "temp": 31.5}, "pad": ""}
+- trigger:
+    nats:
+      subject: bench.in
+  conditions:
+    operator: and
+    items:
+      - field: "{device.temp}"
+        operator: gt
+        value: 30
+      - field: "{device.id}"
+        operator: exists
+  action:
+    nats:
+      subject: bench.out
+      payload: |
+        {
+          "seq": {seq},
+          "sent": {sent},
+          "device_id": "{device.id}",
+          "temp": {device.temp},
+          "routed_at": "{@timestamp()}"
+        }

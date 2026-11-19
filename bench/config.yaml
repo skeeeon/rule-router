@@ -1,0 +1,47 @@
+# Config for bench/run.sh. Every key here can be overridden per run with an
+# RR_* env var, e.g. RR_NATS_CONSUMERS_WORKERCOUNT=8 bench/run.sh
+# (Viper only honors env overrides for keys present in the file, so keep the
+# knobs you want to turn listed here.)
+features:
+  router: true
+  gateway: false
+  scheduler: false
+
+nats:
+  urls:
+    - nats://127.0.0.1:4333   # run.sh sets RR_NATS_URLS; this is just a fallback
+
+  consumers:
+    consumerPrefix: "rr-bench"
+    workerCount: 4
+    fetchBatchSize: 10
+    fetchTimeout: 5s
+    maxAckPending: 1000
+    ackWaitTimeout: 30s
+    maxDeliver: 3
+    deliverPolicy: "new"
+    replayPolicy: "instant"
+
+  connection:
+    maxReconnects: -1
+    reconnectWait: 50ms
+
+  publish:
+    mode: jetstream
+    ackTimeout: 5s
+    maxRetries: 3
+    retryBaseDelay: 50ms
+
+kv:
+  enabled: false
+
+logging:
+  level: info
+  outputPath: stdout
+  encoding: json
+
+metrics:
+  enabled: true
+  address: :2199   # off the default port so a dev router can keep running
+  path: /metrics
+  updateInterval: 15s
