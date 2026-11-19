@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-11-19
+
 ### Improvements
 - **`workerCount` is now the one setting for consumer throughput** — `fetchBatchSize` and `maxAckPending` follow it unless set: 4× and 5× `workerCount`. Before, raising workers on its own did little, because the fixed 256-message fetch buffer brings only about 128 messages per round trip. With NATS 100 ms away, 1000 workers gave 1,200 msg/s; with this change they give 9,300 msg/s, and the new maximum of 2,500 workers gives 18,400 msg/s. The worker limit rises from 1,000 to 2,500 (it also applies to `http.server.inboundWorkerCount`). Defaults at 64 workers are unchanged in effect (fetch buffer 256), and local throughput measured the same. `maxAckPending` defaults to 320 instead of 1000, which is everything the consumer can buffer plus one message per worker, so the higher value never came into play. Values you set explicitly are kept. If your config was copied from an earlier shipped file, it still sets `fetchBatchSize: 256` and `maxAckPending: 1000`; remove those lines to get the new behavior. All three keys can now be set by `RR_NATS_CONSUMERS_*` variables without appearing in the file. See [Running far from NATS](docs/11-configuration.md#running-far-from-nats).
 
@@ -360,6 +362,7 @@
 - Signature verification
 - Rule-cli utility
 
+[0.25.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.25.0
 [0.24.0]: https://github.com/skeeeon/rule-router/releases/tag/v0.24.0
 [0.23.2]: https://github.com/skeeeon/rule-router/releases/tag/v0.23.2
 [0.23.1]: https://github.com/skeeeon/rule-router/releases/tag/v0.23.1
