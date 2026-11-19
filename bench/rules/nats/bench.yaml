@@ -1,5 +1,5 @@
-# The rule bench/run.sh drives. The load generator publishes to bench.in and
-# measures what arrives on bench.out.
+# The rule bench/run.sh drives in NATS mode (the default). The load generator
+# publishes to bench.in and measures what arrives on bench.out.
 #
 # Contract with bench/main.go: the output payload must carry `seq` and `sent`
 # through unchanged, because that is how latency is measured. Change anything

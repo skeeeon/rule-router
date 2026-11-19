@@ -1,23 +1,30 @@
 // Command bench is the load generator for bench/run.sh.
 //
 //	bench [flags] setup   create (or reset) the BENCH_IN / BENCH_OUT streams
-//	bench [flags] run     publish to bench.in, measure what arrives on bench.out
+//	bench [flags] run     send load, measure what arrives on bench.out
 //
-// Latency is "receive time minus the `sent` field the message was published
-// with", so the router's rule must carry `seq` and `sent` through (see
-// bench/rules/bench.yaml). Generator and router share a clock because they
-// run on the same host.
+// -mode nats (default) publishes to bench.in for the router; -mode http POSTs
+// to the gateway. Either way the rule publishes to bench.out, where this
+// program listens.
+//
+// Latency is "receive time minus the `sent` field the message was sent
+// with", so the rule must carry `seq` and `sent` through (see bench/rules/).
+// Generator and router share a clock because they run on the same host.
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -30,11 +37,24 @@ const (
 	outSubject = "bench.out"
 )
 
+type options struct {
+	mode    string
+	httpURL string
+	n       int
+	rate    int
+	pad     int
+	conc    int
+}
+
 func main() {
+	var o options
 	url := flag.String("url", nats.DefaultURL, "NATS server URL")
-	n := flag.Int("n", 100_000, "messages to publish")
-	rate := flag.Int("rate", 0, "messages/sec to publish (0 = as fast as possible)")
-	pad := flag.Int("pad", 0, "extra bytes of padding per message")
+	flag.StringVar(&o.mode, "mode", "nats", "what to load: nats (router) or http (gateway)")
+	flag.StringVar(&o.httpURL, "http-url", "http://127.0.0.1:8099/bench", "gateway endpoint for -mode http")
+	flag.IntVar(&o.n, "n", 100_000, "messages to send")
+	flag.IntVar(&o.rate, "rate", 0, "messages/sec to send (0 = as fast as possible)")
+	flag.IntVar(&o.pad, "pad", 0, "extra bytes of padding per message")
+	flag.IntVar(&o.conc, "c", 64, "concurrent HTTP clients in -mode http")
 	flag.Parse()
 
 	nc, err := nats.Connect(*url)
@@ -52,7 +72,7 @@ func main() {
 	case "setup":
 		err = setup(js)
 	case "run":
-		err = run(nc, js, *n, *rate, *pad)
+		err = run(nc, js, o)
 	default:
 		fail("usage: bench [flags] setup|run")
 	}
@@ -87,14 +107,61 @@ func setup(js jetstream.JetStream) error {
 	return nil
 }
 
+// sender delivers one message body to the system under test.
+type sender func(body []byte) error
+
+func natsSender(js jetstream.JetStream) sender {
+	return func(body []byte) error {
+		for {
+			_, err := js.PublishAsync(inSubject, body)
+			if !errors.Is(err, jetstream.ErrTooManyStalledMsgs) {
+				return err
+			}
+			// The server is acking slower than we publish (it is busy serving
+			// the router too). Back off until the window drains, then retry.
+			select {
+			case <-js.PublishAsyncComplete():
+			case <-time.After(30 * time.Second):
+				return errors.New("publish window never drained")
+			}
+		}
+	}
+}
+
+func httpSender(url string, conc int) sender {
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: &http.Transport{MaxIdleConnsPerHost: conc},
+	}
+	return func(body []byte) error {
+		resp, err := client.Post(url, "application/json", bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		_, _ = io.Copy(io.Discard, resp.Body) // drain so the connection is reused
+		resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			return fmt.Errorf("HTTP %d", resp.StatusCode)
+		}
+		return nil
+	}
+}
+
 type message struct {
 	Seq  int64 `json:"seq"`
 	Sent int64 `json:"sent"`
 }
 
-func run(nc *nats.Conn, js jetstream.JetStream, n, rate, pad int) error {
+func run(nc *nats.Conn, js jetstream.JetStream, o options) error {
+	send, conc := natsSender(js), 1 // PublishAsync never blocks, one sender is enough
+	if o.mode == "http" {
+		send, conc = httpSender(o.httpURL, o.conc), o.conc
+	} else if o.mode != "nats" {
+		return fmt.Errorf("unknown -mode %q", o.mode)
+	}
+
 	// latencies[seq] is filled once per seq; a redelivered duplicate is ignored.
-	latencies := make([]time.Duration, n)
+	latencies := make([]time.Duration, o.n)
 	var received, lastRecv atomic.Int64
 	var badOnce atomic.Bool
 	warm := make(chan struct{}, 1)
@@ -115,7 +182,7 @@ func run(nc *nats.Conn, js jetstream.JetStream, n, rate, pad int) error {
 			}
 			return
 		}
-		if msg.Seq >= int64(n) || latencies[msg.Seq] != 0 {
+		if msg.Seq >= int64(o.n) || latencies[msg.Seq] != 0 {
 			return
 		}
 		latencies[msg.Seq] = time.Duration(now - msg.Sent)
@@ -129,83 +196,94 @@ func run(nc *nats.Conn, js jetstream.JetStream, n, rate, pad int) error {
 	// Never drop on our side: a slow-consumer drop would read as router loss.
 	_ = sub.SetPendingLimits(-1, -1)
 
-	if err := warmup(js, warm); err != nil {
+	if err := warmup(send, warm); err != nil {
 		return err
 	}
 
-	padding := strings.Repeat("x", pad)
-	publish := func(seq int64) error {
-		data := fmt.Sprintf(`{"seq":%d,"sent":%d,"device":{"id":"dev-42","temp":31.5},"pad":%q}`,
+	padding := strings.Repeat("x", o.pad)
+	body := func(seq int64) []byte {
+		return fmt.Appendf(nil, `{"seq":%d,"sent":%d,"device":{"id":"dev-42","temp":31.5},"pad":%q}`,
 			seq, time.Now().UnixNano(), padding)
-		for {
-			_, err := js.PublishAsync(inSubject, []byte(data))
-			if !errors.Is(err, jetstream.ErrTooManyStalledMsgs) {
-				return err
-			}
-			// The server is acking slower than we publish (it is busy serving
-			// the router too). Back off until the window drains, then retry.
-			select {
-			case <-js.PublishAsyncComplete():
-			case <-time.After(30 * time.Second):
-				return errors.New("publish window never drained")
-			}
-		}
 	}
 
-	fmt.Printf("publishing %d messages to %s (rate: %s, pad: %d bytes)\n", n, inSubject, rateLabel(rate), pad)
+	// The pacer hands out sequence numbers; `conc` senders deliver them. A send
+	// that fails is counted as rejected (e.g. a 503 from a full gateway queue)
+	// rather than ending the run, since rejection under load is a result.
+	var rejected atomic.Int64
+	var firstErr atomic.Value
+	seqs := make(chan int64, conc)
+	var wg sync.WaitGroup
+	for range conc {
+		wg.Go(func() {
+			for seq := range seqs {
+				if err := send(body(seq)); err != nil {
+					rejected.Add(1)
+					firstErr.CompareAndSwap(nil, err.Error())
+				}
+			}
+		})
+	}
+
+	fmt.Printf("sending %d messages via %s (rate: %s, pad: %d bytes)\n", o.n, o.mode, rateLabel(o.rate), o.pad)
 	start := time.Now()
-	for i := range n {
-		if rate > 0 {
+	for i := range o.n {
+		if o.rate > 0 {
 			// Pace against the schedule, not the previous send, so a slow
-			// publish is caught up instead of drifting the rate down.
-			if wait := time.Until(start.Add(time.Duration(i) * time.Second / time.Duration(rate))); wait > 0 {
+			// send is caught up instead of drifting the rate down.
+			if wait := time.Until(start.Add(time.Duration(i) * time.Second / time.Duration(o.rate))); wait > 0 {
 				time.Sleep(wait)
 			}
 		}
-		if err := publish(int64(i)); err != nil {
-			return fmt.Errorf("publish %d: %w", i, err)
+		seqs <- int64(i)
+	}
+	close(seqs)
+	wg.Wait()
+	if o.mode == "nats" {
+		select {
+		case <-js.PublishAsyncComplete():
+		case <-time.After(30 * time.Second):
+			return errors.New("timed out waiting for publish acks")
 		}
 	}
-	select {
-	case <-js.PublishAsyncComplete():
-	case <-time.After(30 * time.Second):
-		return errors.New("timed out waiting for publish acks")
-	}
-	pubDur := time.Since(start)
+	sendDur := time.Since(start)
 
-	// Wait until everything arrives or nothing new has arrived for 5s.
+	// Wait until everything accepted arrives or nothing new has for 5s.
+	want := int64(o.n) - rejected.Load()
 	last, lastChange := int64(-1), time.Now()
-	for received.Load() < int64(n) && time.Since(lastChange) < 5*time.Second {
+	for received.Load() < want && time.Since(lastChange) < 5*time.Second {
 		if r := received.Load(); r != last {
 			last, lastChange = r, time.Now()
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	report(latencies, received.Load(), n, pubDur, time.Unix(0, lastRecv.Load()).Sub(start))
+	fmt.Println()
+	fmt.Printf("sent        %d in %s (%.0f msg/s offered)\n", o.n, sendDur.Round(time.Millisecond), float64(o.n)/sendDur.Seconds())
+	if r := rejected.Load(); r > 0 {
+		fmt.Printf("rejected    %d (first error: %v)\n", r, firstErr.Load())
+	}
+	report(latencies, received.Load(), want, time.Unix(0, lastRecv.Load()).Sub(start))
 	return nil
 }
 
 // warmup sends seq=-1 messages until one comes back, so the run does not
-// start before the router's consumers exist.
-func warmup(js jetstream.JetStream, warm <-chan struct{}) error {
+// start before the router's consumers (or the gateway's listener) exist.
+func warmup(send sender, warm <-chan struct{}) error {
 	deadline := time.After(30 * time.Second)
 	for {
-		data := fmt.Sprintf(`{"seq":-1,"sent":%d,"device":{"id":"warmup","temp":99}}`, time.Now().UnixNano())
-		if _, err := js.PublishAsync(inSubject, []byte(data)); err != nil {
-			return fmt.Errorf("warmup publish: %w", err)
-		}
+		// Errors are expected while the target starts up; just try again.
+		_ = send(fmt.Appendf(nil, `{"seq":-1,"sent":%d,"device":{"id":"warmup","temp":99}}`, time.Now().UnixNano()))
 		select {
 		case <-warm:
 			return nil
 		case <-time.After(500 * time.Millisecond):
 		case <-deadline:
-			return errors.New("router never answered a warmup message within 30s")
+			return errors.New("target never answered a warmup message within 30s")
 		}
 	}
 }
 
-func report(latencies []time.Duration, received int64, n int, pubDur, total time.Duration) {
+func report(latencies []time.Duration, received, accepted int64, total time.Duration) {
 	got := make([]time.Duration, 0, received)
 	for _, l := range latencies {
 		if l != 0 {
@@ -214,9 +292,7 @@ func report(latencies []time.Duration, received int64, n int, pubDur, total time
 	}
 	slices.Sort(got)
 
-	fmt.Println()
-	fmt.Printf("sent        %d in %s (%.0f msg/s offered)\n", n, pubDur.Round(time.Millisecond), float64(n)/pubDur.Seconds())
-	fmt.Printf("received    %d (missing %d)\n", received, int64(n)-received)
+	fmt.Printf("received    %d of %d accepted (missing %d)\n", received, accepted, accepted-received)
 	if len(got) == 0 {
 		fmt.Println("no messages came back; check the router log")
 		return

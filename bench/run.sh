@@ -4,10 +4,11 @@
 #   bench/run.sh                         100k messages, as fast as possible
 #   bench/run.sh -n 200000 -rate 20000   fixed offered rate (use this for latency)
 #   bench/run.sh -pad 2048               bigger messages
+#   MODE=http bench/run.sh -c 64         gateway inbound: POST /bench (-c = HTTP clients)
 #
 # Turn knobs with env vars:
 #   RR_NATS_CONSUMERS_WORKERCOUNT=8 bench/run.sh    any key in bench/config.yaml
-#   RULES=path/to/rules bench/run.sh                 a different rule set
+#   RULES=path/to/rules bench/run.sh                 a different rule set (default bench/rules/$MODE)
 #   NATS_URL=nats://host:4222 bench/run.sh           an existing server (must have JetStream)
 #
 # Without NATS_URL it starts a throwaway server on port 4333: `nats-server`
@@ -15,7 +16,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-RULES=${RULES:-bench/rules}
+MODE=${MODE:-nats}
+RULES=${RULES:-bench/rules/$MODE}
+FEATURES=(RR_FEATURES_ROUTER=true RR_FEATURES_GATEWAY=false)
+[ "$MODE" = http ] && FEATURES=(RR_FEATURES_ROUTER=false RR_FEATURES_GATEWAY=true)
 WORK=$(mktemp -d)
 NATS_PID=""
 ROUTER_PID=""
@@ -52,11 +56,11 @@ for i in $(seq 20); do
   sleep 0.5
 done
 
-RR_NATS_URLS="$NATS_URL" "$WORK/rule-router" --config bench/config.yaml --rules "$RULES" \
+env "${FEATURES[@]}" RR_NATS_URLS="$NATS_URL" "$WORK/rule-router" --config bench/config.yaml --rules "$RULES" \
   >"$WORK/router.log" 2>&1 &
 ROUTER_PID=$!
 
-if ! "$WORK/bench" -url "$NATS_URL" "$@" run; then
+if ! "$WORK/bench" -url "$NATS_URL" -mode "$MODE" "$@" run; then
   echo "--- last 20 lines of router log ---"
   tail -n 20 "$WORK/router.log"
   exit 1

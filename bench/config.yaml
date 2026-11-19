@@ -32,6 +32,13 @@ nats:
     maxRetries: 3
     retryBaseDelay: 50ms
 
+# Used in HTTP mode (MODE=http turns on features.gateway).
+http:
+  server:
+    address: ":8099"   # off the default port so a dev gateway can keep running
+    inboundWorkerCount: 64
+    inboundQueueSize: 1000
+
 kv:
   enabled: false
 
