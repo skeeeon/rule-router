@@ -137,8 +137,19 @@ func run(nc *nats.Conn, js jetstream.JetStream, n, rate, pad int) error {
 	publish := func(seq int64) error {
 		data := fmt.Sprintf(`{"seq":%d,"sent":%d,"device":{"id":"dev-42","temp":31.5},"pad":%q}`,
 			seq, time.Now().UnixNano(), padding)
-		_, err := js.PublishAsync(inSubject, []byte(data))
-		return err
+		for {
+			_, err := js.PublishAsync(inSubject, []byte(data))
+			if !errors.Is(err, jetstream.ErrTooManyStalledMsgs) {
+				return err
+			}
+			// The server is acking slower than we publish (it is busy serving
+			// the router too). Back off until the window drains, then retry.
+			select {
+			case <-js.PublishAsyncComplete():
+			case <-time.After(30 * time.Second):
+				return errors.New("publish window never drained")
+			}
+		}
 	}
 
 	fmt.Printf("publishing %d messages to %s (rate: %s, pad: %d bytes)\n", n, inSubject, rateLabel(rate), pad)
