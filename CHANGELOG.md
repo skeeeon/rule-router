@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixes
+- **Redelivery and publish retries stored duplicate messages** — a JetStream-triggered rule's NATS action was published again whenever its trigger message was redelivered (a NAK from another action failing, or a crash before the ack), and again when a publish retry followed a lost ack. Each repeat was stored in the output stream. The router now sets `Nats-Msg-Id` on these publishes: the source message's stream and sequence, plus a hash of the rule's definition and, for `forEach`, the element index. The output stream drops a repeat within its duplicate window (2 minutes by default). The key comes from the rule's content, not its position, so adding, reordering or reloading rules, or restarting the router, can never give one rule another's ID and drop its real output. Editing a rule changes its key, which at worst lets one duplicate through. A rule that sets its own `Nats-Msg-Id` header keeps it. Core-mode, HTTP and scheduled triggers are unchanged; HTTP actions still repeat on redelivery.
+
 ## [0.24.0] - 2026-11-19
 
 ### Improvements

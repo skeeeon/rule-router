@@ -1143,6 +1143,7 @@ func (p *Processor) processNATSAction(action *NATSAction, context *EvaluationCon
 		Merge:       action.Merge,
 		Request:     action.Request,
 		Timeout:     action.Timeout,
+		DedupeKey:   action.DedupeKey,
 	}
 
 	subject, err := p.templater.Execute(action.Subject, context)
@@ -1196,10 +1197,16 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 		Merge: action.Merge, Payload: action.Payload,
 		Headers: action.Headers, MetricsType: "nats",
 	}
-	return p.processActionForEach(cfg, context, func(elemCtx *EvaluationContext, pl resolvedPayload, headers map[string]string, _ int) (*Action, error) {
+	return p.processActionForEach(cfg, context, func(elemCtx *EvaluationContext, pl resolvedPayload, headers map[string]string, i int) (*Action, error) {
 		subject, err := p.templater.Execute(action.Subject, elemCtx)
 		if err != nil {
 			return nil, &forEachElementError{ErrorType: "template_subject_failed", Err: err}
+		}
+		// i is the element's position in the array, not among the elements
+		// the filter kept, so it stays put when the filter skips others.
+		dedupeKey := ""
+		if action.DedupeKey != "" {
+			dedupeKey = fmt.Sprintf("%s-%d", action.DedupeKey, i)
 		}
 		return &Action{NATS: &NATSAction{
 			Subject: subject, Mode: action.Mode,
@@ -1207,6 +1214,7 @@ func (p *Processor) processNATSActionWithForEach(action *NATSAction, context *Ev
 			Merge:       action.Merge, Payload: pl.Text,
 			RawPayload: pl.Raw, Headers: headers,
 			Request: action.Request, Timeout: action.Timeout,
+			DedupeKey: dedupeKey,
 		}}, nil
 	})
 }

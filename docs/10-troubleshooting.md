@@ -115,7 +115,7 @@ In a payload template a missing KV value renders as an empty string. In a condit
 When an outbound HTTP action runs out of retries:
 
 - The failure is logged with the final status code or transport error.
-- For gateway outbound rules (NATS-triggered), the message is NACKed and JetStream redelivers per the stream's policy. The action will be retried as a new delivery, restarting the in-action retry budget. Other actions on the same message still run, and the ones that succeeded fire again on redelivery.
+- For gateway outbound rules (NATS-triggered), the message is NACKed and JetStream redelivers per the stream's policy. The action will be retried as a new delivery, restarting the in-action retry budget. Other actions on the same message still run, and the ones that succeeded fire again on redelivery. A repeated JetStream publish is dropped by the output stream as a duplicate (see [Duplicate publishes](./11-configuration.md#duplicate-publishes)); a repeated HTTP call is not.
 - A 4xx other than 408/429 is never retried. If every failed action on the message failed that way, the message is terminated instead of redelivered (`"redeliver": false` on the `failed to process message` log line).
 - For scheduler rules, exhaustion is terminal for that firing — the next cron tick is a fresh attempt.
 

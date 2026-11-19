@@ -1,6 +1,9 @@
 package rule
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -188,6 +191,9 @@ func (l *Loader) ParseAndValidateYAML(data []byte, source string) ([]Rule, error
 		if err := l.validateRandomCalls(&rules[i], source, i); err != nil {
 			return nil, err
 		}
+		if rules[i].Action.NATS != nil {
+			rules[i].Action.NATS.DedupeKey = dedupeKey(&rules[i])
+		}
 	}
 
 	l.logger.Debug("all rules validated successfully",
@@ -195,6 +201,21 @@ func (l *Loader) ParseAndValidateYAML(data []byte, source string) ([]Rule, error
 		"ruleCount", len(rules))
 
 	return rules, nil
+}
+
+// dedupeKey names a rule by its definition, so a publish it makes can be
+// deduplicated across retries, redeliveries, restarts and reloads. It is not
+// the rule's position or load order: those shift when rules are added or
+// reordered, and a shifted key would make the stream drop another rule's real
+// output as a duplicate. Editing a rule changes its key, which at worst lets
+// one duplicate through. Empty (no dedupe) if the rule cannot be encoded.
+func dedupeKey(r *Rule) string {
+	b, err := json.Marshal(r)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:8])
 }
 
 // ruleLabel identifies a rule in an error: its position, plus its name when it

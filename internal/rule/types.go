@@ -270,6 +270,16 @@ type NATSAction struct {
 	Request bool   `json:"request,omitempty" yaml:"request,omitempty"`
 	Timeout string `json:"timeout,omitempty" yaml:"timeout,omitempty"` // Duration string: "3s", "500ms"; defaults to 5s
 
+	// DedupeKey names this action the same way on every delivery of a message:
+	// a hash of the rule's definition (set by the loader), plus "-<i>" for
+	// forEach element i (added by the processor). Never authored.
+	DedupeKey string `json:"-" yaml:"-"`
+	// MsgID, when set, is published as the Nats-Msg-Id header, so the output
+	// stream drops a repeat of this publish within its duplicate window. Only
+	// the JetStream subscription path sets it, from the source message's stream
+	// sequence plus DedupeKey: anywhere else there is no sequence to tie it to.
+	MsgID string `json:"-" yaml:"-"`
+
 	// Array iteration fields for forEach functionality
 	// ForEach must use template syntax: "{arrayField}" or "{nested.array}" or "{@items}"
 	ForEach string      `json:"forEach,omitempty" yaml:"forEach,omitempty"`

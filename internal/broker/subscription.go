@@ -511,6 +511,18 @@ func (sm *SubscriptionManager) processMessage(ctx context.Context, msg jetstream
 	// actions that succeeded — the usual at-least-once trade. If every failure
 	// is permanent, redelivery would only repeat them, so the message is
 	// terminated instead.
+	// Give each NATS action a Nats-Msg-Id tied to this message's place in its
+	// stream. A publish retried after a lost ack, or repeated when this message
+	// is redelivered (NAK, crash before the ack), then carries the same ID, and
+	// the output stream drops the repeat instead of storing it twice.
+	if meta, err := msg.Metadata(); err == nil {
+		for _, action := range outcome.Immediate {
+			if action.NATS != nil && action.NATS.DedupeKey != "" {
+				action.NATS.MsgID = fmt.Sprintf("%s:%d:%s", meta.Stream, meta.Sequence.Stream, action.NATS.DedupeKey)
+			}
+		}
+	}
+
 	var errs []error
 	retryable := false
 	for _, action := range outcome.Immediate {

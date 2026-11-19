@@ -967,6 +967,13 @@ func newActionMsg(action *rule.NATSAction) *nats.Msg {
 			msg.Header.Set(key, value)
 		}
 	}
+	// A Nats-Msg-Id the rule sets itself wins over the generated one.
+	if action.MsgID != "" && msg.Header.Get(jetstream.MsgIDHeader) == "" {
+		if msg.Header == nil {
+			msg.Header = make(nats.Header)
+		}
+		msg.Header.Set(jetstream.MsgIDHeader, action.MsgID)
+	}
 	return msg
 }
 
