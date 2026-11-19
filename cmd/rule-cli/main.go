@@ -5,6 +5,9 @@ package main
 
 import (
 	"os"
+	// Embed the timezone database so validating a schedule's `timezone` works
+	// where the host has none (Windows, minimal images), as in rule-router.
+	_ "time/tzdata"
 
 	"github.com/spf13/cobra"
 	"rule-router/cmd/rule-cli/cmd"

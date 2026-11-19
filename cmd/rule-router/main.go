@@ -9,6 +9,9 @@ import (
 	"fmt"
 	"os"
 	"time"
+	// Embed the timezone database (~450KB) so a schedule's `timezone` resolves
+	// where the host has none: the Alpine image, scratch, Windows.
+	_ "time/tzdata"
 
 	flag "github.com/spf13/pflag"
 	"rule-router/config"

@@ -140,9 +140,20 @@ docker compose up -d
 
 With either NATS, the `nats-auth-manager` service starts only once its `tokens` KV bucket exists (`nats kv add tokens`) and every variable its providers reference is set: edit the providers in `config/auth-manager.yaml` to your own, and put their variables in `.env`. The compose file passes through the ones the shipped example uses (`STRIPE_CLIENT_ID`, `STRIPE_CLIENT_SECRET`, `PB_EMAIL`, `PB_PASSWORD`, `SERVICE_USER`, `SERVICE_PASS`). Until then it exits with an error naming what is missing.
 
+#### Published images
+
+Each release publishes multi-architecture images (`linux/amd64` and `linux/arm64`) to GitHub Container Registry, tagged with the version (`0.25.0`), the minor version (`0.25`) and `latest`:
+
+```bash
+docker pull ghcr.io/skeeeon/rule-router:latest
+docker pull ghcr.io/skeeeon/nats-auth-manager:latest
+```
+
+Docker picks the matching architecture automatically, so the same tag works on x86 servers and on ARM64 edge hardware, such as Raspberry Pi 4/5 or cellular routers that run containers. The `rule-router` image is about 24 MB, or about 10 MB to download. The images run as `nobody` and include CA certificates. The binaries embed the timezone database, so a schedule's `timezone` works without any OS packages.
+
 #### Building Docker Images
 
-The repository uses a single parameterized `Dockerfile`. The `rule-router` image includes all three features (router, gateway, scheduler) — select which to enable at runtime via config or environment variables:
+The repository uses a single parameterized `Dockerfile`. To build both architectures locally, use `docker buildx build --platform linux/amd64,linux/arm64 --build-arg APP_NAME=rule-router .`. It cross-compiles, so it needs no emulation. The `rule-router` image includes all three features (router, gateway, scheduler) — select which to enable at runtime via config or environment variables:
 
 ```bash
 # Build the rule-router image (includes all features)

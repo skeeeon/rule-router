@@ -66,6 +66,27 @@ jobs:
         if: matrix.name == 'stable'
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
+  # Builds what release.yml publishes, without pushing, so a Dockerfile that
+  # stopped building for either architecture fails here rather than mid-release.
+  docker:
+    name: Image (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [rule-router, nats-auth-manager]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          build-args: APP_NAME=${{ matrix.app }}
+          push: false
+
   web:
     name: Web UI
     runs-on: ubuntu-latest
