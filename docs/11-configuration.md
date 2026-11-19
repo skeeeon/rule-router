@@ -153,6 +153,12 @@ Measured with the benchmark harness through a proxy adding 100 ms RTT:
 
 Each message still takes at least a round trip or two end to end, so latency stays around 1–2× RTT whatever you set. For the lowest latency, run the router next to its NATS server.
 
+#### Shared limit across instances
+
+On shutdown and on rule reload, each subscription NAKs the messages still in its buffer so another instance can take them right away. They don't hold `maxAckPending` slots until `ackWaitTimeout` expires. A crash can't do this, so its buffered messages wait out the ack window.
+
+Watch the limit with `nats consumer info <stream> <consumer>`. If `Ack Pending` stays at or near `Max Ack Pending` while `Unprocessed` grows, the instances can't keep up, or `maxAckPending` wasn't raised when instances were added.
+
 ### `nats.connection`
 
 | Field | Type | Default | Description |
@@ -435,7 +441,7 @@ forEach:
 There is no dedicated dead-letter *subject*. Delivery semantics are governed entirely by JetStream and `nats.consumers.maxDeliver`:
 
 - A message that **panics** during processing is **terminated** (`msg.Term()`) immediately so it cannot loop.
-- A message that **fails** processing is **NAK'd** and redelivered until `maxDeliver` is reached, after which JetStream stops redelivering it.
+- A message that **fails** processing is **NAK'd with a 5-second delay** and redelivered until `maxDeliver` is reached, after which JetStream stops redelivering it. The delay gives a briefly unavailable downstream time to recover, so a retry isn't wasted against it milliseconds after the first failure. A failure caused by shutdown cancelling the actions is NAK'd with no delay.
 - A message whose failed actions **all failed permanently** (an outbound 4xx other than 408/429) is **terminated** rather than NAK'd — redelivery would fail the same way.
 - Payloads that are not JSON but are valid UTF-8 are evaluated as a raw string (`{@value}`) rather than rejected. A payload that is neither fails evaluation and is NAK'd like any other failure, so it is redelivered until `maxDeliver`.
 
@@ -443,7 +449,7 @@ There is no dedicated dead-letter *subject*. Delivery semantics are governed ent
 
 Redelivery is at-least-once, so the same NATS action can be published more than once: after a NAK, after a crash before the ack, or when a publish retry follows a lost ack. For rules with a JetStream trigger, the router sets a `Nats-Msg-Id` header on each NATS action, built from the source message's stream and sequence plus a hash of the rule's definition (and the element index for `forEach`). The output stream then drops a repeat as a duplicate, so it stores the message once.
 
-- Deduplication only works within the output stream's duplicate window (`duplicate_window`, 2 minutes by default). A redelivery later than that is stored again. Keep the window longer than `ackWaitTimeout × maxDeliver`.
+- Deduplication only works within the output stream's duplicate window (`duplicate_window`, 2 minutes by default). A redelivery later than that is stored again. Keep the window longer than `(ackWaitTimeout + 5s) × maxDeliver`, where the 5s is the redelivery delay after a failure.
 - Editing a rule changes its hash, so a message redelivered across the edit can be stored twice. That's a duplicate, never a lost message.
 - A rule that sets its own `Nats-Msg-Id` header keeps it. NATS header names are case-sensitive, so it must be spelled exactly like that.
 - Core-mode, HTTP-triggered and scheduled rules get no generated ID, because there's no source message sequence to tie it to. HTTP actions are never deduplicated.

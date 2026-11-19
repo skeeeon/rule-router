@@ -35,6 +35,17 @@ const (
 	// call from holding a goroutine forever.
 	deferredActionTimeout = 30 * time.Second
 
+	// retryNakDelay is how long JetStream holds a NAK'd message before
+	// redelivering it. A plain NAK redelivers at once, so a message whose
+	// downstream is briefly down would burn every maxDeliver attempt within
+	// milliseconds — and each retry adds load to the struggling dependency.
+	retryNakDelay = 5 * time.Second
+
+	// drainSweepWait bounds each Next() while returning buffered messages on
+	// shutdown. Drain closes the iterator only after the server confirms the
+	// unsubscribe, so this is a ceiling for a slow round trip, not a sleep.
+	drainSweepWait = 2 * time.Second
+
 	// deferredFlushTimeout bounds the shutdown flush of pending trailing-throttle
 	// batches. Anything still unstarted when it expires is dropped and logged.
 	deferredFlushTimeout = 10 * time.Second
@@ -210,7 +221,7 @@ func (sm *SubscriptionManager) RemoveSubscription(subject string) {
 	sm.mu.Unlock()
 
 	if sub.iterator != nil {
-		sub.iterator.Stop()
+		sub.iterator.Drain()
 	}
 	if sub.cancel != nil {
 		sub.cancel()
@@ -223,10 +234,44 @@ func (sm *SubscriptionManager) RemoveSubscription(subject string) {
 	}()
 	select {
 	case <-done:
+		sm.returnBuffered(sub)
 		sm.logger.Debug("subscription removed", "subject", subject)
 	case <-time.After(removeSubscriptionTimeout):
 		sm.logger.Warn("subscription workers did not exit within timeout, abandoning",
 			"subject", subject, "timeout", removeSubscriptionTimeout)
+	}
+}
+
+// returnBuffered NAKs every message still in a drained iterator's buffer.
+//
+// The iterator pre-fetches up to fetchBatchSize messages. They count against
+// the consumer's maxAckPending from the moment the server sends them, so
+// discarding them (iterator.Stop) would hold that many slots — shared by
+// every instance on the durable — until ackWaitTimeout expires: a rolling
+// deploy would stall the consumer for its whole ack window. A plain NAK hands
+// them straight back for another instance (or our replacement) to take.
+//
+// Call only after the iterator is drained and its workers have exited.
+func (sm *SubscriptionManager) returnBuffered(sub *Subscription) {
+	if sub.iterator == nil {
+		return
+	}
+	returned := 0
+	for {
+		msg, err := sub.iterator.Next(jetstream.NextMaxWait(drainSweepWait))
+		if err != nil {
+			break
+		}
+		if nakErr := msg.Nak(); nakErr != nil {
+			sm.logger.Warn("failed to return buffered message on shutdown",
+				"subject", sub.Subject, "error", nakErr)
+			continue
+		}
+		returned++
+	}
+	if returned > 0 {
+		sm.logger.Info("returned buffered messages to the consumer",
+			"subject", sub.Subject, "count", returned)
 	}
 }
 
@@ -366,6 +411,16 @@ func (sm *SubscriptionManager) messageWorker(ctx context.Context, sub *Subscript
 			continue
 		}
 
+		// Shutting down: a message taken from the drained buffer would only run
+		// its actions against a cancelled context and fail. Hand it straight back.
+		if ctx.Err() != nil {
+			if nakErr := msg.Nak(); nakErr != nil {
+				sm.logger.Warn("failed to return message on shutdown",
+					"subject", sub.Subject, "error", nakErr)
+			}
+			return
+		}
+
 		// Process message with full error handling and panic recovery
 		sm.processMessageWithRecovery(ctx, msg, sub.Subject, workerID)
 	}
@@ -410,7 +465,15 @@ func (sm *SubscriptionManager) processMessageWithRecovery(ctx context.Context, m
 			// NAK so the message is redelivered; JetStream's MaxDeliver bounds the
 			// attempts and dead-letters one that never succeeds. (Unparseable
 			// payloads are handled leniently in the rule engine, not rejected here.)
-			if nakErr := msg.Nak(); nakErr != nil {
+			// The delay gives a failing downstream time to recover instead of
+			// spending every attempt at once. A failure caused by shutdown
+			// cancelling the actions is not the message's fault, so it goes back
+			// immediately for another instance to pick up.
+			nak := func() error { return msg.NakWithDelay(retryNakDelay) }
+			if ctx.Err() != nil {
+				nak = msg.Nak
+			}
+			if nakErr := nak(); nakErr != nil {
 				sm.logger.Error("failed to NAK message",
 					"subject", subject,
 					"error", nakErr)
@@ -602,23 +665,25 @@ func (sm *SubscriptionManager) executeAction(ctx context.Context, action *rule.A
 }
 
 // Stop gracefully shuts down all subscriptions: it drains the iterators, waits
-// for every worker to exit, then flushes trailing-throttle batches. Failures at
-// each step are logged and shutdown continues, so there is no error to report.
+// for every worker to exit, NAKs what was still buffered, then flushes
+// trailing-throttle batches. Failures at each step are logged and shutdown
+// continues, so there is no error to report.
 func (sm *SubscriptionManager) Stop() {
 	sm.mu.Lock()
 	sm.logger.Info("stopping all subscriptions", "count", len(sm.subscriptions))
 
-	// Step 1: Stop all iterators gracefully (drains pending messages)
+	// Step 1: Drain all iterators. Unlike Stop, Drain keeps the pre-fetched
+	// buffer readable so step 4 can hand it back rather than strand it.
+	subs := make([]*Subscription, 0, len(sm.subscriptions))
 	for _, sub := range sm.subscriptions {
+		subs = append(subs, sub)
 		if sub.iterator != nil {
-			sm.logger.Debug("stopping Messages() iterator", "subject", sub.Subject)
-			sub.iterator.Stop()
-			sm.logger.Debug("Messages() iterator stopped", "subject", sub.Subject)
+			sub.iterator.Drain()
 		}
 	}
 
 	// Step 2: Cancel contexts to unblock workers immediately
-	for _, sub := range sm.subscriptions {
+	for _, sub := range subs {
 		if sub.cancel != nil {
 			sub.cancel()
 		}
@@ -629,7 +694,13 @@ func (sm *SubscriptionManager) Stop() {
 	sm.logger.Debug("waiting for all workers to finish")
 	sm.wg.Wait()
 
-	// Step 4: Flush trailing-throttle batches. Workers are done, so nothing new
+	// Step 4: Return still-buffered messages so they don't hold maxAckPending
+	// slots until their ack wait expires.
+	for _, sub := range subs {
+		sm.returnBuffered(sub)
+	}
+
+	// Step 5: Flush trailing-throttle batches. Workers are done, so nothing new
 	// arrives; this runs before the NATS connection closes so the settled value
 	// still gets out.
 	flushCtx, cancel := context.WithTimeout(context.Background(), deferredFlushTimeout)
