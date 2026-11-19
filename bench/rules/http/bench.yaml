@@ -1,0 +1,29 @@
+# The rule bench/run.sh drives in HTTP mode (MODE=http). The load generator
+# POSTs to the gateway at /bench and measures what arrives on bench.out, so
+# this times the fire-and-forget inbound path: HTTP accept -> queue -> worker
+# -> rule -> NATS publish.
+#
+# Same contract as bench/rules/nats/bench.yaml: carry `seq` and `sent` through.
+- trigger:
+    http:
+      path: "/bench"
+      method: "POST"
+  conditions:
+    operator: and
+    items:
+      - field: "{device.temp}"
+        operator: gt
+        value: 30
+      - field: "{device.id}"
+        operator: exists
+  action:
+    nats:
+      subject: bench.out
+      payload: |
+        {
+          "seq": {seq},
+          "sent": {sent},
+          "device_id": "{device.id}",
+          "temp": {device.temp},
+          "routed_at": "{@timestamp()}"
+        }

@@ -24,7 +24,7 @@
           "alert": "High {@subject.1} reading detected",
           "sensor_type": "{@subject.1}",
           "reading": {value},
-          "location": {location},
+          "location": "{location}",
           "full_subject": "{@subject}",
           "alert_id": "{@uuid7()}",
           "timestamp": "{@timestamp()}"
@@ -47,16 +47,18 @@
   action:
     nats:
       subject: facilities.alerts.{@subject.1}  # Route by system: facilities.alerts.hvac, facilities.alerts.security
+      # system: floor1, hvac, security, ...; subsystem: room1, status, door1, ...;
+      # component: temperature, locked, ...
       payload: |
         {
           "building_alert": "Alert from building system",
-          "system": "{@subject.1}",     # floor1, hvac, security, etc.
-          "subsystem": "{@subject.2}",  # room1, status, door1, etc.  
-          "component": "{@subject.3}",  # temperature, locked, etc.
+          "system": "{@subject.1}",
+          "subsystem": "{@subject.2}",
+          "component": "{@subject.3}",
           "alert_details": {
-            "status": {status},
-            "message": {message},
-            "priority": {priority}
+            "status": "{status}",
+            "message": "{message}",
+            "priority": "{priority}"
           },
           "location": {
             "building": "main",
@@ -92,8 +94,8 @@
           "device_id": "{@subject.1}",
           "data_type": "{@subject.2}",
           "device_info": {
-            "status": {device_status},
-            "last_seen": {last_seen},
+            "status": "{device_status}",
+            "last_seen": "{last_seen}",
             "battery_level": {battery_level}
           },
           "routing": {
@@ -130,9 +132,9 @@
           "team": "{@subject.2}", 
           "process": "{@subject.3}",
           "details": {
-            "priority": {priority},
-            "description": {description},
-            "requester": {requester}
+            "priority": "{priority}",
+            "description": "{description}",
+            "requester": "{requester}"
           },
           "routing": {
             "full_path": "{@subject}",
@@ -207,7 +209,7 @@
           "monitoring_type": "{@subject.1}",
           "service": "{@subject.2}",
           "metrics": {
-            "status": {status},
+            "status": "{status}",
             "response_time": {response_time},
             "error_rate": {error_rate}
           },
@@ -240,13 +242,13 @@
         {
           "critical_event": "Critical event routing",
           "event_type": "{@subject.1}",
-          "region": {region},
+          "region": "{region}",
           "routing_strategy": "subject_and_content_based",
           "original_subject": "{@subject}",
           "routed_to": "critical.{@subject.1}.{region}",
           "event_details": {
-            "severity": {severity},
-            "description": {description},
+            "severity": "{severity}",
+            "description": "{description}",
             "affected_systems": {affected_systems}
           },
           "tracking": {

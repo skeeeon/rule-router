@@ -169,8 +169,8 @@
       subject: "access.{device_id}.identified"
       payload: |
         {
-          "deviceId": {device_id},
-          "userId": {user_id},
+          "deviceId": "{device_id}",
+          "userId": "{user_id}",
           "userName": "{user_name}",
           "confidence": "{confidence}",
           "cardValue": "{card_value}",

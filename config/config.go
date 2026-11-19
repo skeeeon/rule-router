@@ -74,11 +74,16 @@ const (
 
 // Default numeric configuration values
 const (
-	// DefaultWorkerCount is the default number of consumer workers
-	DefaultWorkerCount = 2
+	// DefaultWorkerCount is the default number of consumer workers per
+	// subscription. Each worker waits on a synchronous publish (or an outbound
+	// HTTP call), so throughput is roughly workers / round-trip time; bench/run.sh
+	// showed 64-128 as the knee on a single-node server.
+	DefaultWorkerCount = 64
 
-	// DefaultFetchBatchSize is the default number of messages to fetch per batch
-	DefaultFetchBatchSize = 1
+	// DefaultFetchBatchSize is the default number of messages to fetch per
+	// batch. ~4x workers keeps them fed; it is per subscription, so it is kept
+	// modest because every subscribed subject buffers this many.
+	DefaultFetchBatchSize = 256
 
 	// DefaultMaxDeliver is the default maximum delivery attempts per message
 	DefaultMaxDeliver = 3
@@ -90,10 +95,16 @@ const (
 	DefaultPublishMaxRetries = 3
 
 	// DefaultMaxIdleConns is the default maximum idle HTTP connections
-	DefaultMaxIdleConns = 100
+	DefaultMaxIdleConns = 256
 
-	// DefaultMaxIdleConnsPerHost is the default maximum idle connections per host
-	DefaultMaxIdleConnsPerHost = 10
+	// DefaultMaxIdleConnsPerHost is the default maximum idle connections per
+	// host. Matches DefaultWorkerCount: with fewer, workers calling one host
+	// open a fresh TCP/TLS connection per request.
+	DefaultMaxIdleConnsPerHost = 64
+
+	// DefaultInboundWorkerCount is the default number of gateway workers
+	// draining the fire-and-forget webhook queue.
+	DefaultInboundWorkerCount = 64
 
 	// DefaultForEachMaxIterations is the default maximum forEach iterations
 	DefaultForEachMaxIterations = 100
@@ -281,6 +292,10 @@ type MetricsConfig struct {
 	Address        string `json:"address" yaml:"address" mapstructure:"address"`
 	Path           string `json:"path" yaml:"path" mapstructure:"path"`
 	UpdateInterval string `json:"updateInterval" yaml:"updateInterval" mapstructure:"updateInterval"`
+	// Pprof mounts net/http/pprof under /debug/pprof/ on the metrics server.
+	// Off by default: profiles expose internals and CPU/trace profiles are
+	// costly to serve, so enable it only on a port you do not expose.
+	Pprof bool `json:"pprof" yaml:"pprof" mapstructure:"pprof"`
 }
 
 // KVBucketConfig defines a KV bucket with an optional key filter pattern.
@@ -353,7 +368,7 @@ func Load(path string) (*Config, error) {
 		"features.router", "features.gateway", "features.scheduler",
 		"nats.urls", "nats.username", "nats.password", "nats.token",
 		"logging.level",
-		"metrics.enabled", "metrics.address", "metrics.path",
+		"metrics.enabled", "metrics.address", "metrics.path", "metrics.pprof",
 	} {
 		_ = v.BindEnv(key)
 	}
@@ -522,7 +537,7 @@ func setDefaults(cfg *Config) {
 		cfg.HTTP.Client.IdleConnTimeout = DefaultHTTPIdleConnTimeout
 	}
 	if cfg.HTTP.Server.InboundWorkerCount == 0 {
-		cfg.HTTP.Server.InboundWorkerCount = 10
+		cfg.HTTP.Server.InboundWorkerCount = DefaultInboundWorkerCount
 	}
 	if cfg.HTTP.Server.InboundQueueSize == 0 {
 		cfg.HTTP.Server.InboundQueueSize = DefaultInboundQueueSize

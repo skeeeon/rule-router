@@ -35,7 +35,7 @@ import (
 // Server defaults and limits
 const (
 	// DefaultInboundWorkerCount is the default number of workers processing inbound webhooks.
-	DefaultInboundWorkerCount = 10
+	DefaultInboundWorkerCount = 64
 	// DefaultInboundQueueSize is the default size of the inbound work queue.
 	DefaultInboundQueueSize = 100
 	// MaxInboundBodySize is the maximum size of an inbound HTTP request body (10MB).

@@ -32,11 +32,11 @@ func TestSetDefaults(t *testing.T) {
 				if cfg.NATS.Consumers.ConsumerPrefix != "rule-router" {
 					t.Errorf("ConsumerPrefix = %s, want rule-router", cfg.NATS.Consumers.ConsumerPrefix)
 				}
-				if cfg.NATS.Consumers.WorkerCount != 2 {
-					t.Errorf("WorkerCount = %d, want 2", cfg.NATS.Consumers.WorkerCount)
+				if cfg.NATS.Consumers.WorkerCount != 64 {
+					t.Errorf("WorkerCount = %d, want 64", cfg.NATS.Consumers.WorkerCount)
 				}
-				if cfg.NATS.Consumers.FetchBatchSize != 1 {
-					t.Errorf("FetchBatchSize = %d, want 1", cfg.NATS.Consumers.FetchBatchSize)
+				if cfg.NATS.Consumers.FetchBatchSize != 256 {
+					t.Errorf("FetchBatchSize = %d, want 256", cfg.NATS.Consumers.FetchBatchSize)
 				}
 				if cfg.NATS.Consumers.FetchTimeout != 5*time.Second {
 					t.Errorf("FetchTimeout = %v, want 5s", cfg.NATS.Consumers.FetchTimeout)
@@ -72,8 +72,8 @@ func TestSetDefaults(t *testing.T) {
 				if cfg.HTTP.Server.ReadTimeout != 30*time.Second {
 					t.Errorf("HTTP.Server.ReadTimeout = %v, want 30s", cfg.HTTP.Server.ReadTimeout)
 				}
-				if cfg.HTTP.Server.InboundWorkerCount != 10 {
-					t.Errorf("HTTP.Server.InboundWorkerCount = %d, want 10", cfg.HTTP.Server.InboundWorkerCount)
+				if cfg.HTTP.Server.InboundWorkerCount != 64 {
+					t.Errorf("HTTP.Server.InboundWorkerCount = %d, want 64", cfg.HTTP.Server.InboundWorkerCount)
 				}
 				if cfg.HTTP.Server.InboundQueueSize != 1000 {
 					t.Errorf("HTTP.Server.InboundQueueSize = %d, want 1000", cfg.HTTP.Server.InboundQueueSize)
@@ -83,8 +83,8 @@ func TestSetDefaults(t *testing.T) {
 				if cfg.HTTP.Client.Timeout != 30*time.Second {
 					t.Errorf("HTTP.Client.Timeout = %v, want 30s", cfg.HTTP.Client.Timeout)
 				}
-				if cfg.HTTP.Client.MaxIdleConns != 100 {
-					t.Errorf("HTTP.Client.MaxIdleConns = %d, want 100", cfg.HTTP.Client.MaxIdleConns)
+				if cfg.HTTP.Client.MaxIdleConns != 256 {
+					t.Errorf("HTTP.Client.MaxIdleConns = %d, want 256", cfg.HTTP.Client.MaxIdleConns)
 				}
 
 				// Logging defaults

@@ -15,12 +15,14 @@
   action:
     nats:
       subject: alerts.bedroom-temperature
+      # Templates substitute raw text: wrap string fields in quotes, leave
+      # numbers bare. No `#` comments in here — the block is the payload.
       payload: |
         {
           "alert": "High bedroom temperature!",
-          "sensor_id": {sensor.id},         # ✅ Nested field in template
-          "reading": {sensor.reading},      # ✅ Nested numeric field  
-          "location": {sensor.location},    # ✅ Nested string field
+          "sensor_id": "{sensor.id}",
+          "reading": {sensor.reading},
+          "location": "{sensor.location}",
           "timestamp": "{@timestamp()}",
           "alertId": "{@uuid7()}"
         }

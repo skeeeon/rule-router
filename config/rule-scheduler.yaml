@@ -36,8 +36,8 @@ nats:
 http:
   client:
     timeout: 30s
-    maxIdleConns: 100
-    maxIdleConnsPerHost: 10
+    maxIdleConns: 256
+    maxIdleConnsPerHost: 64
     idleConnTimeout: 90s
     tls:
       insecureSkipVerify: false

@@ -38,6 +38,11 @@ go test ./config/...
 
 # Run a single test by name
 go test ./internal/rule/... -run TestProcessorEvaluate
+
+# Macro benchmark: real binary + real NATS, reports throughput and p50/p99
+# (flags and RR_* knobs documented at the top of bench/run.sh)
+bench/run.sh -n 100000 -rate 5000          # router (NATS -> NATS)
+MODE=http bench/run.sh -n 40000 -rate 2000 # gateway inbound (HTTP -> NATS)
 ```
 
 No Makefile — use standard Go tooling. No external test frameworks; all tests use the standard `testing` package with table-driven patterns.
