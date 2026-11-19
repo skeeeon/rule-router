@@ -328,6 +328,7 @@ metrics:
 | `address` | string | `":2112"` | Metrics server listen address. |
 | `path` | string | `"/metrics"` | Metrics endpoint path. |
 | `updateInterval` | duration string | `"15s"` | How often system gauges (goroutines, memory) refresh. Must parse as a Go duration. |
+| `pprof` | bool | `false` | Mount Go's `net/http/pprof` under `/debug/pprof/` on this server (env `RR_METRICS_PPROF`). For profiling only — never on a port reachable from outside. `bench/run.sh` turns it on with `PROFILE=file`. |
 
 Full metric catalogue and health-check details are in [12 Observability](./12-observability.md).
 

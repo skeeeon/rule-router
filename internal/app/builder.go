@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/pprof"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -144,6 +145,18 @@ func (b *AppBuilder) WithMetrics() *AppBuilder {
 			w.Write([]byte(`{"status":"not ready"}`))
 		}
 	})
+
+	// Registered on this mux explicitly (not via the net/http/pprof import side
+	// effect, which only touches http.DefaultServeMux) so it stays opt-in.
+	if b.cfg.Metrics.Pprof {
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		b.base.Logger.Warn("pprof enabled on the metrics server; do not expose this port",
+			"address", b.cfg.Metrics.Address)
+	}
 
 	b.base.MetricsServer = &http.Server{
 		Addr:              b.cfg.Metrics.Address,

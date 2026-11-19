@@ -292,6 +292,10 @@ type MetricsConfig struct {
 	Address        string `json:"address" yaml:"address" mapstructure:"address"`
 	Path           string `json:"path" yaml:"path" mapstructure:"path"`
 	UpdateInterval string `json:"updateInterval" yaml:"updateInterval" mapstructure:"updateInterval"`
+	// Pprof mounts net/http/pprof under /debug/pprof/ on the metrics server.
+	// Off by default: profiles expose internals and CPU/trace profiles are
+	// costly to serve, so enable it only on a port you do not expose.
+	Pprof bool `json:"pprof" yaml:"pprof" mapstructure:"pprof"`
 }
 
 // KVBucketConfig defines a KV bucket with an optional key filter pattern.
@@ -364,7 +368,7 @@ func Load(path string) (*Config, error) {
 		"features.router", "features.gateway", "features.scheduler",
 		"nats.urls", "nats.username", "nats.password", "nats.token",
 		"logging.level",
-		"metrics.enabled", "metrics.address", "metrics.path",
+		"metrics.enabled", "metrics.address", "metrics.path", "metrics.pprof",
 	} {
 		_ = v.BindEnv(key)
 	}

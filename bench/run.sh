@@ -10,6 +10,8 @@
 #   RR_NATS_CONSUMERS_WORKERCOUNT=8 bench/run.sh    any key in bench/config.yaml
 #   RULES=path/to/rules bench/run.sh                 a different rule set (default bench/rules/$MODE)
 #   NATS_URL=nats://host:4222 bench/run.sh           an existing server (must have JetStream)
+#   PROFILE=cpu.pprof bench/run.sh -n 300000         save a 10s CPU profile taken under load
+#                                                    (then: go tool pprof -top cpu.pprof)
 #
 # Without NATS_URL it starts a throwaway server on port 4333: `nats-server`
 # if it is on PATH, otherwise the nats Docker image.
@@ -56,9 +58,17 @@ for i in $(seq 20); do
   sleep 0.5
 done
 
+[ -n "${PROFILE:-}" ] && FEATURES+=(RR_METRICS_PPROF=true)
 env "${FEATURES[@]}" RR_NATS_URLS="$NATS_URL" "$WORK/rule-router" --config bench/config.yaml --rules "$RULES" \
   >"$WORK/router.log" 2>&1 &
 ROUTER_PID=$!
+
+if [ -n "${PROFILE:-}" ]; then
+  # Skip startup and warmup, then sample 10s. Use an -n that runs well past
+  # 13s at your throughput, or the profile includes idle time.
+  (sleep 3; curl -sf -o "$PROFILE" "http://127.0.0.1:2199/debug/pprof/profile?seconds=10" \
+    && echo "profile saved to $PROFILE" || echo "profile capture failed") &
+fi
 
 if ! "$WORK/bench" -url "$NATS_URL" -mode "$MODE" "$@" run; then
   echo "--- last 20 lines of router log ---"
