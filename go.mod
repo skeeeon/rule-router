@@ -7,7 +7,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/goccy/go-json v0.12.0
 	github.com/google/uuid v1.6.0
-	github.com/nats-io/nats.go v1.55.0
+	github.com/nats-io/nats.go v1.56.0
 	github.com/nats-io/nkeys v0.4.17
 	github.com/prometheus/client_golang v1.25.0
 	github.com/robfig/cron/v3 v3.0.1
@@ -16,7 +16,7 @@ require (
 	github.com/spf13/viper v1.21.0
 	go.uber.org/zap v1.28.0
 	go.uber.org/zap/exp v0.3.0
-	golang.org/x/oauth2 v0.37.0
+	golang.org/x/oauth2 v0.38.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
